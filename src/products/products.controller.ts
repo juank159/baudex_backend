@@ -49,6 +49,33 @@ export class ProductController {
     });
   }
 
+  @Get('debug/low-stock')
+  async debugLowStock() {
+    const products = await this.productService.findLowStockProducts();
+    const stats = await this.productService.getStats();
+
+    console.log('🔍 DEBUG Low Stock:');
+    console.log('📊 Stats lowStock count:', stats.lowStock);
+    console.log('📋 Actual products found:', products.length);
+    products.forEach((p) => {
+      console.log(
+        `   - ${p.name}: stock=${p.stock}, minStock=${p.minStock}, isLow=${p.stock <= p.minStock}`,
+      );
+    });
+
+    return {
+      statsCount: stats.lowStock,
+      actualProducts: products.length,
+      products: products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        stock: p.stock,
+        minStock: p.minStock,
+        status: p.status,
+      })),
+    };
+  }
+
   // ✅ SIN INTERCEPTOR - maneja la estructura paginada manualmente
   @Get()
   async findAll(@Query() query: ProductQueryDto) {

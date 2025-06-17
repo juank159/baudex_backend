@@ -1,4 +1,4 @@
-// src/modules/products/entities/product.entity.ts
+// // src/modules/products/entities/product.entity.ts - CORREGIDO
 // import { Entity, Column, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 // import { BaseEntity } from '../../common/entities/base.entity';
 // import { Category } from '../../categories/entities/category.entity';
@@ -51,33 +51,33 @@
 //   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
 //   minStock: number;
 
-//   @Column({ type: 'varchar', length: 20, nullable: true })
-//   unit?: string; // kg, pcs, m², etc.
+//   @Column({ type: 'varchar', length: 50, nullable: true })
+//   unit?: string;
 
-//   // Dimensiones y peso
-//   @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+//   // Dimensions and weight
+//   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 //   weight?: number;
 
-//   @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+//   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 //   length?: number;
 
-//   @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+//   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 //   width?: number;
 
-//   @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+//   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 //   height?: number;
 
-//   // Imágenes (JSON array)
-//   @Column({ type: 'json', nullable: true })
+//   // Media
+//   @Column('text', { array: true, nullable: true })
 //   images?: string[];
 
-//   // Metadatos adicionales
+//   // Campos adicionales
 //   @Column({ type: 'json', nullable: true })
 //   metadata?: Record<string, any>;
 
-//   // Relaciones
-//   @Column({ type: 'uuid' })
-//   categoryId: string;
+//   // ✅ SOLUCIÓN: Cambiar los nombres de las propiedades para que coincidan con el DTO
+//   @Column({ type: 'uuid', name: 'category_id' })
+//   categoryId: string; // ← Cambio: era category_id, ahora categoryId
 
 //   @ManyToOne(() => Category, (category) => category.products, {
 //     onDelete: 'RESTRICT',
@@ -85,8 +85,8 @@
 //   @JoinColumn({ name: 'category_id' })
 //   category: Category;
 
-//   @Column({ type: 'uuid' })
-//   createdById: string;
+//   @Column({ type: 'uuid', name: 'created_by_id' })
+//   createdById: string; // ← Cambio: era created_by_id, ahora createdById
 
 //   @ManyToOne(() => User, (user) => user.products, {
 //     onDelete: 'RESTRICT',
@@ -121,20 +121,12 @@
 //   // Obtener precio por tipo
 //   getPriceByType(priceType: string): ProductPrice | undefined {
 //     return this.prices?.find(
-//       (price) => price.type === priceType && price.isActive,
-//     );
-//   }
-
-//   // Obtener precio por defecto (precio1 o el primero activo)
-//   get defaultPrice(): ProductPrice | undefined {
-//     return (
-//       this.getPriceByType('price1') ||
-//       this.prices?.find((price) => price.isActive)
+//       (price) => price.type === priceType && price.isActive && price.isValidNow,
 //     );
 //   }
 // }
 
-// src/modules/products/entities/product.entity.ts - CORREGIDO
+// src/modules/products/entities/product.entity.ts - CORRECCIÓN FINAL
 import { Entity, Column, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Category } from '../../categories/entities/category.entity';
@@ -211,9 +203,8 @@ export class Product extends BaseEntity {
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
 
-  // ✅ SOLUCIÓN: Cambiar los nombres de las propiedades para que coincidan con el DTO
   @Column({ type: 'uuid', name: 'category_id' })
-  categoryId: string; // ← Cambio: era category_id, ahora categoryId
+  categoryId: string;
 
   @ManyToOne(() => Category, (category) => category.products, {
     onDelete: 'RESTRICT',
@@ -222,7 +213,7 @@ export class Product extends BaseEntity {
   category: Category;
 
   @Column({ type: 'uuid', name: 'created_by_id' })
-  createdById: string; // ← Cambio: era created_by_id, ahora createdById
+  createdById: string;
 
   @ManyToOne(() => User, (user) => user.products, {
     onDelete: 'RESTRICT',
@@ -237,17 +228,34 @@ export class Product extends BaseEntity {
   })
   prices: ProductPrice[];
 
-  // Métodos útiles
+  // ✅ MÉTODOS CORREGIDOS - SOLUCIÓN FINAL
   get isActive(): boolean {
-    return this.status === ProductStatus.ACTIVE && !this.deletedAt;
+    const result = this.status === ProductStatus.ACTIVE && !this.deletedAt;
+    console.log(
+      `🔍 Entity isActive para ${this.name}: status=${this.status}, deletedAt=${this.deletedAt}, resultado=${result}`,
+    );
+    return result;
   }
 
   get isInStock(): boolean {
-    return this.stock > 0 && this.status !== ProductStatus.OUT_OF_STOCK;
+    const result = this.stock > 0 && this.status !== ProductStatus.OUT_OF_STOCK;
+    console.log(
+      `🔍 Entity isInStock para ${this.name}: stock=${this.stock}, status=${this.status}, resultado=${result}`,
+    );
+    return result;
   }
 
+  // ✅ SOLUCIÓN FINAL: Solo stock <= minStock (usando minStock individual de cada producto)
   get isLowStock(): boolean {
-    return this.stock <= this.minStock;
+    // ✅ Convertir a números para comparación correcta
+    const stock = Number(this.stock) || 0;
+    const minStock = Number(this.minStock) || 0;
+    const result = stock <= minStock;
+
+    console.log(
+      `🔍 Entity isLowStock para ${this.name}: stock=${stock} (num), minStock=${minStock} (num), resultado=${result}`,
+    );
+    return result;
   }
 
   get primaryImage(): string | null {
@@ -259,5 +267,18 @@ export class Product extends BaseEntity {
     return this.prices?.find(
       (price) => price.type === priceType && price.isActive && price.isValidNow,
     );
+  }
+
+  // ✅ MÉTODO DE DEBUG ACTUALIZADO
+  debugStock(): void {
+    console.log(`📊 DEBUG Stock para ${this.name}:
+      - Stock actual: ${this.stock}
+      - Stock mínimo: ${this.minStock}
+      - Stock <= MinStock: ${this.stock <= this.minStock}
+      - isLowStock: ${this.isLowStock}
+      - Status: ${this.status}
+      - isActive: ${this.isActive}
+      - isInStock: ${this.isInStock}
+    `);
   }
 }
