@@ -1,3 +1,4 @@
+// // src/modules/products/repositories/product.repository.ts - COMPLETAMENTE CORREGIDO
 // import { Injectable } from '@nestjs/common';
 // import { Repository, DataSource, SelectQueryBuilder } from 'typeorm';
 // import { Product, ProductStatus } from '../entities/product.entity';
@@ -6,6 +7,7 @@
 //   PaginatedResponseDto,
 //   PaginationMetaDto,
 // } from '../../common/dto/pagination-response.dto';
+// import { PriceStatus, PriceType } from '../entities/product-price.entity';
 
 // @Injectable()
 // export class ProductRepository extends Repository<Product> {
@@ -27,13 +29,15 @@
 //       queryBuilder.leftJoinAndSelect('product.prices', 'prices');
 //     }
 
-//     queryBuilder.leftJoinAndSelect('product.createdBy', 'createdBy');
+//     if (query.includeCreatedBy) {
+//       queryBuilder.leftJoinAndSelect('product.createdBy', 'createdBy');
+//     }
 
-//     // Aplicar filtros
+//     // Aplicar filtros básicos
 //     this.applyFilters(queryBuilder, query);
 
-//     // Aplicar filtros de precio
-//     if (query.minPrice || query.maxPrice) {
+//     // Aplicar filtros de precio SI se especificaron
+//     if (query.minPrice !== undefined || query.maxPrice !== undefined) {
 //       this.applyPriceFilters(queryBuilder, query);
 //     }
 
@@ -54,6 +58,7 @@
 
 //     const [data, totalItems] = await queryBuilder.getManyAndCount();
 
+//     // ✅ SOLUCIÓN: Crear el meta como objeto literal usando la interface PaginationMetaDto
 //     const meta: PaginationMetaDto = {
 //       page: query.page,
 //       limit: query.limit,
@@ -80,12 +85,41 @@
 //     });
 //   }
 
+//   async findBySkuOrBarcode(code: string): Promise<Product | null> {
+//     return this.createQueryBuilder('product')
+//       .leftJoinAndSelect('product.category', 'category')
+//       .leftJoinAndSelect('product.prices', 'prices')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
+//       .where('product.sku = :code OR product.barcode = :code', { code })
+//       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .getOne();
+//   }
+
+//   async searchProducts(
+//     searchTerm: string,
+//     limit: number = 20,
+//   ): Promise<Product[]> {
+//     return this.createQueryBuilder('product')
+//       .leftJoinAndSelect('product.category', 'category')
+//       .leftJoinAndSelect('product.prices', 'prices')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
+//       .where(
+//         '(product.name ILIKE :search OR product.sku ILIKE :search OR product.barcode ILIKE :search)',
+//         { search: `%${searchTerm}%` },
+//       )
+//       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .orderBy('product.name', 'ASC')
+//       .limit(limit)
+//       .getMany();
+//   }
+
 //   async findLowStockProducts(): Promise<Product[]> {
 //     return this.createQueryBuilder('product')
 //       .where('product.stock <= product.minStock')
 //       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
 //       .leftJoinAndSelect('product.category', 'category')
 //       .leftJoinAndSelect('product.prices', 'prices')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
 //       .orderBy('product.stock', 'ASC')
 //       .getMany();
 //   }
@@ -93,8 +127,19 @@
 //   async findOutOfStockProducts(): Promise<Product[]> {
 //     return this.find({
 //       where: [{ stock: 0 }, { status: ProductStatus.OUT_OF_STOCK }],
-//       relations: ['category', 'prices'],
+//       relations: ['category', 'prices', 'createdBy'],
 //       order: { updatedAt: 'DESC' },
+//     });
+//   }
+
+//   async getProductsByCategory(categoryId: string): Promise<Product[]> {
+//     return this.find({
+//       where: {
+//         categoryId, // ✅ SOLUCIÓN: Usar categoryId (camelCase) como en la entidad corregida
+//         status: ProductStatus.ACTIVE,
+//       },
+//       relations: ['prices', 'category', 'createdBy'],
+//       order: { name: 'ASC' },
 //     });
 //   }
 
@@ -125,15 +170,115 @@
 //     await this.save(product);
 //   }
 
-//   async getProductsByCategory(categoryId: string): Promise<Product[]> {
+//   async getProductStats(): Promise<{
+//     total: number;
+//     active: number;
+//     inactive: number;
+//     outOfStock: number;
+//     lowStock: number;
+//   }> {
+//     const total = await this.count();
+//     const active = await this.count({
+//       where: { status: ProductStatus.ACTIVE },
+//     });
+//     const inactive = await this.count({
+//       where: { status: ProductStatus.INACTIVE },
+//     });
+//     const outOfStock = await this.count({
+//       where: { status: ProductStatus.OUT_OF_STOCK },
+//     });
+
+//     // Productos con stock bajo
+//     const lowStock = await this.createQueryBuilder('product')
+//       .where('product.stock <= product.minStock')
+//       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .getCount();
+
+//     return {
+//       total,
+//       active,
+//       inactive,
+//       outOfStock,
+//       lowStock,
+//     };
+//   }
+
+//   async getStockValue(): Promise<number> {
+//     const result = await this.createQueryBuilder('product')
+//       .leftJoin('product.prices', 'price')
+//       .select('SUM(product.stock * price.amount)', 'totalValue')
+//       .where('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .andWhere('price.type = :priceType', { priceType: 'cost' })
+//       .andWhere('price.status = :priceStatus', {
+//         priceStatus: PriceStatus.ACTIVE,
+//       })
+//       .getRawOne();
+
+//     return parseFloat(result.totalValue) || 0;
+//   }
+
+//   async findProductsWithLowStock(threshold?: number): Promise<Product[]> {
+//     const queryBuilder = this.createQueryBuilder('product')
+//       .leftJoinAndSelect('product.category', 'category')
+//       .leftJoinAndSelect('product.prices', 'prices')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
+//       .where('product.status = :status', { status: ProductStatus.ACTIVE });
+
+//     if (threshold !== undefined) {
+//       queryBuilder.andWhere('product.stock <= :threshold', { threshold });
+//     } else {
+//       queryBuilder.andWhere('product.stock <= product.minStock');
+//     }
+
+//     return queryBuilder.orderBy('product.stock', 'ASC').getMany();
+//   }
+
+//   async findTopProducts(limit: number = 10): Promise<Product[]> {
 //     return this.find({
+//       where: { status: ProductStatus.ACTIVE },
+//       relations: ['category', 'prices', 'createdBy'],
+//       order: { createdAt: 'DESC' },
+//       take: limit,
+//     });
+//   }
+
+//   async findActiveByIds(ids: string[]): Promise<Product[]> {
+//     return this.createQueryBuilder('product')
+//       .where('product.id IN (:...ids)', { ids })
+//       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .leftJoinAndSelect('product.prices', 'prices')
+//       .leftJoinAndSelect('product.category', 'category')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
+//       .orderBy('product.name', 'ASC')
+//       .getMany();
+//   }
+
+//   async countByCategory(categoryId: string): Promise<number> {
+//     return this.count({
 //       where: {
-//         categoryId,
+//         categoryId, // ✅ SOLUCIÓN: Usar categoryId (camelCase)
 //         status: ProductStatus.ACTIVE,
 //       },
-//       relations: ['prices'],
-//       order: { name: 'ASC' },
 //     });
+//   }
+
+//   async findBestSellingProducts(limit: number = 10): Promise<Product[]> {
+//     return this.find({
+//       where: { status: ProductStatus.ACTIVE },
+//       relations: ['category', 'prices', 'createdBy'],
+//       order: { createdAt: 'DESC' },
+//       take: limit,
+//     });
+//   }
+
+//   async findProductsNeedingRestock(): Promise<Product[]> {
+//     return this.createQueryBuilder('product')
+//       .where('product.stock <= product.minStock')
+//       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+//       .leftJoinAndSelect('product.category', 'category')
+//       .leftJoinAndSelect('product.createdBy', 'createdBy')
+//       .orderBy('product.stock', 'ASC')
+//       .getMany();
 //   }
 
 //   private applyFilters(
@@ -178,21 +323,29 @@
 //     queryBuilder: SelectQueryBuilder<Product>,
 //     query: ProductQueryDto,
 //   ): void {
+//     // Crear un join específico para filtros de precio
 //     queryBuilder.leftJoin('product.prices', 'price_filter');
-//     queryBuilder.andWhere('price_filter.type = :priceType', {
-//       priceType: query.priceType,
-//     });
+
+//     // Aplicar filtros de tipo de precio
+//     if (query.priceType) {
+//       queryBuilder.andWhere('price_filter.type = :priceType', {
+//         priceType: query.priceType,
+//       });
+//     }
+
+//     // Solo precios activos
 //     queryBuilder.andWhere('price_filter.status = :priceStatus', {
-//       priceStatus: 'active',
+//       priceStatus: PriceStatus.ACTIVE,
 //     });
 
-//     if (query.minPrice) {
+//     // Filtros de rango de precio
+//     if (query.minPrice !== undefined) {
 //       queryBuilder.andWhere('price_filter.amount >= :minPrice', {
 //         minPrice: query.minPrice,
 //       });
 //     }
 
-//     if (query.maxPrice) {
+//     if (query.maxPrice !== undefined) {
 //       queryBuilder.andWhere('price_filter.amount <= :maxPrice', {
 //         maxPrice: query.maxPrice,
 //       });
@@ -200,16 +353,15 @@
 //   }
 // }
 
-// src/modules/products/repositories/product.repository.ts
 import { Injectable } from '@nestjs/common';
 import { Repository, DataSource, SelectQueryBuilder } from 'typeorm';
 import { Product, ProductStatus } from '../entities/product.entity';
-import { PriceStatus } from '../entities/product-price.entity';
 import { ProductQueryDto } from '../dto/product-query.dto';
 import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from '../../common/dto/pagination-response.dto';
+import { PriceStatus, PriceType } from '../entities/product-price.entity';
 
 @Injectable()
 export class ProductRepository extends Repository<Product> {
@@ -231,7 +383,9 @@ export class ProductRepository extends Repository<Product> {
       queryBuilder.leftJoinAndSelect('product.prices', 'prices');
     }
 
-    queryBuilder.leftJoinAndSelect('product.createdBy', 'createdBy');
+    if (query.includeCreatedBy) {
+      queryBuilder.leftJoinAndSelect('product.createdBy', 'createdBy');
+    }
 
     // Aplicar filtros básicos
     this.applyFilters(queryBuilder, query);
@@ -249,8 +403,10 @@ export class ProductRepository extends Repository<Product> {
       );
     }
 
-    // Aplicar ordenamiento
-    queryBuilder.orderBy(`product.${query.sortBy}`, query.sortOrder);
+    // ✅ CORREGIDO: Aplicar ordenamiento con verificación de propiedades
+    const sortField = query.sortBy || 'createdAt';
+    const sortOrder = query.sortOrder || 'DESC';
+    queryBuilder.orderBy(`product.${sortField}`, sortOrder);
 
     // Aplicar paginación
     const offset = (query.page - 1) * query.limit;
@@ -284,12 +440,41 @@ export class ProductRepository extends Repository<Product> {
     });
   }
 
+  async findBySkuOrBarcode(code: string): Promise<Product | null> {
+    return this.createQueryBuilder('product')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.prices', 'prices')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .where('product.sku = :code OR product.barcode = :code', { code })
+      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+      .getOne();
+  }
+
+  async searchProducts(
+    searchTerm: string,
+    limit: number = 20,
+  ): Promise<Product[]> {
+    return this.createQueryBuilder('product')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.prices', 'prices')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .where(
+        '(product.name ILIKE :search OR product.sku ILIKE :search OR product.barcode ILIKE :search)',
+        { search: `%${searchTerm}%` },
+      )
+      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+      .orderBy('product.name', 'ASC')
+      .limit(limit)
+      .getMany();
+  }
+
   async findLowStockProducts(): Promise<Product[]> {
     return this.createQueryBuilder('product')
       .where('product.stock <= product.minStock')
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
       .orderBy('product.stock', 'ASC')
       .getMany();
   }
@@ -297,8 +482,19 @@ export class ProductRepository extends Repository<Product> {
   async findOutOfStockProducts(): Promise<Product[]> {
     return this.find({
       where: [{ stock: 0 }, { status: ProductStatus.OUT_OF_STOCK }],
-      relations: ['category', 'prices'],
+      relations: ['category', 'prices', 'createdBy'],
       order: { updatedAt: 'DESC' },
+    });
+  }
+
+  async getProductsByCategory(categoryId: string): Promise<Product[]> {
+    return this.find({
+      where: {
+        categoryId,
+        status: ProductStatus.ACTIVE,
+      },
+      relations: ['prices', 'category', 'createdBy'],
+      order: { name: 'ASC' },
     });
   }
 
@@ -329,31 +525,52 @@ export class ProductRepository extends Repository<Product> {
     await this.save(product);
   }
 
-  async getProductsByCategory(categoryId: string): Promise<Product[]> {
-    return this.find({
-      where: {
-        categoryId,
-        status: ProductStatus.ACTIVE,
-      },
-      relations: ['prices'],
-      order: { name: 'ASC' },
-    });
-  }
+  // ✅ CORREGIDO: Cambiar nombres de propiedades para que coincidan con el service
+  // async getProductStats(): Promise<{
+  //   totalProducts: number;
+  //   activeProducts: number;
+  //   inactiveProducts: number;
+  //   outOfStockProducts: number;
+  //   lowStockProducts: number;
+  //   // Mantener también las propiedades originales por compatibilidad
+  //   total: number;
+  //   active: number;
+  //   inactive: number;
+  //   outOfStock: number;
+  //   lowStock: number;
+  // }> {
+  //   const total = await this.count();
+  //   const active = await this.count({
+  //     where: { status: ProductStatus.ACTIVE },
+  //   });
+  //   const inactive = await this.count({
+  //     where: { status: ProductStatus.INACTIVE },
+  //   });
+  //   const outOfStock = await this.count({
+  //     where: { status: ProductStatus.OUT_OF_STOCK },
+  //   });
 
-  async findProductsWithLowStock(threshold?: number): Promise<Product[]> {
-    const queryBuilder = this.createQueryBuilder('product')
-      .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.prices', 'prices')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE });
+  //   // Productos con stock bajo
+  //   const lowStock = await this.createQueryBuilder('product')
+  //     .where('product.stock <= product.minStock')
+  //     .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+  //     .getCount();
 
-    if (threshold !== undefined) {
-      queryBuilder.andWhere('product.stock <= :threshold', { threshold });
-    } else {
-      queryBuilder.andWhere('product.stock <= product.minStock');
-    }
-
-    return queryBuilder.orderBy('product.stock', 'ASC').getMany();
-  }
+  //   return {
+  //     // ✅ Nuevas propiedades que espera el service
+  //     totalProducts: total,
+  //     activeProducts: active,
+  //     inactiveProducts: inactive,
+  //     outOfStockProducts: outOfStock,
+  //     lowStockProducts: lowStock,
+  //     // Mantener compatibilidad con nombres originales
+  //     total,
+  //     active,
+  //     inactive,
+  //     outOfStock,
+  //     lowStock,
+  //   };
+  // }
 
   async getProductStats(): Promise<{
     total: number;
@@ -361,128 +578,77 @@ export class ProductRepository extends Repository<Product> {
     inactive: number;
     outOfStock: number;
     lowStock: number;
+    // Mantener ambos nombres para compatibilidad
+    totalProducts: number;
+    activeProducts: number;
+    inactiveProducts: number;
+    outOfStockProducts: number;
+    lowStockProducts: number;
   }> {
-    const total = await this.count();
-    const active = await this.count({
-      where: { status: ProductStatus.ACTIVE },
-    });
-    const inactive = await this.count({
-      where: { status: ProductStatus.INACTIVE },
-    });
-    const outOfStock = await this.count({
-      where: { status: ProductStatus.OUT_OF_STOCK },
-    });
+    console.log('🔍 ProductRepository: Calculando estadísticas...');
 
-    // Productos con stock bajo
-    const lowStock = await this.createQueryBuilder('product')
-      .where('product.stock <= product.minStock')
-      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .getCount();
+    try {
+      const total = await this.count();
+      console.log(`📊 Total de productos: ${total}`);
 
-    return {
-      total,
-      active,
-      inactive,
-      outOfStock,
-      lowStock,
-    };
-  }
+      const active = await this.count({
+        where: { status: ProductStatus.ACTIVE },
+      });
+      console.log(`✅ Productos activos: ${active}`);
 
-  async findTopProducts(limit: number = 10): Promise<Product[]> {
-    return this.find({
-      where: { status: ProductStatus.ACTIVE },
-      relations: ['category', 'prices'],
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
-  }
+      const inactive = await this.count({
+        where: { status: ProductStatus.INACTIVE },
+      });
+      console.log(`❌ Productos inactivos: ${inactive}`);
 
-  async findActiveByIds(ids: string[]): Promise<Product[]> {
-    return this.createQueryBuilder('product')
-      .where('product.id IN (:...ids)', { ids })
-      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .leftJoinAndSelect('product.prices', 'prices')
-      .leftJoinAndSelect('product.category', 'category')
-      .orderBy('product.name', 'ASC')
-      .getMany();
-  }
+      const outOfStock = await this.count({
+        where: { status: ProductStatus.OUT_OF_STOCK },
+      });
+      console.log(`🚫 Productos sin stock: ${outOfStock}`);
 
-  async searchProducts(
-    searchTerm: string,
-    limit: number = 20,
-  ): Promise<Product[]> {
-    return this.createQueryBuilder('product')
-      .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.prices', 'prices')
-      .where(
-        '(product.name ILIKE :search OR product.sku ILIKE :search OR product.barcode ILIKE :search)',
-        { search: `%${searchTerm}%` },
-      )
-      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .orderBy('product.name', 'ASC')
-      .limit(limit)
-      .getMany();
-  }
+      // Productos con stock bajo
+      const lowStock = await this.createQueryBuilder('product')
+        .where('product.stock <= product.minStock')
+        .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+        .getCount();
+      console.log(`⚠️ Productos con stock bajo: ${lowStock}`);
 
-  async findProductsWithPriceRange(
-    minPrice: number,
-    maxPrice: number,
-    priceType: string = 'price1',
-  ): Promise<Product[]> {
-    return this.createQueryBuilder('product')
-      .leftJoinAndSelect('product.prices', 'prices')
-      .leftJoinAndSelect('product.category', 'category')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .andWhere('prices.type = :priceType', { priceType })
-      .andWhere('prices.status = :priceStatus', {
-        priceStatus: PriceStatus.ACTIVE,
-      })
-      .andWhere('prices.amount >= :minPrice', { minPrice })
-      .andWhere('prices.amount <= :maxPrice', { maxPrice })
-      .orderBy('prices.amount', 'ASC')
-      .getMany();
-  }
+      const stats = {
+        // Nombres originales (PRINCIPALES)
+        total,
+        active,
+        inactive,
+        outOfStock,
+        lowStock,
+        // Nombres alternativos (para compatibilidad)
+        totalProducts: total,
+        activeProducts: active,
+        inactiveProducts: inactive,
+        outOfStockProducts: outOfStock,
+        lowStockProducts: lowStock,
+      };
 
-  async findProductsByPriceType(priceType: string): Promise<Product[]> {
-    return this.createQueryBuilder('product')
-      .leftJoinAndSelect('product.prices', 'prices')
-      .leftJoinAndSelect('product.category', 'category')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .andWhere('prices.type = :priceType', { priceType })
-      .andWhere('prices.status = :priceStatus', {
-        priceStatus: PriceStatus.ACTIVE,
-      })
-      .orderBy('product.name', 'ASC')
-      .getMany();
-  }
-
-  async countByCategory(categoryId: string): Promise<number> {
-    return this.count({
-      where: {
-        categoryId,
-        status: ProductStatus.ACTIVE,
-      },
-    });
-  }
-
-  async findBestSellingProducts(limit: number = 10): Promise<Product[]> {
-    // Este método requerirá datos de ventas cuando tengas el módulo de facturas
-    // Por ahora ordena por los más recientes
-    return this.find({
-      where: { status: ProductStatus.ACTIVE },
-      relations: ['category', 'prices'],
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
-  }
-
-  async findProductsNeedingRestock(): Promise<Product[]> {
-    return this.createQueryBuilder('product')
-      .where('product.stock <= product.minStock')
-      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .leftJoinAndSelect('product.category', 'category')
-      .orderBy('product.stock', 'ASC')
-      .getMany();
+      console.log('✅ ProductRepository: Estadísticas calculadas:', stats);
+      return stats;
+    } catch (error) {
+      console.error(
+        '❌ ProductRepository: Error al calcular estadísticas:',
+        error,
+      );
+      // Retornar estadísticas vacías en caso de error
+      return {
+        total: 0,
+        active: 0,
+        inactive: 0,
+        outOfStock: 0,
+        lowStock: 0,
+        totalProducts: 0,
+        activeProducts: 0,
+        inactiveProducts: 0,
+        outOfStockProducts: 0,
+        lowStockProducts: 0,
+      };
+    }
   }
 
   async getStockValue(): Promise<number> {
@@ -499,13 +665,68 @@ export class ProductRepository extends Repository<Product> {
     return parseFloat(result.totalValue) || 0;
   }
 
-  async findBySkuOrBarcode(code: string): Promise<Product | null> {
-    return this.createQueryBuilder('product')
+  async findProductsWithLowStock(threshold?: number): Promise<Product[]> {
+    const queryBuilder = this.createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
-      .where('product.sku = :code OR product.barcode = :code', { code })
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .where('product.status = :status', { status: ProductStatus.ACTIVE });
+
+    if (threshold !== undefined) {
+      queryBuilder.andWhere('product.stock <= :threshold', { threshold });
+    } else {
+      queryBuilder.andWhere('product.stock <= product.minStock');
+    }
+
+    return queryBuilder.orderBy('product.stock', 'ASC').getMany();
+  }
+
+  async findTopProducts(limit: number = 10): Promise<Product[]> {
+    return this.find({
+      where: { status: ProductStatus.ACTIVE },
+      relations: ['category', 'prices', 'createdBy'],
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async findActiveByIds(ids: string[]): Promise<Product[]> {
+    return this.createQueryBuilder('product')
+      .where('product.id IN (:...ids)', { ids })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .getOne();
+      .leftJoinAndSelect('product.prices', 'prices')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .orderBy('product.name', 'ASC')
+      .getMany();
+  }
+
+  async countByCategory(categoryId: string): Promise<number> {
+    return this.count({
+      where: {
+        categoryId,
+        status: ProductStatus.ACTIVE,
+      },
+    });
+  }
+
+  async findBestSellingProducts(limit: number = 10): Promise<Product[]> {
+    return this.find({
+      where: { status: ProductStatus.ACTIVE },
+      relations: ['category', 'prices', 'createdBy'],
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async findProductsNeedingRestock(): Promise<Product[]> {
+    return this.createQueryBuilder('product')
+      .where('product.stock <= product.minStock')
+      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .orderBy('product.stock', 'ASC')
+      .getMany();
   }
 
   private applyFilters(
@@ -550,22 +771,18 @@ export class ProductRepository extends Repository<Product> {
     queryBuilder: SelectQueryBuilder<Product>,
     query: ProductQueryDto,
   ): void {
-    // Crear un join específico para filtros de precio
     queryBuilder.leftJoin('product.prices', 'price_filter');
 
-    // Aplicar filtros de tipo de precio
     if (query.priceType) {
       queryBuilder.andWhere('price_filter.type = :priceType', {
         priceType: query.priceType,
       });
     }
 
-    // Solo precios activos
     queryBuilder.andWhere('price_filter.status = :priceStatus', {
       priceStatus: PriceStatus.ACTIVE,
     });
 
-    // Filtros de rango de precio
     if (query.minPrice !== undefined) {
       queryBuilder.andWhere('price_filter.amount >= :minPrice', {
         minPrice: query.minPrice,

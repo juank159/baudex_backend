@@ -1,4 +1,3 @@
-// src/modules/products/dto/product-query.dto.ts - AJUSTADO PARA TUS ENTIDADES
 import {
   IsOptional,
   IsEnum,
@@ -8,6 +7,7 @@ import {
   IsString,
   Min,
   Max,
+  IsIn,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ProductStatus, ProductType } from '../entities/product.entity';
@@ -47,14 +47,13 @@ export class ProductQueryDto {
   type?: ProductType;
 
   @IsOptional()
-  @IsUUID('4', { message: 'El ID de la categoría debe ser un UUID válido' })
+  @IsUUID('4', { message: 'El ID de categoría debe ser un UUID válido' })
   categoryId?: string;
 
   @IsOptional()
-  @IsUUID('4', { message: 'El ID del creador debe ser un UUID válido' })
+  @IsUUID('4', { message: 'El ID de creador debe ser un UUID válido' })
   createdById?: string;
 
-  // ==================== FILTROS DE STOCK ====================
   @IsOptional()
   @Transform(({ value }) => {
     if (typeof value === 'string') {
@@ -75,25 +74,34 @@ export class ProductQueryDto {
   @IsBoolean({ message: 'lowStock debe ser un valor booleano' })
   lowStock?: boolean;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'minStock debe ser un número' })
+  @Min(0, { message: 'minStock debe ser un número positivo' })
+  minStock?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'maxStock debe ser un número' })
+  @Min(0, { message: 'maxStock debe ser un número positivo' })
+  maxStock?: number;
+
   // ==================== FILTROS DE PRECIO ====================
   @IsOptional()
-  @Transform(({ value }) => parseFloat(value))
-  @IsNumber({}, { message: 'El precio mínimo debe ser un número' })
-  @Min(0, { message: 'El precio mínimo debe ser mayor o igual a 0' })
+  @Type(() => Number)
+  @IsNumber({}, { message: 'minPrice debe ser un número' })
+  @Min(0, { message: 'minPrice debe ser un número positivo' })
   minPrice?: number;
 
   @IsOptional()
-  @Transform(({ value }) => parseFloat(value))
-  @IsNumber({}, { message: 'El precio máximo debe ser un número' })
-  @Min(0, { message: 'El precio máximo debe ser mayor o igual a 0' })
+  @Type(() => Number)
+  @IsNumber({}, { message: 'maxPrice debe ser un número' })
+  @Min(0, { message: 'maxPrice debe ser un número positivo' })
   maxPrice?: number;
 
   @IsOptional()
-  @IsEnum(PriceType, {
-    message:
-      'El tipo de precio debe ser price1, price2, price3, special o cost',
-  })
-  priceType?: PriceType = PriceType.PRICE1;
+  @IsEnum(PriceType, { message: 'Tipo de precio no válido' })
+  priceType?: PriceType;
 
   // ==================== OPCIONES DE INCLUSIÓN ====================
   @IsOptional()
@@ -127,11 +135,12 @@ export class ProductQueryDto {
   includeCreatedBy?: boolean = false;
 
   // ==================== ORDENAMIENTO ====================
+  // ✅ AGREGADO: Propiedad sortBy que faltaba
   @IsOptional()
   @IsString({
     message: 'El campo de ordenamiento debe ser una cadena de texto',
   })
-  @IsEnum(
+  @IsIn(
     [
       'name',
       'sku',
@@ -142,16 +151,51 @@ export class ProductQueryDto {
       'type',
       'createdAt',
       'updatedAt',
+      'categoryId',
+      'createdById',
     ],
     {
-      message: 'El campo de ordenamiento no es válido',
+      message:
+        'El campo de ordenamiento no es válido. Valores permitidos: name, sku, barcode, stock, minStock, status, type, createdAt, updatedAt, categoryId, createdById',
     },
   )
   sortBy?: string = 'createdAt';
 
+  // ✅ AGREGADO: Propiedad sortOrder que faltaba
   @IsOptional()
   @IsEnum(['ASC', 'DESC'], {
     message: 'El orden debe ser ASC o DESC',
   })
   sortOrder?: 'ASC' | 'DESC' = 'DESC';
+
+  // ✅ MANTENIDO: Las propiedades orderBy y order por compatibilidad
+  @IsOptional()
+  @IsString({
+    message: 'El campo de ordenamiento debe ser una cadena de texto',
+  })
+  @IsIn(
+    [
+      'name',
+      'sku',
+      'barcode',
+      'stock',
+      'minStock',
+      'status',
+      'type',
+      'createdAt',
+      'updatedAt',
+      'categoryId',
+      'createdById',
+    ],
+    {
+      message: 'El campo de ordenamiento no es válido.',
+    },
+  )
+  orderBy?: string;
+
+  @IsOptional()
+  @IsEnum(['ASC', 'DESC'], {
+    message: 'El orden debe ser ASC o DESC',
+  })
+  order?: 'ASC' | 'DESC' = 'ASC';
 }
