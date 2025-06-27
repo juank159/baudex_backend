@@ -29,7 +29,7 @@ export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 
   @Post()
-  @UseGuards(RolesGuard)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createInvoiceDto: CreateInvoiceDto, @GetUser() user: User) {
@@ -37,35 +37,35 @@ export class InvoicesController {
   }
 
   @Get()
-  @UseGuards(RolesGuard)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   findAll(@Query() query: InvoiceQueryDto) {
     return this.invoicesService.findAll(query);
   }
 
   @Get('stats')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   getStats() {
     return this.invoicesService.getStats();
   }
 
   @Get('overdue')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   getOverdueInvoices() {
     return this.invoicesService.getOverdueInvoices();
   }
 
   @Get('number/:number')
-  @UseGuards(RolesGuard)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   findByNumber(@Param('number') number: string) {
     return this.invoicesService.findByNumber(number);
   }
 
   @Get(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.invoicesService.findOne(id);
@@ -73,7 +73,7 @@ export class InvoicesController {
 
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateInvoiceDto: UpdateInvoiceDto,
@@ -102,7 +102,7 @@ export class InvoicesController {
 
   @Post(':id/cancel')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.OK)
   cancel(@Param('id', ParseUUIDPipe) id: string) {
     return this.invoicesService.cancel(id);
@@ -110,7 +110,7 @@ export class InvoicesController {
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.OK)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.invoicesService.softDelete(id);

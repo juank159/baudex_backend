@@ -10,7 +10,11 @@ import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { InvoiceQueryDto } from './dto/invoice-query.dto';
 import { AddPaymentDto } from './dto/payment.dto';
-import { Invoice, InvoiceStatus } from './entities/invoice.entity';
+import {
+  Invoice,
+  InvoiceStatus,
+  PaymentMethod,
+} from './entities/invoice.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import {
   PaginatedResponseDto,
@@ -30,6 +34,92 @@ export class InvoicesService {
     private readonly productsService: ProductService,
     private readonly dataSource: DataSource,
   ) {}
+
+  // async create(
+  //   createInvoiceDto: CreateInvoiceDto,
+  //   createdById: string,
+  // ): Promise<Invoice> {
+  //   // Verificar que el cliente existe
+  //   const customer = await this.customersService.findOne(
+  //     createInvoiceDto.customerId,
+  //   );
+
+  //   // Verificar productos y stock
+  //   for (const itemDto of createInvoiceDto.items) {
+  //     if (itemDto.productId) {
+  //       const product = await this.productsService.findOne(itemDto.productId);
+  //       const isValid = await this.productsService.validateStockForSale(
+  //         itemDto.productId,
+  //         itemDto.quantity,
+  //       );
+  //       if (!isValid) {
+  //         throw new BadRequestException(
+  //           `Stock insuficiente para el producto: ${product.name}`,
+  //         );
+  //       }
+  //     }
+  //   }
+
+  //   return this.dataSource.transaction(async (manager) => {
+  //     // ✅ CREAR LA FACTURA CON LOS ITEMS DE UNA VEZ USANDO CASCADE
+  //     const invoice = manager.create(Invoice, {
+  //       number: createInvoiceDto.number, // Puede ser undefined, se auto-genera
+  //       date: createInvoiceDto.date
+  //         ? new Date(createInvoiceDto.date)
+  //         : new Date(),
+  //       dueDate: createInvoiceDto.dueDate
+  //         ? new Date(createInvoiceDto.dueDate)
+  //         : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días por defecto
+  //       paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
+  //       taxPercentage: createInvoiceDto.taxPercentage || 19,
+  //       discountPercentage: createInvoiceDto.discountPercentage || 0,
+  //       discountAmount: createInvoiceDto.discountAmount || 0,
+  //       notes: createInvoiceDto.notes,
+  //       terms: createInvoiceDto.terms,
+  //       metadata: createInvoiceDto.metadata,
+  //       customerId: createInvoiceDto.customerId,
+  //       createdById,
+  //       status: InvoiceStatus.DRAFT,
+  //       // ✅ CREAR LOS ITEMS DIRECTAMENTE AQUÍ (sin invoiceId, se maneja automáticamente)
+  //       items: createInvoiceDto.items.map((itemDto) =>
+  //         manager.create(InvoiceItem, {
+  //           description: itemDto.description,
+  //           quantity: itemDto.quantity,
+  //           unitPrice: itemDto.unitPrice,
+  //           discountPercentage: itemDto.discountPercentage || 0,
+  //           discountAmount: itemDto.discountAmount || 0,
+  //           unit: itemDto.unit,
+  //           notes: itemDto.notes,
+  //           productId: itemDto.productId,
+  //           // ❌ NO PONER invoiceId aquí - se maneja automáticamente por la relación
+  //         }),
+  //       ),
+  //     });
+
+  //     // ✅ GUARDAR TODO DE UNA VEZ (factura + items) gracias a cascade: true
+  //     const savedInvoice = await manager.save(Invoice, invoice);
+
+  //     // ✅ CARGAR FACTURA COMPLETA CON TODAS LAS RELACIONES
+  //     const completeInvoice = await manager.findOne(Invoice, {
+  //       where: { id: savedInvoice.id },
+  //       relations: ['items', 'customer', 'createdBy', 'items.product'],
+  //     });
+
+  //     if (!completeInvoice) {
+  //       throw new BadRequestException('Error al crear la factura');
+  //     }
+
+  //     // ✅ CALCULAR TOTALES
+  //     completeInvoice.calculateTotals();
+
+  //     // ✅ GUARDAR TOTALES CALCULADOS
+  //     const finalInvoice = await manager.save(Invoice, completeInvoice);
+
+  //     return finalInvoice;
+  //   });
+  // }
+
+  // Actualizar el método create en invoices.service.ts
 
   async create(
     createInvoiceDto: CreateInvoiceDto,
@@ -57,42 +147,114 @@ export class InvoicesService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Crear factura
+      // ✅ DETERMINAR EL ESTADO INICIAL SEGÚN EL MÉTODO DE PAGO
+      let initialStatus = InvoiceStatus.DRAFT;
+
+      // Si es efectivo y no es cliente final, puede ir directo a PENDING o PAID
+      if (createInvoiceDto.paymentMethod === PaymentMethod.CASH) {
+        // Para punto de venta (efectivo), confirmar automáticamente
+        initialStatus = InvoiceStatus.PENDING;
+      } else if (
+        createInvoiceDto.paymentMethod === PaymentMethod.CREDIT_CARD ||
+        createInvoiceDto.paymentMethod === PaymentMethod.DEBIT_CARD
+      ) {
+        // Tarjetas pueden ir directo a PAID si se procesa el pago
+        initialStatus = InvoiceStatus.PENDING;
+      }
+
+      // ✅ CREAR LA FACTURA CON ESTADO APROPIADO
       const invoice = manager.create(Invoice, {
-        ...createInvoiceDto,
+        number: createInvoiceDto.number, // Auto-generado si es undefined
         date: createInvoiceDto.date
           ? new Date(createInvoiceDto.date)
           : new Date(),
         dueDate: createInvoiceDto.dueDate
           ? new Date(createInvoiceDto.dueDate)
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días por defecto
+          : createInvoiceDto.paymentMethod === PaymentMethod.CASH
+            ? new Date() // Efectivo: vencimiento inmediato
+            : new Date(
+                Date.now() +
+                  (customer.paymentTerms || 30) * 24 * 60 * 60 * 1000,
+              ),
+        paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
+        taxPercentage: createInvoiceDto.taxPercentage || 19,
+        discountPercentage: createInvoiceDto.discountPercentage || 0,
+        discountAmount: createInvoiceDto.discountAmount || 0,
+        notes: createInvoiceDto.notes,
+        terms: createInvoiceDto.terms,
+        metadata: createInvoiceDto.metadata,
+        customerId: createInvoiceDto.customerId,
         createdById,
-        status: InvoiceStatus.DRAFT,
+        status: initialStatus, // ✅ Estado dinámico según contexto
+
+        // Crear los items directamente
+        items: createInvoiceDto.items.map((itemDto) =>
+          manager.create(InvoiceItem, {
+            description: itemDto.description,
+            quantity: itemDto.quantity,
+            unitPrice: itemDto.unitPrice,
+            discountPercentage: itemDto.discountPercentage || 0,
+            discountAmount: itemDto.discountAmount || 0,
+            unit: itemDto.unit,
+            notes: itemDto.notes,
+            productId: itemDto.productId,
+          }),
+        ),
       });
 
+      // Guardar todo de una vez (factura + items) gracias a cascade: true
       const savedInvoice = await manager.save(Invoice, invoice);
 
-      // Crear items
-      const items = createInvoiceDto.items.map((itemDto) =>
-        manager.create(InvoiceItem, {
-          ...itemDto,
-          invoiceId: savedInvoice.id,
-        }),
-      );
-
-      await manager.save(InvoiceItem, items);
-
-      // Cargar factura completa
+      // Cargar factura completa con todas las relaciones
       const completeInvoice = await manager.findOne(Invoice, {
         where: { id: savedInvoice.id },
-        relations: ['items', 'customer', 'createdBy'],
+        relations: ['items', 'customer', 'createdBy', 'items.product'],
       });
+
+      if (!completeInvoice) {
+        throw new BadRequestException('Error al crear la factura');
+      }
 
       // Calcular totales
       completeInvoice.calculateTotals();
-      await manager.save(Invoice, completeInvoice);
 
-      return completeInvoice;
+      // Guardar totales calculados
+      const finalInvoice = await manager.save(Invoice, completeInvoice);
+
+      // ✅ AUTO-CONFIRMAR SI ES PUNTO DE VENTA (EFECTIVO)
+      if (
+        createInvoiceDto.paymentMethod === PaymentMethod.CASH &&
+        initialStatus === InvoiceStatus.PENDING
+      ) {
+        console.log('💰 Auto-confirmando factura de punto de venta (efectivo)');
+
+        // Reducir stock automáticamente para ventas en efectivo
+        for (const item of finalInvoice.items) {
+          if (item.productId) {
+            await this.productsService.reduceStockForSale(
+              item.productId,
+              item.quantity,
+            );
+          }
+        }
+
+        // Si incluye información de pago en las notas, marcar como pagada
+        if (finalInvoice.notes?.includes('INFORMACIÓN DE PAGO')) {
+          finalInvoice.status = InvoiceStatus.PAID;
+          finalInvoice.paidAmount = finalInvoice.total;
+          finalInvoice.balanceDue = 0;
+          await manager.save(Invoice, finalInvoice);
+
+          // Actualizar balance del cliente
+          await this.customersService.updateBalance(
+            finalInvoice.customerId,
+            finalInvoice.total,
+            'subtract',
+          );
+        }
+      }
+
+      return finalInvoice;
     });
   }
 
@@ -115,11 +277,18 @@ export class InvoicesService {
       sortOrder = 'DESC',
     } = query;
 
+    // const queryBuilder = this.invoiceRepository
+    //   .createQueryBuilder('invoice')
+    //   .leftJoinAndSelect('invoice.customer', 'customer')
+    //   .leftJoinAndSelect('invoice.createdBy', 'createdBy')
+    //   .leftJoinAndSelect('invoice.items', 'items');
+
     const queryBuilder = this.invoiceRepository
       .createQueryBuilder('invoice')
       .leftJoinAndSelect('invoice.customer', 'customer')
       .leftJoinAndSelect('invoice.createdBy', 'createdBy')
-      .leftJoinAndSelect('invoice.items', 'items');
+      .leftJoinAndSelect('invoice.items', 'items')
+      .leftJoinAndSelect('items.product', 'product');
 
     // Filtros
     if (search) {
@@ -187,9 +356,14 @@ export class InvoicesService {
   }
 
   async findOne(id: string): Promise<Invoice> {
+    // const invoice = await this.invoiceRepository.findOne({
+    //   where: { id },
+    //   relations: ['items', 'customer', 'createdBy', 'items.product'],
+    // });
+
     const invoice = await this.invoiceRepository.findOne({
       where: { id },
-      relations: ['items', 'customer', 'createdBy', 'items.product'],
+      relations: ['items', 'customer', 'createdBy', 'items.product'], // ✅ Incluye product
     });
 
     if (!invoice) {
@@ -403,7 +577,10 @@ export class InvoicesService {
       .createQueryBuilder('invoice')
       .select('SUM(invoice.total)', 'totalSales')
       .addSelect('SUM(invoice.balanceDue)', 'pendingAmount')
-      .where('invoice.status != :cancelled', {
+      // .where('invoice.status != :cancelled', {
+      //   status: InvoiceStatus.CANCELLED,
+      // })
+      .where('invoice.status != :status', {
         status: InvoiceStatus.CANCELLED,
       })
       .getRawOne();

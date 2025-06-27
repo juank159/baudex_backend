@@ -151,6 +151,106 @@ export class CustomersService {
     return customer;
   }
 
+  /**
+   * Buscar cliente por email para validación (sin lanzar excepción)
+   */
+
+  async findByEmailForValidation(
+    email: string,
+    excludeId?: string,
+  ): Promise<Customer | null> {
+    try {
+      console.log(
+        `🔍 [SERVICE] Validating email: "${email}", excludeId: "${excludeId}"`,
+      );
+
+      const queryBuilder = this.customerRepository
+        .createQueryBuilder('customer')
+        .where('LOWER(customer.email) = LOWER(:email)', {
+          email: email.trim(),
+        });
+
+      // Si hay un ID a excluir (para edición), agregarlo a la consulta
+      if (excludeId && excludeId.trim() !== '') {
+        queryBuilder.andWhere('customer.id != :excludeId', {
+          excludeId: excludeId.trim(),
+        });
+        console.log(`🔍 [SERVICE] Excluding customer ID: "${excludeId}"`);
+      }
+
+      const result = await queryBuilder.getOne();
+
+      console.log(
+        `📧 [SERVICE] Email validation for "${email}": ${result ? 'EXISTS' : 'AVAILABLE'}`,
+      );
+
+      if (result) {
+        console.log(
+          `📧 [SERVICE] Found existing customer: ID=${result.id}, Email=${result.email}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error('💥 [SERVICE] Error in findByEmailForValidation:', error);
+      // En caso de error, retornar null para ser conservador
+      return null;
+    }
+  }
+
+  /**
+   * Buscar cliente por documento para validación (sin lanzar excepción)
+   */
+  async findByDocumentForValidation(
+    documentType: string,
+    documentNumber: string,
+    excludeId?: string,
+  ): Promise<Customer | null> {
+    try {
+      console.log(
+        `🔍 [SERVICE] Validating document: "${documentType}:${documentNumber}", excludeId: "${excludeId}"`,
+      );
+
+      const queryBuilder = this.customerRepository
+        .createQueryBuilder('customer')
+        .where('customer.documentType = :documentType', {
+          documentType: documentType.trim(),
+        })
+        .andWhere('customer.documentNumber = :documentNumber', {
+          documentNumber: documentNumber.trim(),
+        });
+
+      // Si hay un ID a excluir (para edición), agregarlo a la consulta
+      if (excludeId && excludeId.trim() !== '') {
+        queryBuilder.andWhere('customer.id != :excludeId', {
+          excludeId: excludeId.trim(),
+        });
+        console.log(`🔍 [SERVICE] Excluding customer ID: "${excludeId}"`);
+      }
+
+      const result = await queryBuilder.getOne();
+
+      console.log(
+        `📄 [SERVICE] Document validation for "${documentType}:${documentNumber}": ${result ? 'EXISTS' : 'AVAILABLE'}`,
+      );
+
+      if (result) {
+        console.log(
+          `📄 [SERVICE] Found existing customer: ID=${result.id}, Document=${result.documentType}:${result.documentNumber}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error(
+        '💥 [SERVICE] Error in findByDocumentForValidation:',
+        error,
+      );
+      // En caso de error, retornar null para ser conservador
+      return null;
+    }
+  }
+
   async update(
     id: string,
     updateCustomerDto: UpdateCustomerDto,
