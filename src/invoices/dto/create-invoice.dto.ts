@@ -12,7 +12,7 @@ import {
   IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PaymentMethod } from '../entities/invoice.entity';
+import { InvoiceStatus, PaymentMethod } from '../entities/invoice.entity';
 
 export class CreateInvoiceItemDto {
   @IsString({ message: 'La descripción es requerida' })
@@ -88,6 +88,13 @@ export class CreateInvoiceDto {
       'El método de pago debe ser cash, credit_card, debit_card, bank_transfer, check, credit u other',
   })
   paymentMethod?: PaymentMethod = PaymentMethod.CASH;
+
+  @IsOptional()
+  @IsEnum(InvoiceStatus, {
+    message:
+      'El estado debe ser draft, pending, paid, overdue, cancelled o partially_paid',
+  })
+  status?: InvoiceStatus;
 
   @IsOptional()
   @IsNumber(
