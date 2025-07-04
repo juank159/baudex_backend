@@ -136,17 +136,6 @@ export class ProductController {
     });
   }
 
-  // ✅ SIN INTERCEPTOR - devuelve estructura de estadísticas (no es ProductResponseDto)
-  // @Get('stats')
-  // async getStats() {
-  //   const stats = await this.productService.getStats();
-  //   return {
-  //     success: true,
-  //     data: stats,
-  //     timestamp: new Date().toISOString(),
-  //   };
-  // }
-
   @Get('stats')
   async getStats() {
     console.log('🔧 ProductController: Obteniendo estadísticas...');

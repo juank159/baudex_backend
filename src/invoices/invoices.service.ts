@@ -22,6 +22,7 @@ import {
 } from '../common/dto/pagination-response.dto';
 import { CustomersService } from '../customers/customers.service';
 import { ProductService } from '../products/products.service';
+import { TemporaryProductService } from '../products/temporary-product.service';
 
 @Injectable()
 export class InvoicesService {
@@ -32,6 +33,7 @@ export class InvoicesService {
     private readonly invoiceItemRepository: Repository<InvoiceItem>,
     private readonly customersService: CustomersService,
     private readonly productsService: ProductService,
+    private readonly temporaryProductService: TemporaryProductService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -39,6 +41,14 @@ export class InvoicesService {
   //   createInvoiceDto: CreateInvoiceDto,
   //   createdById: string,
   // ): Promise<Invoice> {
+  //   console.log('🚀 === CREANDO FACTURA EN BACKEND ===');
+  //   console.log('📋 DTO recibido:', {
+  //     paymentMethod: createInvoiceDto.paymentMethod,
+  //     status: createInvoiceDto.status,
+  //     customerId: createInvoiceDto.customerId,
+  //     items: createInvoiceDto.items.length,
+  //   });
+
   //   // Verificar que el cliente existe
   //   const customer = await this.customersService.findOne(
   //     createInvoiceDto.customerId,
@@ -61,35 +71,32 @@ export class InvoicesService {
   //   }
 
   //   return this.dataSource.transaction(async (manager) => {
-  //     // ✅ DETERMINAR EL ESTADO INICIAL SEGÚN EL MÉTODO DE PAGO
-  //     let initialStatus = InvoiceStatus.DRAFT;
+  //     // ✅ USAR EL STATUS DEL DTO SI ESTÁ PRESENTE, SINO CALCULAR AUTOMÁTICAMENTE
+  //     let finalStatus: InvoiceStatus;
 
-  //     // Si es efectivo y no es cliente final, puede ir directo a PENDING o PAID
-  //     if (createInvoiceDto.paymentMethod === PaymentMethod.CASH) {
-  //       // Para punto de venta (efectivo), confirmar automáticamente
-  //       initialStatus = InvoiceStatus.PENDING;
-  //     } else if (
-  //       createInvoiceDto.paymentMethod === PaymentMethod.CREDIT_CARD ||
-  //       createInvoiceDto.paymentMethod === PaymentMethod.DEBIT_CARD
-  //     ) {
-  //       // Tarjetas pueden ir directo a PAID si se procesa el pago
-  //       initialStatus = InvoiceStatus.PENDING;
+  //     if (createInvoiceDto.status) {
+  //       // ✅ Si viene status en el DTO, usarlo directamente
+  //       finalStatus = createInvoiceDto.status;
+  //       console.log(`✅ Usando status del DTO: ${finalStatus}`);
+  //     } else {
+  //       // ✅ Solo si NO viene status, calcular automáticamente
+  //       finalStatus = this.calculateInitialStatus(
+  //         createInvoiceDto.paymentMethod,
+  //       );
+  //       console.log(`🔄 Status calculado automáticamente: ${finalStatus}`);
   //     }
 
-  //     // ✅ CREAR LA FACTURA CON ESTADO APROPIADO
+  //     console.log(`📊 Status final que se guardará: ${finalStatus}`);
+
+  //     // ✅ CREAR LA FACTURA CON EL STATUS CORRECTO
   //     const invoice = manager.create(Invoice, {
-  //       number: createInvoiceDto.number, // Auto-generado si es undefined
+  //       number: createInvoiceDto.number,
   //       date: createInvoiceDto.date
   //         ? new Date(createInvoiceDto.date)
   //         : new Date(),
   //       dueDate: createInvoiceDto.dueDate
   //         ? new Date(createInvoiceDto.dueDate)
-  //         : createInvoiceDto.paymentMethod === PaymentMethod.CASH
-  //           ? new Date() // Efectivo: vencimiento inmediato
-  //           : new Date(
-  //               Date.now() +
-  //                 (customer.paymentTerms || 30) * 24 * 60 * 60 * 1000,
-  //             ),
+  //         : this.calculateDueDate(createInvoiceDto.paymentMethod, customer),
   //       paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
   //       taxPercentage: createInvoiceDto.taxPercentage || 19,
   //       discountPercentage: createInvoiceDto.discountPercentage || 0,
@@ -99,7 +106,7 @@ export class InvoicesService {
   //       metadata: createInvoiceDto.metadata,
   //       customerId: createInvoiceDto.customerId,
   //       createdById,
-  //       status: initialStatus, // ✅ Estado dinámico según contexto
+  //       status: finalStatus, // ✅ USAR EL STATUS CORRECTO
 
   //       // Crear los items directamente
   //       items: createInvoiceDto.items.map((itemDto) =>
@@ -132,42 +139,15 @@ export class InvoicesService {
   //     // Calcular totales
   //     completeInvoice.calculateTotals();
 
+  //     // ✅ APLICAR LÓGICA DE NEGOCIO SEGÚN EL STATUS FINAL
+  //     await this.applyBusinessLogicByStatus(completeInvoice, manager);
+
   //     // Guardar totales calculados
   //     const finalInvoice = await manager.save(Invoice, completeInvoice);
 
-  //     // ✅ AUTO-CONFIRMAR SI ES PUNTO DE VENTA (EFECTIVO)
-  //     if (
-  //       createInvoiceDto.paymentMethod === PaymentMethod.CASH &&
-  //       initialStatus === InvoiceStatus.PENDING
-  //     ) {
-  //       console.log('💰 Auto-confirmando factura de punto de venta (efectivo)');
-
-  //       // Reducir stock automáticamente para ventas en efectivo
-  //       for (const item of finalInvoice.items) {
-  //         if (item.productId) {
-  //           await this.productsService.reduceStockForSale(
-  //             item.productId,
-  //             item.quantity,
-  //           );
-  //         }
-  //       }
-
-  //       // Si incluye información de pago en las notas, marcar como pagada
-  //       if (finalInvoice.notes?.includes('INFORMACIÓN DE PAGO')) {
-  //         finalInvoice.status = InvoiceStatus.PAID;
-  //         finalInvoice.paidAmount = finalInvoice.total;
-  //         finalInvoice.balanceDue = 0;
-  //         await manager.save(Invoice, finalInvoice);
-
-  //         // Actualizar balance del cliente
-  //         await this.customersService.updateBalance(
-  //           finalInvoice.customerId,
-  //           finalInvoice.total,
-  //           'subtract',
-  //         );
-  //       }
-  //     }
-
+  //     console.log(
+  //       `✅ Factura creada exitosamente con status: ${finalInvoice.status}`,
+  //     );
   //     return finalInvoice;
   //   });
   // }
@@ -177,53 +157,70 @@ export class InvoicesService {
     createdById: string,
   ): Promise<Invoice> {
     console.log('🚀 === CREANDO FACTURA EN BACKEND ===');
-    console.log('📋 DTO recibido:', {
-      paymentMethod: createInvoiceDto.paymentMethod,
-      status: createInvoiceDto.status,
-      customerId: createInvoiceDto.customerId,
-      items: createInvoiceDto.items.length,
-    });
 
     // Verificar que el cliente existe
     const customer = await this.customersService.findOne(
       createInvoiceDto.customerId,
     );
 
-    // Verificar productos y stock
+    // ✅ VERIFICAR PRODUCTOS REGISTRADOS Y CREAR TEMPORALES
+    const processedItems = [];
+
     for (const itemDto of createInvoiceDto.items) {
-      if (itemDto.productId) {
+      if (itemDto.isTemporary) {
+        // ✅ CREAR PRODUCTO TEMPORAL
+        console.log(`📦 Creando producto temporal: ${itemDto.description}`);
+
+        const temporaryProduct = await this.temporaryProductService.create({
+          name: itemDto.description,
+          description: `Producto temporal creado en factura`,
+          unitPrice: itemDto.unitPrice,
+          unit: itemDto.unit || 'pcs',
+          category: itemDto.category || 'Sin categoría',
+          metadata: {
+            ...itemDto.metadata,
+            createdInInvoice: true,
+            originalPrice: itemDto.unitPrice,
+          },
+        });
+
+        processedItems.push({
+          ...itemDto,
+          temporaryProductId: temporaryProduct.id,
+          productId: null,
+        });
+      } else if (itemDto.productId) {
+        // ✅ VALIDAR PRODUCTO REGISTRADO
         const product = await this.productsService.findOne(itemDto.productId);
         const isValid = await this.productsService.validateStockForSale(
           itemDto.productId,
           itemDto.quantity,
         );
+
         if (!isValid) {
           throw new BadRequestException(
             `Stock insuficiente para el producto: ${product.name}`,
           );
         }
+
+        processedItems.push({
+          ...itemDto,
+          temporaryProductId: null,
+        });
+      } else {
+        throw new BadRequestException(
+          `Item inválido: debe tener productId o ser marcado como temporal`,
+        );
       }
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // ✅ USAR EL STATUS DEL DTO SI ESTÁ PRESENTE, SINO CALCULAR AUTOMÁTICAMENTE
-      let finalStatus: InvoiceStatus;
+      // Calcular status
+      const finalStatus =
+        createInvoiceDto.status ||
+        this.calculateInitialStatus(createInvoiceDto.paymentMethod);
 
-      if (createInvoiceDto.status) {
-        // ✅ Si viene status en el DTO, usarlo directamente
-        finalStatus = createInvoiceDto.status;
-        console.log(`✅ Usando status del DTO: ${finalStatus}`);
-      } else {
-        // ✅ Solo si NO viene status, calcular automáticamente
-        finalStatus = this.calculateInitialStatus(
-          createInvoiceDto.paymentMethod,
-        );
-        console.log(`🔄 Status calculado automáticamente: ${finalStatus}`);
-      }
-
-      console.log(`📊 Status final que se guardará: ${finalStatus}`);
-
-      // ✅ CREAR LA FACTURA CON EL STATUS CORRECTO
+      // Crear factura
       const invoice = manager.create(Invoice, {
         number: createInvoiceDto.number,
         date: createInvoiceDto.date
@@ -241,10 +238,10 @@ export class InvoicesService {
         metadata: createInvoiceDto.metadata,
         customerId: createInvoiceDto.customerId,
         createdById,
-        status: finalStatus, // ✅ USAR EL STATUS CORRECTO
+        status: finalStatus,
 
-        // Crear los items directamente
-        items: createInvoiceDto.items.map((itemDto) =>
+        // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES
+        items: processedItems.map((itemDto) =>
           manager.create(InvoiceItem, {
             description: itemDto.description,
             quantity: itemDto.quantity,
@@ -254,36 +251,33 @@ export class InvoicesService {
             unit: itemDto.unit,
             notes: itemDto.notes,
             productId: itemDto.productId,
+            temporaryProductId: itemDto.temporaryProductId,
           }),
         ),
       });
 
-      // Guardar todo de una vez (factura + items) gracias a cascade: true
+      // Guardar y procesar
       const savedInvoice = await manager.save(Invoice, invoice);
 
-      // Cargar factura completa con todas las relaciones
       const completeInvoice = await manager.findOne(Invoice, {
         where: { id: savedInvoice.id },
-        relations: ['items', 'customer', 'createdBy', 'items.product'],
+        relations: [
+          'items',
+          'customer',
+          'createdBy',
+          'items.product',
+          'items.temporaryProduct',
+        ],
       });
 
       if (!completeInvoice) {
         throw new BadRequestException('Error al crear la factura');
       }
 
-      // Calcular totales
       completeInvoice.calculateTotals();
-
-      // ✅ APLICAR LÓGICA DE NEGOCIO SEGÚN EL STATUS FINAL
       await this.applyBusinessLogicByStatus(completeInvoice, manager);
 
-      // Guardar totales calculados
-      const finalInvoice = await manager.save(Invoice, completeInvoice);
-
-      console.log(
-        `✅ Factura creada exitosamente con status: ${finalInvoice.status}`,
-      );
-      return finalInvoice;
+      return await manager.save(Invoice, completeInvoice);
     });
   }
 
