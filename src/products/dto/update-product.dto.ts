@@ -9,8 +9,11 @@ import {
   MinLength,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ProductStatus, ProductType } from '../entities/product.entity';
+import { UpdateProductPriceDto } from './update-product-price.dto';
 
 export class UpdateProductDto {
   @IsOptional()
@@ -101,4 +104,10 @@ export class UpdateProductDto {
   @IsOptional()
   @IsUUID('4', { message: 'El ID de la categoría debe ser un UUID válido' })
   categoryId?: string;
+
+  @IsOptional()
+  @IsArray({ message: 'Los precios deben ser un array' })
+  @ValidateNested({ each: true })
+  @Type(() => UpdateProductPriceDto)
+  prices?: UpdateProductPriceDto[];
 }

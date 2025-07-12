@@ -138,6 +138,103 @@ export class ProductService {
     return product;
   }
 
+  // async update(
+  //   id: string,
+  //   updateProductDto: UpdateProductDto,
+  // ): Promise<Product> {
+  //   const product = await this.findOne(id);
+
+  //   // Verificar SKU único si se está actualizando
+  //   if (updateProductDto.sku && updateProductDto.sku !== product.sku) {
+  //     const existingSku = await this.productRepository.findBySku(
+  //       updateProductDto.sku,
+  //     );
+  //     if (existingSku) {
+  //       throw new ConflictException('El SKU ya está en uso');
+  //     }
+  //   }
+
+  //   // Verificar código de barras único si se está actualizando
+  //   if (
+  //     updateProductDto.barcode &&
+  //     updateProductDto.barcode !== product.barcode
+  //   ) {
+  //     const existingBarcode = await this.productRepository.findByBarcode(
+  //       updateProductDto.barcode,
+  //     );
+  //     if (existingBarcode) {
+  //       throw new ConflictException('El código de barras ya está en uso');
+  //     }
+  //   }
+
+  //   // Verificar categoría si se está actualizando
+  //   if (updateProductDto.categoryId) {
+  //     await this.categoryService.findOne(updateProductDto.categoryId);
+  //   }
+
+  //   // Si se incluyen precios, usar transacción para actualizar
+  //   if (updateProductDto.prices && updateProductDto.prices.length > 0) {
+  //     const queryRunner = this.dataSource.createQueryRunner();
+  //     await queryRunner.connect();
+  //     await queryRunner.startTransaction();
+
+  //     try {
+  //       // Separar precios y datos del producto
+  //       const { prices, ...productData } = updateProductDto;
+
+  //       // Actualizar datos básicos del producto
+  //       Object.assign(product, productData);
+  //       const updatedProduct = await queryRunner.manager.save(Product, product);
+
+  //       // Obtener precios actuales del producto
+  //       const currentPrices = await queryRunner.manager.find(ProductPrice, {
+  //         where: { productId: id },
+  //       });
+
+  //       // Procesar cada precio en el array de actualización
+  //       for (const priceDto of prices) {
+  //         if (priceDto.id) {
+  //           // Actualizar precio existente
+  //           const existingPrice = currentPrices.find(p => p.id === priceDto.id);
+  //           if (existingPrice) {
+  //             Object.assign(existingPrice, priceDto);
+  //             await queryRunner.manager.save(ProductPrice, existingPrice);
+  //           }
+  //         } else {
+  //           // Crear nuevo precio
+  //           const newPrice = new ProductPrice();
+  //           Object.assign(newPrice, priceDto);
+  //           newPrice.status = PriceStatus.ACTIVE;
+  //           newPrice.product = updatedProduct;
+  //           newPrice.productId = updatedProduct.id;
+  //           await queryRunner.manager.save(ProductPrice, newPrice);
+  //         }
+  //       }
+
+  //       await queryRunner.commitTransaction();
+
+  //       // Retornar producto actualizado con precios
+  //       return this.productRepository.findOne({
+  //         where: { id: updatedProduct.id },
+  //         relations: ['prices', 'category', 'createdBy'],
+  //       });
+
+  //     } catch (err) {
+  //       await queryRunner.rollbackTransaction();
+  //       console.error('Error durante la actualización del producto:', err);
+  //       throw new BadRequestException('Falló la actualización del producto');
+  //     } finally {
+  //       await queryRunner.release();
+  //     }
+  //   } else {
+  //     // Actualización simple sin precios
+  //     Object.assign(product, updateProductDto);
+  //     return this.productRepository.save(product);
+  //   }
+  // }
+
+  // En tu products.service.ts, reemplaza el método update con este:
+
   async update(
     id: string,
     updateProductDto: UpdateProductDto,
@@ -172,8 +269,159 @@ export class ProductService {
       await this.categoryService.findOne(updateProductDto.categoryId);
     }
 
-    Object.assign(product, updateProductDto);
-    return this.productRepository.save(product);
+    // ✅ CORRECCIÓN PRINCIPAL: Manejo mejorado de precios
+    if (updateProductDto.prices && updateProductDto.prices.length > 0) {
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+
+      try {
+        console.log('🔧 ProductService: Actualizando producto con precios...');
+        console.log('📋 Precios recibidos:', updateProductDto.prices);
+
+        // Separar precios y datos del producto
+        const { prices, ...productData } = updateProductDto;
+
+        // Actualizar datos básicos del producto
+        Object.assign(product, productData);
+        const updatedProduct = await queryRunner.manager.save(Product, product);
+
+        // Obtener precios actuales del producto
+        const currentPrices = await queryRunner.manager.find(ProductPrice, {
+          where: { productId: id },
+        });
+
+        console.log('📊 Precios actuales encontrados:', currentPrices.length);
+
+        // Procesar cada precio en el array de actualización
+        for (const priceDto of prices) {
+          console.log(
+            `🏷️ Procesando precio: tipo=${priceDto.type}, id=${priceDto.id || 'NUEVO'}`,
+          );
+
+          if (priceDto.id) {
+            // ✅ ACTUALIZAR PRECIO EXISTENTE
+            const existingPrice = currentPrices.find(
+              (p) => p.id === priceDto.id,
+            );
+            if (existingPrice) {
+              console.log(
+                `   ✅ Actualizando precio existente: ${existingPrice.id}`,
+              );
+
+              // Actualizar campos
+              existingPrice.type = priceDto.type as PriceType;
+              existingPrice.amount = priceDto.amount;
+              existingPrice.name = priceDto.name || existingPrice.name;
+              existingPrice.currency =
+                priceDto.currency || existingPrice.currency;
+              existingPrice.discountPercentage =
+                priceDto.discountPercentage || 0;
+              existingPrice.discountAmount = priceDto.discountAmount || null;
+              existingPrice.minQuantity = priceDto.minQuantity || 1;
+              existingPrice.notes = priceDto.notes || existingPrice.notes;
+              existingPrice.status = priceDto.status || PriceStatus.ACTIVE;
+              existingPrice.updatedAt = new Date();
+
+              await queryRunner.manager.save(ProductPrice, existingPrice);
+              console.log(`   ✅ Precio actualizado exitosamente`);
+            } else {
+              console.log(
+                `   ⚠️ Precio con ID ${priceDto.id} no encontrado, se ignorará`,
+              );
+            }
+          } else {
+            // ✅ CREAR NUEVO PRECIO
+            console.log(`   🆕 Creando nuevo precio: tipo=${priceDto.type}`);
+
+            // Verificar si ya existe un precio del mismo tipo
+            const existingTypePrice = currentPrices.find(
+              (p) =>
+                p.type === priceDto.type && p.status === PriceStatus.ACTIVE,
+            );
+
+            if (existingTypePrice) {
+              console.log(
+                `   ⚠️ Ya existe precio del tipo ${priceDto.type}, actualizando en su lugar`,
+              );
+              // Actualizar el precio existente del mismo tipo
+              existingTypePrice.amount = priceDto.amount;
+              existingTypePrice.name = priceDto.name || existingTypePrice.name;
+              existingTypePrice.currency =
+                priceDto.currency || existingTypePrice.currency;
+              existingTypePrice.discountPercentage =
+                priceDto.discountPercentage || 0;
+              existingTypePrice.discountAmount =
+                priceDto.discountAmount || null;
+              existingTypePrice.minQuantity = priceDto.minQuantity || 1;
+              existingTypePrice.notes =
+                priceDto.notes || existingTypePrice.notes;
+              existingTypePrice.updatedAt = new Date();
+
+              await queryRunner.manager.save(ProductPrice, existingTypePrice);
+            } else {
+              // Crear completamente nuevo
+              const newPrice = new ProductPrice();
+              newPrice.type = priceDto.type as PriceType;
+              newPrice.amount = priceDto.amount;
+              newPrice.name = priceDto.name || `Precio ${priceDto.type}`;
+              newPrice.currency = priceDto.currency || 'COP';
+              newPrice.status = priceDto.status || PriceStatus.ACTIVE;
+              newPrice.discountPercentage = priceDto.discountPercentage || 0;
+              newPrice.discountAmount = priceDto.discountAmount || null;
+              newPrice.minQuantity = priceDto.minQuantity || 1;
+              newPrice.notes = priceDto.notes || null;
+              newPrice.product = updatedProduct;
+              newPrice.productId = updatedProduct.id;
+              newPrice.createdAt = new Date();
+              newPrice.updatedAt = new Date();
+
+              await queryRunner.manager.save(ProductPrice, newPrice);
+              console.log(`   ✅ Nuevo precio creado exitosamente`);
+            }
+          }
+        }
+
+        await queryRunner.commitTransaction();
+        console.log('✅ ProductService: Transacción completada exitosamente');
+
+        // Retornar producto actualizado con precios
+        const finalProduct = await this.productRepository.findOne({
+          where: { id: updatedProduct.id },
+          relations: ['prices', 'category', 'createdBy'],
+        });
+
+        console.log('📊 Producto final con precios:', {
+          id: finalProduct.id,
+          name: finalProduct.name,
+          pricesCount: finalProduct.prices?.length || 0,
+        });
+
+        return finalProduct;
+      } catch (err) {
+        await queryRunner.rollbackTransaction();
+        console.error(
+          '❌ ProductService: Error durante la actualización:',
+          err,
+        );
+        throw new BadRequestException(
+          `Falló la actualización del producto: ${err.message}`,
+        );
+      } finally {
+        await queryRunner.release();
+      }
+    } else {
+      // ✅ ACTUALIZACIÓN SIMPLE SIN PRECIOS
+      console.log('🔧 ProductService: Actualización simple sin precios');
+      Object.assign(product, updateProductDto);
+      const savedProduct = await this.productRepository.save(product);
+
+      // Retornar con relaciones
+      return this.productRepository.findOne({
+        where: { id: savedProduct.id },
+        relations: ['prices', 'category', 'createdBy'],
+      });
+    }
   }
 
   async updateStock(

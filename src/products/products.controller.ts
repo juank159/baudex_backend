@@ -13,6 +13,7 @@ import {
   ParseUUIDPipe,
   UseGuards,
   Req,
+  Put,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { plainToInstance } from 'class-transformer';
@@ -218,6 +219,58 @@ export class ProductController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ProductResponseDto> {
     const product = await this.productService.findOne(id);
+    return plainToInstance(ProductResponseDto, product, {
+      excludeExtraneousValues: true,
+    });
+  }
+
+  @Put(':id')
+  @UseInterceptors(new TransformInterceptor(ProductResponseDto))
+  async updateComplete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateProductDto: UpdateProductDto,
+  ): Promise<ProductResponseDto> {
+    console.log(
+      '🔧 ProductController: PUT request recibido para producto:',
+      id,
+    );
+    console.log(
+      '📋 Datos recibidos:',
+      JSON.stringify(updateProductDto, null, 2),
+    );
+
+    // Verificar si se incluyen precios en la petición
+    if (updateProductDto.prices && updateProductDto.prices.length > 0) {
+      console.log(
+        '🏷️ Precios incluidos en PUT:',
+        updateProductDto.prices.length,
+      );
+      updateProductDto.prices.forEach((price, index) => {
+        console.log(
+          `   Precio ${index}: ${price.type} - $${price.amount} (ID: ${price.id || 'NUEVO'})`,
+        );
+      });
+    } else {
+      console.log('⚠️ No se incluyen precios en la petición PUT');
+    }
+
+    const product = await this.productService.update(id, updateProductDto);
+
+    // Verificar la respuesta
+    if (product.prices && product.prices.length > 0) {
+      console.log(
+        '✅ Producto actualizado con precios:',
+        product.prices.length,
+      );
+      product.prices.forEach((price, index) => {
+        console.log(
+          `   Precio actualizado ${index}: ${price.type} - $${price.amount} (ID: ${price.id})`,
+        );
+      });
+    } else {
+      console.log('⚠️ Producto actualizado SIN precios en la respuesta');
+    }
+
     return plainToInstance(ProductResponseDto, product, {
       excludeExtraneousValues: true,
     });
