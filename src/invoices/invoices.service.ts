@@ -37,121 +37,6 @@ export class InvoicesService {
     private readonly dataSource: DataSource,
   ) {}
 
-  // async create(
-  //   createInvoiceDto: CreateInvoiceDto,
-  //   createdById: string,
-  // ): Promise<Invoice> {
-  //   console.log('🚀 === CREANDO FACTURA EN BACKEND ===');
-  //   console.log('📋 DTO recibido:', {
-  //     paymentMethod: createInvoiceDto.paymentMethod,
-  //     status: createInvoiceDto.status,
-  //     customerId: createInvoiceDto.customerId,
-  //     items: createInvoiceDto.items.length,
-  //   });
-
-  //   // Verificar que el cliente existe
-  //   const customer = await this.customersService.findOne(
-  //     createInvoiceDto.customerId,
-  //   );
-
-  //   // Verificar productos y stock
-  //   for (const itemDto of createInvoiceDto.items) {
-  //     if (itemDto.productId) {
-  //       const product = await this.productsService.findOne(itemDto.productId);
-  //       const isValid = await this.productsService.validateStockForSale(
-  //         itemDto.productId,
-  //         itemDto.quantity,
-  //       );
-  //       if (!isValid) {
-  //         throw new BadRequestException(
-  //           `Stock insuficiente para el producto: ${product.name}`,
-  //         );
-  //       }
-  //     }
-  //   }
-
-  //   return this.dataSource.transaction(async (manager) => {
-  //     // ✅ USAR EL STATUS DEL DTO SI ESTÁ PRESENTE, SINO CALCULAR AUTOMÁTICAMENTE
-  //     let finalStatus: InvoiceStatus;
-
-  //     if (createInvoiceDto.status) {
-  //       // ✅ Si viene status en el DTO, usarlo directamente
-  //       finalStatus = createInvoiceDto.status;
-  //       console.log(`✅ Usando status del DTO: ${finalStatus}`);
-  //     } else {
-  //       // ✅ Solo si NO viene status, calcular automáticamente
-  //       finalStatus = this.calculateInitialStatus(
-  //         createInvoiceDto.paymentMethod,
-  //       );
-  //       console.log(`🔄 Status calculado automáticamente: ${finalStatus}`);
-  //     }
-
-  //     console.log(`📊 Status final que se guardará: ${finalStatus}`);
-
-  //     // ✅ CREAR LA FACTURA CON EL STATUS CORRECTO
-  //     const invoice = manager.create(Invoice, {
-  //       number: createInvoiceDto.number,
-  //       date: createInvoiceDto.date
-  //         ? new Date(createInvoiceDto.date)
-  //         : new Date(),
-  //       dueDate: createInvoiceDto.dueDate
-  //         ? new Date(createInvoiceDto.dueDate)
-  //         : this.calculateDueDate(createInvoiceDto.paymentMethod, customer),
-  //       paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
-  //       taxPercentage: createInvoiceDto.taxPercentage || 19,
-  //       discountPercentage: createInvoiceDto.discountPercentage || 0,
-  //       discountAmount: createInvoiceDto.discountAmount || 0,
-  //       notes: createInvoiceDto.notes,
-  //       terms: createInvoiceDto.terms,
-  //       metadata: createInvoiceDto.metadata,
-  //       customerId: createInvoiceDto.customerId,
-  //       createdById,
-  //       status: finalStatus, // ✅ USAR EL STATUS CORRECTO
-
-  //       // Crear los items directamente
-  //       items: createInvoiceDto.items.map((itemDto) =>
-  //         manager.create(InvoiceItem, {
-  //           description: itemDto.description,
-  //           quantity: itemDto.quantity,
-  //           unitPrice: itemDto.unitPrice,
-  //           discountPercentage: itemDto.discountPercentage || 0,
-  //           discountAmount: itemDto.discountAmount || 0,
-  //           unit: itemDto.unit,
-  //           notes: itemDto.notes,
-  //           productId: itemDto.productId,
-  //         }),
-  //       ),
-  //     });
-
-  //     // Guardar todo de una vez (factura + items) gracias a cascade: true
-  //     const savedInvoice = await manager.save(Invoice, invoice);
-
-  //     // Cargar factura completa con todas las relaciones
-  //     const completeInvoice = await manager.findOne(Invoice, {
-  //       where: { id: savedInvoice.id },
-  //       relations: ['items', 'customer', 'createdBy', 'items.product'],
-  //     });
-
-  //     if (!completeInvoice) {
-  //       throw new BadRequestException('Error al crear la factura');
-  //     }
-
-  //     // Calcular totales
-  //     completeInvoice.calculateTotals();
-
-  //     // ✅ APLICAR LÓGICA DE NEGOCIO SEGÚN EL STATUS FINAL
-  //     await this.applyBusinessLogicByStatus(completeInvoice, manager);
-
-  //     // Guardar totales calculados
-  //     const finalInvoice = await manager.save(Invoice, completeInvoice);
-
-  //     console.log(
-  //       `✅ Factura creada exitosamente con status: ${finalInvoice.status}`,
-  //     );
-  //     return finalInvoice;
-  //   });
-  // }
-
   async create(
     createInvoiceDto: CreateInvoiceDto,
     createdById: string,
@@ -317,9 +202,62 @@ export class InvoicesService {
   }
 
   // ✅ NUEVO MÉTODO - Aplicar lógica de negocio según status
+  // private async applyBusinessLogicByStatus(
+  //   invoice: Invoice,
+  //   manager: any,
+  // ): Promise<void> {
+  //   switch (invoice.status) {
+  //     case InvoiceStatus.PAID:
+  //       console.log('💰 Aplicando lógica para factura PAGADA');
+  //       // Marcar como pagada completamente
+  //       invoice.paidAmount = invoice.total;
+  //       invoice.balanceDue = 0;
+
+  //       // Reducir stock automáticamente
+  //       for (const item of invoice.items) {
+  //         if (item.productId) {
+  //           await this.productsService.reduceStockForSale(
+  //             item.productId,
+  //             item.quantity,
+  //           );
+  //         }
+  //       }
+
+  //       // Actualizar balance del cliente
+  //       await this.customersService.updateBalance(
+  //         invoice.customerId,
+  //         invoice.total,
+  //         'subtract',
+  //       );
+  //       break;
+
+  //     case InvoiceStatus.PENDING:
+  //       console.log('⏰ Aplicando lógica para factura PENDIENTE');
+  //       // Reducir stock pero mantener como pendiente de pago
+  //       for (const item of invoice.items) {
+  //         if (item.productId) {
+  //           await this.productsService.reduceStockForSale(
+  //             item.productId,
+  //             item.quantity,
+  //           );
+  //         }
+  //       }
+  //       break;
+
+  //     case InvoiceStatus.DRAFT:
+  //       console.log('📝 Aplicando lógica para factura BORRADOR');
+  //       // No reducir stock ni actualizar balances
+  //       break;
+
+  //     default:
+  //       console.log(`❓ Status desconocido: ${invoice.status}`);
+  //   }
+  // }
+
   private async applyBusinessLogicByStatus(
     invoice: Invoice,
     manager: any,
+    reduceInventory: boolean = false, // ❌ Por defecto NO reduce inventario
   ): Promise<void> {
     switch (invoice.status) {
       case InvoiceStatus.PAID:
@@ -328,13 +266,15 @@ export class InvoicesService {
         invoice.paidAmount = invoice.total;
         invoice.balanceDue = 0;
 
-        // Reducir stock automáticamente
-        for (const item of invoice.items) {
-          if (item.productId) {
-            await this.productsService.reduceStockForSale(
-              item.productId,
-              item.quantity,
-            );
+        // Solo reducir stock si está habilitado
+        if (reduceInventory) {
+          for (const item of invoice.items) {
+            if (item.productId) {
+              await this.productsService.reduceStockForSale(
+                item.productId,
+                item.quantity,
+              );
+            }
           }
         }
 
@@ -348,13 +288,15 @@ export class InvoicesService {
 
       case InvoiceStatus.PENDING:
         console.log('⏰ Aplicando lógica para factura PENDIENTE');
-        // Reducir stock pero mantener como pendiente de pago
-        for (const item of invoice.items) {
-          if (item.productId) {
-            await this.productsService.reduceStockForSale(
-              item.productId,
-              item.quantity,
-            );
+        // Solo reducir stock si está habilitado
+        if (reduceInventory) {
+          for (const item of invoice.items) {
+            if (item.productId) {
+              await this.productsService.reduceStockForSale(
+                item.productId,
+                item.quantity,
+              );
+            }
           }
         }
         break;
@@ -546,6 +488,34 @@ export class InvoicesService {
     });
   }
 
+  // async confirm(id: string): Promise<Invoice> {
+  //   const invoice = await this.findOne(id);
+
+  //   if (invoice.status !== InvoiceStatus.DRAFT) {
+  //     throw new BadRequestException(
+  //       'Solo se pueden confirmar facturas en borrador',
+  //     );
+  //   }
+
+  //   return this.dataSource.transaction(async (manager) => {
+  //     // Reducir stock de productos
+  //     for (const item of invoice.items) {
+  //       if (item.productId) {
+  //         await this.productsService.reduceStockForSale(
+  //           item.productId,
+  //           item.quantity,
+  //         );
+  //       }
+  //     }
+
+  //     // Cambiar estado a pendiente
+  //     invoice.status = InvoiceStatus.PENDING;
+  //     await manager.save(Invoice, invoice);
+
+  //     return this.findOne(id);
+  //   });
+  // }
+
   async confirm(id: string): Promise<Invoice> {
     const invoice = await this.findOne(id);
 
@@ -556,15 +526,15 @@ export class InvoicesService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Reducir stock de productos
-      for (const item of invoice.items) {
-        if (item.productId) {
-          await this.productsService.reduceStockForSale(
-            item.productId,
-            item.quantity,
-          );
-        }
-      }
+      // ❌ COMENTADO: Reducir stock de productos
+      // for (const item of invoice.items) {
+      //   if (item.productId) {
+      //     await this.productsService.reduceStockForSale(
+      //       item.productId,
+      //       item.quantity,
+      //     );
+      //   }
+      // }
 
       // Cambiar estado a pendiente
       invoice.status = InvoiceStatus.PENDING;
@@ -617,6 +587,38 @@ export class InvoicesService {
     return this.findOne(id);
   }
 
+  // async cancel(id: string): Promise<Invoice> {
+  //   const invoice = await this.findOne(id);
+
+  //   if (invoice.status === InvoiceStatus.PAID) {
+  //     throw new BadRequestException('No se puede cancelar una factura pagada');
+  //   }
+
+  //   return this.dataSource.transaction(async (manager) => {
+  //     // Si la factura estaba confirmada, restaurar stock
+  //     if (
+  //       invoice.status === InvoiceStatus.PENDING ||
+  //       invoice.status === InvoiceStatus.PARTIALLY_PAID
+  //     ) {
+  //       for (const item of invoice.items) {
+  //         if (item.productId) {
+  //           await this.productsService.updateStock(
+  //             item.productId,
+  //             item.quantity,
+  //             'add',
+  //           );
+  //         }
+  //       }
+  //     }
+
+  //     // Cancelar factura
+  //     invoice.status = InvoiceStatus.CANCELLED;
+  //     await manager.save(Invoice, invoice);
+
+  //     return this.findOne(id);
+  //   });
+  // }
+
   async cancel(id: string): Promise<Invoice> {
     const invoice = await this.findOne(id);
 
@@ -625,21 +627,21 @@ export class InvoicesService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // Si la factura estaba confirmada, restaurar stock
-      if (
-        invoice.status === InvoiceStatus.PENDING ||
-        invoice.status === InvoiceStatus.PARTIALLY_PAID
-      ) {
-        for (const item of invoice.items) {
-          if (item.productId) {
-            await this.productsService.updateStock(
-              item.productId,
-              item.quantity,
-              'add',
-            );
-          }
-        }
-      }
+      // ❌ COMENTADO: Si la factura estaba confirmada, restaurar stock
+      // if (
+      //   invoice.status === InvoiceStatus.PENDING ||
+      //   invoice.status === InvoiceStatus.PARTIALLY_PAID
+      // ) {
+      //   for (const item of invoice.items) {
+      //     if (item.productId) {
+      //       await this.productsService.updateStock(
+      //         item.productId,
+      //         item.quantity,
+      //         'add',
+      //       );
+      //     }
+      //   }
+      // }
 
       // Cancelar factura
       invoice.status = InvoiceStatus.CANCELLED;
