@@ -97,6 +97,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Product } from '../../products/entities/product.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 
 export enum CategoryStatus {
   ACTIVE = 'active',
@@ -132,6 +133,15 @@ export class Category extends BaseEntity {
 
   @Column({ type: 'int', default: 0 })
   sortOrder: number;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.categories)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // Jerarquía de categorías (categoría padre)
   @Column({ type: 'uuid', nullable: true, name: 'parent_id' }) // ✅ Especificar nombre explícito

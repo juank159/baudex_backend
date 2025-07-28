@@ -18,6 +18,32 @@ export class RolesGuard implements CanActivate {
     }
 
     const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.some((role) => user.role === role);
+    
+    // Verificar que el usuario existe y tiene rol
+    if (!user) {
+      console.error('❌ RolesGuard: No user found in request');
+      return false;
+    }
+
+    if (!user.role) {
+      console.error('❌ RolesGuard: User has no role assigned', { 
+        userId: user.id, 
+        userEmail: user.email,
+        organizationId: user.organizationId 
+      });
+      return false;
+    }
+
+    const hasRequiredRole = requiredRoles.some((role) => user.role === role);
+    
+    if (!hasRequiredRole) {
+      console.warn('⚠️ RolesGuard: User does not have required role', {
+        userRole: user.role,
+        requiredRoles,
+        userId: user.id
+      });
+    }
+
+    return hasRequiredRole;
   }
 }

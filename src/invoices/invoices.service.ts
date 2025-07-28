@@ -23,6 +23,7 @@ import {
 import { CustomersService } from '../customers/customers.service';
 import { ProductService } from '../products/products.service';
 import { TemporaryProductService } from '../products/temporary-product.service';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
 @Injectable()
 export class InvoicesService {
@@ -35,6 +36,7 @@ export class InvoicesService {
     private readonly productsService: ProductService,
     private readonly temporaryProductService: TemporaryProductService,
     private readonly dataSource: DataSource,
+    private readonly tenantAwareService: TenantAwareService,
   ) {}
 
   async create(
@@ -42,6 +44,12 @@ export class InvoicesService {
     createdById: string,
   ): Promise<Invoice> {
     console.log('🚀 === CREANDO FACTURA EN BACKEND ===');
+
+    // Obtener tenant ID
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
 
     // Verificar que el cliente existe
     const customer = await this.customersService.findOne(
@@ -124,6 +132,7 @@ export class InvoicesService {
         customerId: createInvoiceDto.customerId,
         createdById,
         status: finalStatus,
+        organizationId: tenantId, // ✅ AGREGADO: organization_id del tenant
 
         // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES
         items: processedItems.map((itemDto) =>
@@ -336,12 +345,22 @@ export class InvoicesService {
     //   .leftJoinAndSelect('invoice.createdBy', 'createdBy')
     //   .leftJoinAndSelect('invoice.items', 'items');
 
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const queryBuilder = this.invoiceRepository
       .createQueryBuilder('invoice')
       .leftJoinAndSelect('invoice.customer', 'customer')
       .leftJoinAndSelect('invoice.createdBy', 'createdBy')
       .leftJoinAndSelect('invoice.items', 'items')
       .leftJoinAndSelect('items.product', 'product');
+
+    // ✅ MULTITENANT FIX: Filtrar por organización
+    queryBuilder.where('invoice.organizationId = :organizationId', {
+      organizationId: tenantId,
+    });
 
     // Filtros
     if (search) {
@@ -409,13 +428,13 @@ export class InvoicesService {
   }
 
   async findOne(id: string): Promise<Invoice> {
-    // const invoice = await this.invoiceRepository.findOne({
-    //   where: { id },
-    //   relations: ['items', 'customer', 'createdBy', 'items.product'],
-    // });
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
 
     const invoice = await this.invoiceRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       relations: ['items', 'customer', 'createdBy', 'items.product'], // ✅ Incluye product
     });
 

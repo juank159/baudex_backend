@@ -6,10 +6,14 @@ import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from '../../common/dto/pagination-response.dto';
+import { TenantAwareService } from '../../common/services/tenant-aware.service';
 
 @Injectable()
 export class CategoryRepository extends Repository<Category> {
-  constructor(private dataSource: DataSource) {
+  constructor(
+    private dataSource: DataSource,
+    private tenantAwareService: TenantAwareService,
+  ) {
     super(Category, dataSource.createEntityManager());
   }
 
@@ -18,7 +22,17 @@ export class CategoryRepository extends Repository<Category> {
   async findAllPaginated(
     query: CategoryQueryDto,
   ): Promise<PaginatedResponseDto<Category>> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('category');
+
+    // ✅ MULTITENANT FIX: Filtrar por organización
+    queryBuilder.where('category.organizationId = :organizationId', {
+      organizationId: tenantId,
+    });
 
     // Incluir relaciones según los parámetros
     if (query.includeChildren) {
@@ -63,7 +77,17 @@ export class CategoryRepository extends Repository<Category> {
   async findAllPaginatedWithDeleted(
     query: CategoryQueryDto,
   ): Promise<PaginatedResponseDto<Category>> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('category').withDeleted(); // Incluir elementos eliminados
+
+    // ✅ MULTITENANT FIX: Filtrar por organización
+    queryBuilder.where('category.organizationId = :organizationId', {
+      organizationId: tenantId,
+    });
 
     // Incluir relaciones según los parámetros
     if (query.includeChildren) {
@@ -108,9 +132,15 @@ export class CategoryRepository extends Repository<Category> {
   async findDeletedPaginated(
     query: CategoryQueryDto,
   ): Promise<PaginatedResponseDto<Category>> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('category')
       .withDeleted()
-      .where('category.deletedAt IS NOT NULL'); // Solo elementos eliminados
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.deletedAt IS NOT NULL'); // Solo elementos eliminados
 
     // Incluir relaciones según los parámetros
     if (query.includeChildren) {
@@ -162,8 +192,14 @@ export class CategoryRepository extends Repository<Category> {
     slug: string,
     includeDeleted: boolean = false,
   ): Promise<Category | null> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('category')
-      .where('category.slug = :slug', { slug })
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.slug = :slug', { slug })
       .leftJoinAndSelect('category.parent', 'parent')
       .leftJoinAndSelect('category.children', 'children');
 
@@ -175,16 +211,27 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async findBySlugExcludingDeleted(slug: string): Promise<Category | null> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.findOne({
-      where: { slug },
+      where: { slug, organizationId: tenantId },
       relations: ['parent', 'children'],
       // Por defecto TypeORM excluye los soft-deleted, pero lo hacemos explícito
     });
   }
 
   async isSlugAvailableForCreate(slug: string): Promise<boolean> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const existingCategory = await this.createQueryBuilder('category')
-      .where('category.slug = :slug', { slug })
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.slug = :slug', { slug })
       .withDeleted() // Incluir eliminados para verificar conflictos
       .getOne();
 
@@ -195,10 +242,14 @@ export class CategoryRepository extends Repository<Category> {
     slug: string,
     excludeId?: string,
   ): Promise<boolean> {
-    const queryBuilder = this.createQueryBuilder('category').where(
-      'category.slug = :slug',
-      { slug },
-    );
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    const queryBuilder = this.createQueryBuilder('category')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.slug = :slug', { slug });
 
     if (excludeId) {
       queryBuilder.andWhere('category.id != :excludeId', { excludeId });
@@ -210,8 +261,14 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async search(searchTerm: string, limit: number = 10): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('category')
-      .where(
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere(
         '(category.name ILIKE :search OR category.description ILIKE :search OR category.slug ILIKE :search)',
         { search: `%${searchTerm}%` },
       )
@@ -222,8 +279,14 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async getAllSlugs(): Promise<string[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const categories = await this.createQueryBuilder('category')
       .select('category.slug')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
       .getMany();
 
     return categories.map((cat) => cat.slug);
@@ -232,8 +295,14 @@ export class CategoryRepository extends Repository<Category> {
   // ==================== MÉTODOS DE ÁRBOL ====================
 
   async findTree(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
       where: {
+        organizationId: tenantId,
         parentId: null,
         status: CategoryStatus.ACTIVE,
       },
@@ -243,12 +312,18 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async findFullTree(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     // Obtener todo el árbol con todas las relaciones
     const categories = await this.createQueryBuilder('category')
       .leftJoinAndSelect('category.children', 'children')
       .leftJoinAndSelect('children.children', 'grandchildren')
       .leftJoinAndSelect('grandchildren.children', 'greatgrandchildren')
-      .where('category.parentId IS NULL')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.parentId IS NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
       .addOrderBy('children.sortOrder', 'ASC')
@@ -262,34 +337,58 @@ export class CategoryRepository extends Repository<Category> {
   // ==================== MÉTODOS ESPECIALIZADOS ====================
 
   async findParentCategories(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('category')
       .leftJoin('category.children', 'children')
-      .where('children.id IS NOT NULL')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('children.id IS NOT NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
       .getMany();
   }
 
   async findCategoriesWithProductCount(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('category')
-      .where('category.status = :status', { status: CategoryStatus.ACTIVE })
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .loadRelationCountAndMap('category.productsCount', 'category.products')
       .orderBy('category.sortOrder', 'ASC')
       .getMany();
   }
 
   async findCategoriesWithoutProducts(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('category')
       .leftJoin('category.products', 'product')
-      .where('product.id IS NULL')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('product.id IS NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
       .getMany();
   }
 
   async findTopLevelCategories(): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
       where: {
+        organizationId: tenantId,
         parentId: null,
         status: CategoryStatus.ACTIVE,
       },
@@ -298,8 +397,14 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async findChildrenOf(parentId: string): Promise<Category[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
       where: {
+        organizationId: tenantId,
         parentId,
         status: CategoryStatus.ACTIVE,
       },
@@ -310,15 +415,19 @@ export class CategoryRepository extends Repository<Category> {
   // ==================== MÉTODOS DE UTILIDAD ====================
 
   async getMaxSortOrder(parentId?: string): Promise<number> {
-    const query = this.createQueryBuilder('category').select(
-      'MAX(category.sortOrder)',
-      'maxOrder',
-    );
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    const query = this.createQueryBuilder('category')
+      .select('MAX(category.sortOrder)', 'maxOrder')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId });
 
     if (parentId) {
-      query.where('category.parentId = :parentId', { parentId });
+      query.andWhere('category.parentId = :parentId', { parentId });
     } else {
-      query.where('category.parentId IS NULL');
+      query.andWhere('category.parentId IS NULL');
     }
 
     const result = await query.getRawOne();
@@ -326,15 +435,19 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async getMinSortOrder(parentId?: string): Promise<number> {
-    const query = this.createQueryBuilder('category').select(
-      'MIN(category.sortOrder)',
-      'minOrder',
-    );
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    const query = this.createQueryBuilder('category')
+      .select('MIN(category.sortOrder)', 'minOrder')
+      .where('category.organizationId = :organizationId', { organizationId: tenantId });
 
     if (parentId) {
-      query.where('category.parentId = :parentId', { parentId });
+      query.andWhere('category.parentId = :parentId', { parentId });
     } else {
-      query.where('category.parentId IS NULL');
+      query.andWhere('category.parentId IS NULL');
     }
 
     const result = await query.getRawOne();
@@ -342,32 +455,47 @@ export class CategoryRepository extends Repository<Category> {
   }
 
   async countByStatus(status: CategoryStatus): Promise<number> {
-    return this.count({ where: { status } });
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    return this.count({ where: { organizationId: tenantId, status } });
   }
 
   async countByParent(parentId: string): Promise<number> {
-    return this.count({ where: { parentId } });
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    return this.count({ where: { organizationId: tenantId, parentId } });
   }
 
   async countChildrenRecursive(categoryId: string): Promise<number> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     // Contar todos los descendientes de una categoría
     const query = `
       WITH RECURSIVE category_tree AS (
         SELECT id, parent_id, 1 as level
         FROM categories
-        WHERE parent_id = $1 AND deleted_at IS NULL
+        WHERE parent_id = $1 AND organization_id = $2 AND deleted_at IS NULL
         
         UNION ALL
         
         SELECT c.id, c.parent_id, ct.level + 1
         FROM categories c
         INNER JOIN category_tree ct ON c.parent_id = ct.id
-        WHERE c.deleted_at IS NULL AND ct.level < 10
+        WHERE c.organization_id = $2 AND c.deleted_at IS NULL AND ct.level < 10
       )
       SELECT COUNT(*) as total FROM category_tree;
     `;
 
-    const result = await this.query(query, [categoryId]);
+    const result = await this.query(query, [categoryId, tenantId]);
     return parseInt(result[0]?.total || '0');
   }
 
@@ -377,45 +505,55 @@ export class CategoryRepository extends Repository<Category> {
     categoryId: string,
     newParentId: string,
   ): Promise<boolean> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     // Verificar si asignar newParentId como padre de categoryId crearía un ciclo
     const query = `
       WITH RECURSIVE parent_chain AS (
         SELECT id, parent_id, 1 as level
         FROM categories
-        WHERE id = $1 AND deleted_at IS NULL
+        WHERE id = $1 AND organization_id = $3 AND deleted_at IS NULL
         
         UNION ALL
         
         SELECT c.id, c.parent_id, pc.level + 1
         FROM categories c
         INNER JOIN parent_chain pc ON c.id = pc.parent_id
-        WHERE c.deleted_at IS NULL AND pc.level < 10
+        WHERE c.organization_id = $3 AND c.deleted_at IS NULL AND pc.level < 10
       )
       SELECT COUNT(*) as found FROM parent_chain WHERE id = $2;
     `;
 
-    const result = await this.query(query, [newParentId, categoryId]);
+    const result = await this.query(query, [newParentId, categoryId, tenantId]);
     return parseInt(result[0]?.found || '0') > 0;
   }
 
   async getCategoryDepth(categoryId: string): Promise<number> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const query = `
       WITH RECURSIVE parent_chain AS (
         SELECT id, parent_id, 0 as depth
         FROM categories
-        WHERE id = $1 AND deleted_at IS NULL
+        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
         
         UNION ALL
         
         SELECT c.id, c.parent_id, pc.depth + 1
         FROM categories c
         INNER JOIN parent_chain pc ON c.id = pc.parent_id
-        WHERE c.deleted_at IS NULL AND pc.depth < 10
+        WHERE c.organization_id = $2 AND c.deleted_at IS NULL AND pc.depth < 10
       )
       SELECT MAX(depth) as max_depth FROM parent_chain;
     `;
 
-    const result = await this.query(query, [categoryId]);
+    const result = await this.query(query, [categoryId, tenantId]);
     return parseInt(result[0]?.max_depth || '0');
   }
 

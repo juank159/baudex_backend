@@ -26,7 +26,7 @@ export class ExpenseCategoriesController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createCategoryDto: CreateExpenseCategoryDto) {
     return this.categoriesService.create(createCategoryDto);
@@ -62,7 +62,7 @@ export class ExpenseCategoriesController {
 
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateCategoryDto: UpdateExpenseCategoryDto,
@@ -72,9 +72,18 @@ export class ExpenseCategoriesController {
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.OK)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.categoriesService.softDelete(id);
+  }
+
+  // Endpoint temporal para crear categorías por defecto
+  @Post('seed-default-categories')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @HttpCode(HttpStatus.OK)
+  async seedDefaultCategories() {
+    return this.categoriesService.seedDefaultCategories();
   }
 }

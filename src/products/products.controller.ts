@@ -14,8 +14,10 @@ import {
   UseGuards,
   Req,
   Put,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { plainToInstance } from 'class-transformer';
 import { TransformInterceptor } from 'src/common/interceptors/transform.interceptor';
 import { ProductService } from './products.service';
@@ -24,27 +26,58 @@ import { ProductResponseDto } from './dto/product-response.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Product, ProductStatus } from './entities/product.entity';
+import { GetUser } from '../auth/decorators/get-user.decorator';
+import { TenantId, CurrentOrganization } from '../common/decorators/current-tenant.decorator';
+import { User } from '../users/entities/user.entity';
+import { Organization } from '../organizations/entities/organization.entity';
+import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
-// ✅ SOLUCIÓN: QUITAR el interceptor global del controlador
+@ApiTags('Productos')
+@ApiBearerAuth()
+@UseGuards(AuthGuard('jwt'))
 @Controller('products')
-// ❌ REMOVIDO: @UseInterceptors(new TransformInterceptor(ProductResponseDto))
 export class ProductController {
-  constructor(private readonly productService: ProductService) {}
+  constructor(
+    private readonly productService: ProductService,
+    private readonly subscriptionService: SubscriptionService,
+  ) {}
 
-  // ✅ APLICAR INTERCEPTOR SOLO a métodos que devuelven ProductResponseDto individual
-  @UseGuards(AuthGuard('jwt'))
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(new TransformInterceptor(ProductResponseDto))
+  @ApiOperation({ summary: 'Crear nuevo producto' })
+  @ApiResponse({
+    status: 201,
+    description: 'Producto creado exitosamente',
+    type: ProductResponseDto,
+  })
+  @ApiResponse({ status: 409, description: 'SKU ya existe' })
+  @ApiResponse({ status: 403, description: 'Suscripción requerida para crear productos' })
   async create(
     @Body() createProductDto: CreateProductDto,
-    @Req() req,
+    @GetUser() user: User,
+    @TenantId() tenantId: string,
+    @CurrentOrganization() organization: Organization,
   ): Promise<ProductResponseDto> {
-    const createdByUserId = req.user.id;
+    console.log(`🏢 Creating product for organization: ${organization?.name} (${tenantId})`);
+    
+    // 🔒 VALIDACIÓN DE SUSCRIPCIÓN CRÍTICA
+    const canCreateProduct = await this.subscriptionService.canPerformAction(
+      tenantId,
+      'create_product'
+    );
+    
+    if (!canCreateProduct) {
+      throw new ForbiddenException(
+        'Su suscripción ha expirado. Por favor, actualice su plan para continuar creando productos.'
+      );
+    }
+    
     const product = await this.productService.create(
       createProductDto,
-      createdByUserId,
+      user.id,
     );
+    
     return plainToInstance(ProductResponseDto, product, {
       excludeExtraneousValues: true,
     });
@@ -226,10 +259,23 @@ export class ProductController {
 
   @Put(':id')
   @UseInterceptors(new TransformInterceptor(ProductResponseDto))
+  @ApiResponse({ status: 403, description: 'Suscripción requerida para actualizar productos' })
   async updateComplete(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateProductDto: UpdateProductDto,
+    @TenantId() tenantId: string,
   ): Promise<ProductResponseDto> {
+    // 🔒 VALIDACIÓN DE SUSCRIPCIÓN CRÍTICA
+    const canUpdateProduct = await this.subscriptionService.canPerformAction(
+      tenantId,
+      'update_product'
+    );
+    
+    if (!canUpdateProduct) {
+      throw new ForbiddenException(
+        'Su suscripción ha expirado. Por favor, actualice su plan para continuar editando productos.'
+      );
+    }
     console.log(
       '🔧 ProductController: PUT request recibido para producto:',
       id,
@@ -322,7 +368,23 @@ export class ProductController {
   // ✅ SIN INTERCEPTOR - devuelve void
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  @ApiResponse({ status: 403, description: 'Suscripción requerida para eliminar productos' })
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @TenantId() tenantId: string,
+  ): Promise<void> {
+    // 🔒 VALIDACIÓN DE SUSCRIPCIÓN CRÍTICA
+    const canDeleteProduct = await this.subscriptionService.canPerformAction(
+      tenantId,
+      'delete_product'
+    );
+    
+    if (!canDeleteProduct) {
+      throw new ForbiddenException(
+        'Su suscripción ha expirado. Por favor, actualice su plan para continuar eliminando productos.'
+      );
+    }
+    
     return this.productService.softDelete(id);
   }
 

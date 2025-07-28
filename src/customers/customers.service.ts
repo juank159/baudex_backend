@@ -14,35 +14,50 @@ import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from '../common/dto/pagination-response.dto';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
 @Injectable()
 export class CustomersService {
   constructor(
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
+    private readonly tenantAwareService: TenantAwareService,
   ) {}
 
   async create(createCustomerDto: CreateCustomerDto): Promise<Customer> {
-    // Verificar si el email ya existe
-    const existingEmail = await this.customerRepository.findOne({
-      where: { email: createCustomerDto.email },
-    });
-    if (existingEmail) {
-      throw new ConflictException('El email ya está registrado');
+    // Obtener tenant ID
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    // Verificar si el documento ya existe
+    // Verificar si el email ya existe en la organización actual
+    const existingEmail = await this.customerRepository.findOne({
+      where: { 
+        email: createCustomerDto.email,
+        organizationId: tenantId,
+      },
+    });
+    if (existingEmail) {
+      throw new ConflictException('El email ya está registrado en esta organización');
+    }
+
+    // Verificar si el documento ya existe en la organización actual
     const existingDocument = await this.customerRepository.findOne({
       where: {
         documentType: createCustomerDto.documentType,
         documentNumber: createCustomerDto.documentNumber,
+        organizationId: tenantId,
       },
     });
     if (existingDocument) {
-      throw new ConflictException('El número de documento ya está registrado');
+      throw new ConflictException('El número de documento ya está registrado en esta organización');
     }
 
-    const customer = this.customerRepository.create(createCustomerDto);
+    const customer = this.customerRepository.create({
+      ...createCustomerDto,
+      organizationId: tenantId,
+    });
     return this.customerRepository.save(customer);
   }
 
@@ -61,7 +76,17 @@ export class CustomersService {
       sortOrder = 'DESC',
     } = query;
 
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const queryBuilder = this.customerRepository.createQueryBuilder('customer');
+
+    // ✅ MULTITENANT FIX: Filtrar por organización
+    queryBuilder.where('customer.organizationId = :organizationId', {
+      organizationId: tenantId,
+    });
 
     // Filtros
     if (search) {
@@ -113,8 +138,13 @@ export class CustomersService {
   }
 
   async findOne(id: string): Promise<Customer> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const customer = await this.customerRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
     });
 
     if (!customer) {
@@ -128,8 +158,17 @@ export class CustomersService {
     documentType: string,
     documentNumber: string,
   ): Promise<Customer> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const customer = await this.customerRepository.findOne({
-      where: { documentType: documentType as any, documentNumber },
+      where: { 
+        documentType: documentType as any, 
+        documentNumber, 
+        organizationId: tenantId 
+      },
     });
 
     if (!customer) {
@@ -140,8 +179,13 @@ export class CustomersService {
   }
 
   async findByEmail(email: string): Promise<Customer> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const customer = await this.customerRepository.findOne({
-      where: { email },
+      where: { email, organizationId: tenantId },
     });
 
     if (!customer) {
@@ -164,9 +208,18 @@ export class CustomersService {
         `🔍 [SERVICE] Validating email: "${email}", excludeId: "${excludeId}"`,
       );
 
+      const tenantId = this.tenantAwareService.getTenantId();
+      if (!tenantId) {
+        console.log('❌ [SERVICE] No tenant ID found for email validation');
+        return null;
+      }
+
       const queryBuilder = this.customerRepository
         .createQueryBuilder('customer')
-        .where('LOWER(customer.email) = LOWER(:email)', {
+        .where('customer.organizationId = :organizationId', {
+          organizationId: tenantId,
+        })
+        .andWhere('LOWER(customer.email) = LOWER(:email)', {
           email: email.trim(),
         });
 
@@ -211,9 +264,18 @@ export class CustomersService {
         `🔍 [SERVICE] Validating document: "${documentType}:${documentNumber}", excludeId: "${excludeId}"`,
       );
 
+      const tenantId = this.tenantAwareService.getTenantId();
+      if (!tenantId) {
+        console.log('❌ [SERVICE] No tenant ID found for document validation');
+        return null;
+      }
+
       const queryBuilder = this.customerRepository
         .createQueryBuilder('customer')
-        .where('customer.documentType = :documentType', {
+        .where('customer.organizationId = :organizationId', {
+          organizationId: tenantId,
+        })
+        .andWhere('customer.documentType = :documentType', {
           documentType: documentType.trim(),
         })
         .andWhere('customer.documentNumber = :documentNumber', {
@@ -345,22 +407,30 @@ export class CustomersService {
     totalBalance: number;
     activePercentage: number;
   }> {
-    const total = await this.customerRepository.count();
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
+    const total = await this.customerRepository.count({
+      where: { organizationId: tenantId },
+    });
     const active = await this.customerRepository.count({
-      where: { status: CustomerStatus.ACTIVE },
+      where: { organizationId: tenantId, status: CustomerStatus.ACTIVE },
     });
     const inactive = await this.customerRepository.count({
-      where: { status: CustomerStatus.INACTIVE },
+      where: { organizationId: tenantId, status: CustomerStatus.INACTIVE },
     });
     const suspended = await this.customerRepository.count({
-      where: { status: CustomerStatus.SUSPENDED },
+      where: { organizationId: tenantId, status: CustomerStatus.SUSPENDED },
     });
 
     const creditResult = await this.customerRepository
       .createQueryBuilder('customer')
       .select('SUM(customer.creditLimit)', 'totalCreditLimit')
       .addSelect('SUM(customer.currentBalance)', 'totalBalance')
-      .where('customer.status = :status', { status: CustomerStatus.ACTIVE })
+      .where('customer.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('customer.status = :status', { status: CustomerStatus.ACTIVE })
       .getRawOne();
 
     return {
@@ -376,10 +446,18 @@ export class CustomersService {
   }
 
   async search(searchTerm: string, limit: number = 10): Promise<Customer[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     return this.customerRepository
       .createQueryBuilder('customer')
-      .where(
-        'customer.firstName ILIKE :search OR customer.lastName ILIKE :search OR customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.documentNumber ILIKE :search',
+      .where('customer.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
+      .andWhere(
+        '(customer.firstName ILIKE :search OR customer.lastName ILIKE :search OR customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.documentNumber ILIKE :search)',
         { search: `%${searchTerm}%` },
       )
       .andWhere('customer.status = :status', { status: CustomerStatus.ACTIVE })
@@ -397,8 +475,13 @@ export class CustomersService {
    * Obtener cliente con sus facturas
    */
   async findOneWithInvoices(id: string): Promise<Customer> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const customer = await this.customerRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       relations: ['invoices'],
     });
 

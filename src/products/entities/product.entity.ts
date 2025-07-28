@@ -127,10 +127,11 @@
 // }
 
 // src/modules/products/entities/product.entity.ts - CORRECCIÓN FINAL
-import { Entity, Column, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Entity, Column, ManyToOne, OneToMany, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Category } from '../../categories/entities/category.entity';
 import { User } from '../../users/entities/user.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 import { ProductPrice } from './product-price.entity';
 
 export enum ProductStatus {
@@ -202,6 +203,15 @@ export class Product extends BaseEntity {
   // Campos adicionales
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.products)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   @Column({ type: 'uuid', name: 'category_id' })
   categoryId: string;

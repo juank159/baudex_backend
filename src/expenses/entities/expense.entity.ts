@@ -1,7 +1,8 @@
-import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { ExpenseCategory } from './expense-category.entity';
 import { User } from '../../users/entities/user.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 
 export enum ExpenseStatus {
   DRAFT = 'draft',
@@ -90,6 +91,15 @@ export class Expense extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   rejectionReason?: string;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.expenses)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // Relaciones
   @Column({ type: 'uuid' })

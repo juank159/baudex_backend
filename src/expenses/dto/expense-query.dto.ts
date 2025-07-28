@@ -123,4 +123,32 @@ export class ExpenseQueryDto {
     message: 'El orden debe ser ASC o DESC',
   })
   sortOrder?: 'ASC' | 'DESC' = 'DESC';
+
+  // Aliases para compatibilidad con el frontend
+  @IsOptional()
+  @IsString({
+    message: 'El campo de ordenamiento debe ser una cadena de texto',
+  })
+  @IsEnum(
+    [
+      'description',
+      'amount',
+      'date',
+      'status',
+      'type',
+      'vendor',
+      'createdAt',
+      'updatedAt',
+    ],
+    {
+      message: 'El campo de ordenamiento no es válido',
+    },
+  )
+  orderBy?: string;
+
+  @IsOptional()
+  @IsEnum(['ASC', 'DESC'], {
+    message: 'El orden debe ser ASC o DESC',
+  })
+  orderDirection?: 'ASC' | 'DESC';
 }

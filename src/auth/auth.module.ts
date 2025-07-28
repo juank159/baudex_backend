@@ -3,15 +3,19 @@ import { Module, forwardRef } from '@nestjs/common'; // 👈 Agregar forwardRef
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { User } from '../users/entities/user.entity';
+import { Organization } from '../organizations/entities/organization.entity';
 
 @Module({
   imports: [
     ConfigModule,
+    TypeOrmModule.forFeature([User, Organization]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -27,6 +31,6 @@ import { UsersModule } from '../users/users.module';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [JwtStrategy, PassportModule, JwtModule],
+  exports: [JwtStrategy, PassportModule, JwtModule, AuthService],
 })
 export class AuthModule {}

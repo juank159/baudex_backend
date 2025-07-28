@@ -226,6 +226,7 @@ import { CategoryQueryDto } from './dto/category-query.dto';
 import { Category, CategoryStatus } from './entities/category.entity';
 import { PaginatedResponseDto } from './../common/dto/pagination-response.dto';
 import { SlugService } from '../common/services/slug.service';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
 @Injectable()
 export class CategoryService {
@@ -234,6 +235,7 @@ export class CategoryService {
   constructor(
     private readonly categoryRepository: CategoryRepository,
     private readonly slugService: SlugService,
+    private readonly tenantAwareService: TenantAwareService,
   ) {}
 
   // async create(createCategoryDto: CreateCategoryDto): Promise<Category> {
@@ -301,16 +303,28 @@ export class CategoryService {
         `Found deleted category with slug: ${createCategoryDto.slug}. Restoring...`,
       );
 
-      // Actualizar la categoría eliminada con los nuevos datos
-      Object.assign(deletedCategory, createCategoryDto);
-      deletedCategory.deletedAt = null; // Restaurar
+      // Verificar que la categoría eliminada pertenece al mismo tenant
+      const tenantId = this.tenantAwareService.getTenantId();
+      if (!tenantId) {
+        throw new Error('No se pudo determinar el tenant actual');
+      }
 
-      const restoredCategory =
-        await this.categoryRepository.save(deletedCategory);
-      this.logger.log(
-        `Category restored successfully with ID: ${restoredCategory.id}`,
-      );
-      return restoredCategory;
+      if (deletedCategory.organizationId !== tenantId) {
+        // Si no pertenece al mismo tenant, continuar con creación normal
+        this.logger.log(`Deleted category belongs to different tenant, creating new one`);
+      } else {
+        // Actualizar la categoría eliminada con los nuevos datos
+        Object.assign(deletedCategory, createCategoryDto);
+        deletedCategory.deletedAt = null; // Restaurar
+        deletedCategory.organizationId = tenantId; // Asegurar tenant correcto
+
+        const restoredCategory =
+          await this.categoryRepository.save(deletedCategory);
+        this.logger.log(
+          `Category restored successfully with ID: ${restoredCategory.id} for tenant: ${tenantId}`,
+        );
+        return restoredCategory;
+      }
     }
 
     // Verificar si el slug ya existe en categorías activas
@@ -353,11 +367,20 @@ export class CategoryService {
       createCategoryDto.sortOrder = maxOrder + 1;
     }
 
-    const category = this.categoryRepository.create(createCategoryDto);
+    // Agregar organization_id del tenant actual
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('No se pudo determinar el tenant actual');
+    }
+
+    const category = this.categoryRepository.create({
+      ...createCategoryDto,
+      organizationId: tenantId,
+    });
     const savedCategory = await this.categoryRepository.save(category);
 
     this.logger.log(
-      `Category created successfully with ID: ${savedCategory.id}`,
+      `Category created successfully with ID: ${savedCategory.id} for tenant: ${tenantId}`,
     );
     return savedCategory;
   }
@@ -381,8 +404,13 @@ export class CategoryService {
   }
 
   async findOne(id: string): Promise<Category> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const category = await this.categoryRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       relations: ['parent', 'children', 'products'],
     });
 
@@ -570,7 +598,12 @@ export class CategoryService {
   }
 
   async getStats(): Promise<any> {
-    // 🔥 SÚPER OPTIMIZADO: Una sola consulta
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('No se pudo determinar el tenant actual');
+    }
+
+    // 🔥 SÚPER OPTIMIZADO: Una sola consulta CON FILTRO DE TENANT
     const result = await this.categoryRepository
       .createQueryBuilder('category')
       .select([
@@ -580,12 +613,18 @@ export class CategoryService {
         'COUNT(CASE WHEN category.parentId IS NOT NULL THEN 1 END) as children',
       ])
       .where('category.deletedAt IS NULL')
+      .andWhere('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .setParameter('activeStatus', CategoryStatus.ACTIVE)
       .getRawOne();
 
     const deletedCount = await this.categoryRepository
       .createQueryBuilder('category')
       .where('category.deletedAt IS NOT NULL')
+      .andWhere('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .getCount();
 
     const total = parseInt(result.total);

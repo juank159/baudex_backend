@@ -11,7 +11,7 @@ import {
   Min,
   IsObject,
 } from 'class-validator';
-import { ExpenseType, PaymentMethod } from '../entities/expense.entity';
+import { ExpenseType, PaymentMethod, ExpenseStatus } from '../entities/expense.entity';
 
 export class CreateExpenseDto {
   @IsString({ message: 'La descripción es requerida' })
@@ -81,4 +81,10 @@ export class CreateExpenseDto {
 
   @IsUUID('4', { message: 'El ID de la categoría debe ser un UUID válido' })
   categoryId: string;
+
+  @IsOptional()
+  @IsEnum(ExpenseStatus, {
+    message: 'El estado debe ser draft, pending, approved, rejected o paid',
+  })
+  status?: ExpenseStatus = ExpenseStatus.APPROVED;
 }

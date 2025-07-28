@@ -36,12 +36,13 @@ import { ReportQueryDto } from './dto/report-query.dto';
 import { ReportData } from './interfaces/reports.interfaces';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserRole } from 'src/users/entities/user.entity';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth()
-@UseGuards(RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.MANAGER)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
 @Controller('dashboard')
 export class DashboardController {
   constructor(
@@ -390,6 +391,118 @@ export class DashboardController {
     } catch (error) {
       throw new HttpException(
         'Error al generar el reporte',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('activities/recent')
+  @ApiOperation({
+    summary: 'Obtener actividades recientes',
+    description: 'Lista de actividades recientes basadas en datos reales del negocio con paginación',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Actividades recientes obtenidas exitosamente',
+    type: Object,
+  })
+  async getRecentActivities(
+    @Query() query: any,
+    @Request() req: any,
+  ): Promise<any> {
+    try {
+      const organizationId = req.user?.organizationId;
+      const page = parseInt(query?.page) || 1;
+      const limit = parseInt(query?.limit) || 10;
+      const offset = (page - 1) * limit;
+      
+      // Obtener actividades reales desde la base de datos
+      const result = await this.dashboardService.getRecentRealActivities(organizationId, limit, offset);
+      
+      return {
+        data: {
+          activities: result.activities,
+          pagination: {
+            currentPage: page,
+            pageSize: limit,
+            totalItems: result.total,
+            totalPages: Math.ceil(result.total / limit),
+            hasNext: page < Math.ceil(result.total / limit),
+            hasPrev: page > 1
+          }
+        }
+      };
+    } catch (error) {
+      throw new HttpException(
+        'Error al obtener las actividades recientes',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('notifications')
+  @ApiOperation({
+    summary: 'Obtener notificaciones',
+    description: 'Lista de notificaciones inteligentes basadas en datos reales del negocio con paginación',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notificaciones obtenidas exitosamente',
+    type: Object,
+  })
+  async getNotifications(
+    @Query() query: any,
+    @Request() req: any,
+  ): Promise<any> {
+    try {
+      const organizationId = req.user?.organizationId;
+      const page = parseInt(query?.page) || 1;
+      const limit = parseInt(query?.limit) || 10;
+      const offset = (page - 1) * limit;
+      
+      // Obtener notificaciones reales desde la base de datos
+      const result = await this.dashboardService.getRealNotifications(organizationId, limit, offset);
+      
+      return {
+        data: {
+          notifications: result.notifications,
+          unreadCount: result.unreadCount,
+          pagination: {
+            currentPage: page,
+            pageSize: limit,
+            totalItems: result.total,
+            totalPages: Math.ceil(result.total / limit),
+            hasNext: page < Math.ceil(result.total / limit),
+            hasPrev: page > 1
+          }
+        }
+      };
+    } catch (error) {
+      throw new HttpException(
+        'Error al obtener las notificaciones',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('notifications/unread-count')
+  @ApiOperation({
+    summary: 'Obtener contador de notificaciones no leídas',
+    description: 'Número de notificaciones no leídas basado en datos reales',
+  })
+  async getUnreadNotificationsCount(@Request() req: any): Promise<any> {
+    try {
+      const organizationId = req.user?.organizationId;
+      
+      // Obtener notificaciones reales y contar las no leídas
+      const result = await this.dashboardService.getRealNotifications(organizationId, 100, 0);
+      
+      return {
+        unreadCount: result.unreadCount
+      };
+    } catch (error) {
+      throw new HttpException(
+        'Error al obtener el contador de notificaciones',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

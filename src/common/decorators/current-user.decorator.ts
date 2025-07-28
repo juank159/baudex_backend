@@ -1,27 +1,19 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { User } from '../../users/entities/user.entity';
 
 export const CurrentUser = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext) => {
+  (data: keyof User | undefined, ctx: ExecutionContext): User | any => {
     const request = ctx.switchToHttp().getRequest();
-    return request.user;
+    const user = request.user;
+
+    if (!user) {
+      return null;
+    }
+
+    if (data) {
+      return user[data];
+    }
+
+    return user;
   },
 );
-
-// src/common/pipes/parse-uuid.pipe.ts
-import {
-  PipeTransform,
-  Injectable,
-  ArgumentMetadata,
-  BadRequestException,
-} from '@nestjs/common';
-import { validate as isUUID } from 'uuid';
-
-@Injectable()
-export class ParseUUIDPipe implements PipeTransform<string, string> {
-  transform(value: string, metadata: ArgumentMetadata): string {
-    if (!isUUID(value)) {
-      throw new BadRequestException(`${metadata.data} debe ser un UUID válido`);
-    }
-    return value;
-  }
-}

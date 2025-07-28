@@ -272,10 +272,12 @@ import {
   OneToMany,
   JoinColumn,
   BeforeInsert,
+  Index,
 } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Customer } from '../../customers/entities/customer.entity';
 import { User } from '../../users/entities/user.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 import { InvoiceItem } from './invoice-item.entity';
 
 export enum InvoiceStatus {
@@ -420,6 +422,15 @@ export class Invoice extends BaseEntity {
 
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.invoices)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // ✅ RELACIONES CORREGIDAS - ESTE ES EL FIX PRINCIPAL
   @Column({ type: 'uuid' })

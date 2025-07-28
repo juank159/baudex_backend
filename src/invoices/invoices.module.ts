@@ -32,6 +32,7 @@ import { InvoiceItem } from './entities/invoice-item.entity';
 import { AuthModule } from '../auth/auth.module';
 import { CustomersModule } from '../customers/customers.module';
 import { ProductModule } from 'src/products/products.module';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ProductModule } from 'src/products/products.module';
     // ✅ IMPORTANTE: NO usar forwardRef para ProductModule
     // porque necesitamos el TemporaryProductService
     ProductModule, // ✅ CAMBIAR ESTO - sin forwardRef
+    CommonModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService],

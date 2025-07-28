@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Scope,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -18,13 +19,15 @@ import {
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { ApproveExpenseDto } from './dto/approve-expense.dto';
 import { RejectExpenseDto } from './dto/reject-expense.dto';
+import { TenantAwareService } from 'src/common/services/tenant-aware.service';
 
-@Injectable()
+@Injectable({ scope: Scope.REQUEST })
 export class ExpensesService {
   constructor(
     @InjectRepository(Expense)
     private readonly expenseRepository: Repository<Expense>,
     private readonly categoriesService: ExpenseCategoriesService,
+    private readonly tenantService: TenantAwareService,
   ) {}
 
   async create(
@@ -34,15 +37,19 @@ export class ExpensesService {
     // Verificar que la categoría existe
     await this.categoriesService.findOne(createExpenseDto.categoryId);
 
-    const expense = this.expenseRepository.create({
+    const expenseData = {
       ...createExpenseDto,
       date: createExpenseDto.date
         ? new Date(createExpenseDto.date)
         : new Date(),
       createdById,
-      status: ExpenseStatus.DRAFT,
-    });
+      status: createExpenseDto.status || ExpenseStatus.APPROVED,
+    };
 
+    const expense = this.expenseRepository.create({
+      ...expenseData,
+      organizationId: this.tenantService.getTenantId()!,
+    });
     return this.expenseRepository.save(expense);
   }
 
@@ -66,6 +73,8 @@ export class ExpensesService {
       tags,
       sortBy = 'date',
       sortOrder = 'DESC',
+      orderBy,
+      orderDirection,
     } = query;
 
     const queryBuilder = this.expenseRepository
@@ -73,6 +82,9 @@ export class ExpensesService {
       .leftJoinAndSelect('expense.category', 'category')
       .leftJoinAndSelect('expense.createdBy', 'createdBy')
       .leftJoinAndSelect('expense.approvedBy', 'approvedBy');
+
+    // Aplicar filtro de tenant automáticamente
+    this.tenantService.addTenantFilterToQueryBuilder(queryBuilder, 'expense');
 
     // Filtros
     if (search) {
@@ -134,8 +146,10 @@ export class ExpensesService {
       });
     }
 
-    // Ordenamiento
-    queryBuilder.orderBy(`expense.${sortBy}`, sortOrder);
+    // Ordenamiento - usar orderBy/orderDirection si están presentes, sino usar sortBy/sortOrder
+    const finalSortBy = orderBy || sortBy;
+    const finalSortOrder = orderDirection || sortOrder;
+    queryBuilder.orderBy(`expense.${finalSortBy}`, finalSortOrder);
 
     // Paginación
     const offset = (page - 1) * limit;
@@ -156,10 +170,17 @@ export class ExpensesService {
   }
 
   async findOne(id: string): Promise<Expense> {
-    const expense = await this.expenseRepository.findOne({
-      where: { id },
-      relations: ['category', 'createdBy', 'approvedBy'],
-    });
+    const queryBuilder = this.expenseRepository
+      .createQueryBuilder('expense')
+      .leftJoinAndSelect('expense.category', 'category')
+      .leftJoinAndSelect('expense.createdBy', 'createdBy')
+      .leftJoinAndSelect('expense.approvedBy', 'approvedBy')
+      .where('expense.id = :id', { id });
+
+    // Aplicar filtro de tenant automáticamente
+    this.tenantService.addTenantFilterToQueryBuilder(queryBuilder, 'expense');
+
+    const expense = await queryBuilder.getOne();
 
     if (!expense) {
       throw new NotFoundException('Gasto no encontrado');
@@ -297,21 +318,28 @@ export class ExpensesService {
     pendingAmount: number;
     averageAmount: number;
   }> {
-    const total = await this.expenseRepository.count();
+    const tenantId = this.tenantService.getTenantId();
+    if (!tenantId) {
+      throw new Error('No se pudo determinar la organización');
+    }
+
+    const total = await this.expenseRepository.count({
+      where: { organizationId: tenantId },
+    });
     const draft = await this.expenseRepository.count({
-      where: { status: ExpenseStatus.DRAFT },
+      where: { status: ExpenseStatus.DRAFT, organizationId: tenantId },
     });
     const pending = await this.expenseRepository.count({
-      where: { status: ExpenseStatus.PENDING },
+      where: { status: ExpenseStatus.PENDING, organizationId: tenantId },
     });
     const approved = await this.expenseRepository.count({
-      where: { status: ExpenseStatus.APPROVED },
+      where: { status: ExpenseStatus.APPROVED, organizationId: tenantId },
     });
     const rejected = await this.expenseRepository.count({
-      where: { status: ExpenseStatus.REJECTED },
+      where: { status: ExpenseStatus.REJECTED, organizationId: tenantId },
     });
     const paid = await this.expenseRepository.count({
-      where: { status: ExpenseStatus.PAID },
+      where: { status: ExpenseStatus.PAID, organizationId: tenantId },
     });
 
     // Montos totales
@@ -321,6 +349,9 @@ export class ExpensesService {
       .addSelect('AVG(expense.amount)', 'averageAmount')
       .where('expense.status IN (:...statuses)', {
         statuses: [ExpenseStatus.APPROVED, ExpenseStatus.PAID],
+      })
+      .andWhere('expense.organizationId = :organizationId', {
+        organizationId: tenantId,
       })
       .getRawOne();
 
@@ -345,6 +376,9 @@ export class ExpensesService {
       .andWhere('expense.status IN (:...statuses)', {
         statuses: [ExpenseStatus.APPROVED, ExpenseStatus.PAID],
       })
+      .andWhere('expense.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .getRawOne();
 
     // Gastos pendientes de pago
@@ -352,6 +386,9 @@ export class ExpensesService {
       .createQueryBuilder('expense')
       .select('SUM(expense.amount)', 'pendingAmount')
       .where('expense.status = :status', { status: ExpenseStatus.APPROVED })
+      .andWhere('expense.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .getRawOne();
 
     return {

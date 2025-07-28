@@ -1,7 +1,8 @@
 // src/modules/users/entities/user.entity.ts - CORREGIDA
-import { Entity, Column, OneToMany, BeforeInsert, BeforeUpdate } from 'typeorm';
+import { Entity, Column, OneToMany, ManyToOne, JoinColumn, BeforeInsert, BeforeUpdate, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Product } from '../../products/entities/product.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 import * as bcrypt from 'bcryptjs';
 
 export enum UserRole {
@@ -52,6 +53,15 @@ export class User extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   avatar?: string;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.users)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // Relaciones
   @OneToMany(() => Product, (product) => product.createdBy)

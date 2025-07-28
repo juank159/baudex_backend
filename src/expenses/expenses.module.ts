@@ -8,6 +8,7 @@ import { ExpensesController } from './expenses.controller';
 import { ExpenseCategoriesController } from './expense-categories.controller';
 import { ExpensesService } from './expenses.service';
 import { ExpenseCategoriesService } from './expense-categories.service';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { ExpenseCategoriesService } from './expense-categories.service';
     forwardRef(() => AuthModule),
   ],
   controllers: [ExpensesController, ExpenseCategoriesController],
-  providers: [ExpensesService, ExpenseCategoriesService],
+  providers: [ExpensesService, ExpenseCategoriesService, TenantAwareService],
   exports: [ExpensesService, ExpenseCategoriesService, TypeOrmModule],
 })
 export class ExpensesModule {}

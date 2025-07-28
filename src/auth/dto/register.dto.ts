@@ -28,4 +28,9 @@ export class RegisterDto {
     message: 'El rol debe ser admin, manager o user',
   })
   role?: UserRole;
+
+  @IsOptional()
+  @IsString({ message: 'El nombre de la organización debe ser una cadena' })
+  @MinLength(2, { message: 'El nombre de la organización debe tener al menos 2 caracteres' })
+  organizationName?: string;
 }

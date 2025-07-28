@@ -55,7 +55,7 @@ export class ExpensesController {
 
   @Get('stats')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   getStats() {
     return this.expensesService.getStats();
   }
@@ -112,7 +112,7 @@ export class ExpensesController {
 
   @Post(':id/approve')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   @HttpCode(HttpStatus.OK)
   approve(
     @Param('id', ParseUUIDPipe) id: string,

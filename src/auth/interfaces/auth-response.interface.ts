@@ -11,5 +11,8 @@ export interface AuthResponse {
     role: UserRole;
     status: UserStatus;
     isActive: boolean;
+    organizationId: string;
+    organizationSlug: string;
+    organizationName: string;
   };
 }

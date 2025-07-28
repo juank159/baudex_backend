@@ -3,7 +3,11 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Scope,
+  Inject,
 } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
 import { ProductRepository } from './repositories/product.repository';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -18,29 +22,39 @@ import { PaginatedResponseDto } from '../common/dto/pagination-response.dto';
 import { CategoryService } from '../categories/categories.service';
 import { DataSource } from 'typeorm';
 import { UsersService } from '../users/users.service';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
-@Injectable()
+@Injectable({ scope: Scope.REQUEST })
 export class ProductService {
   constructor(
     private readonly productRepository: ProductRepository,
     private readonly categoryService: CategoryService,
     private readonly userService: UsersService,
     private readonly dataSource: DataSource,
+    private readonly tenantAwareService: TenantAwareService,
   ) {}
 
   async create(
     createProductDto: CreateProductDto,
     createdById: string,
   ): Promise<Product> {
-    // Verificar si el SKU ya existe
-    const existingSku = await this.productRepository.findBySku(
-      createProductDto.sku,
-    );
-    if (existingSku) {
-      throw new ConflictException('El SKU ya existe');
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    // Verificar que la categoría existe y está activa
+    // Verificar si el SKU ya existe en la organización actual
+    const repository = this.dataSource.getRepository(Product);
+    const existingSku = await this.tenantAwareService.findOneWithTenant(
+      repository,
+      { where: { sku: createProductDto.sku } }
+    );
+    
+    if (existingSku) {
+      throw new ConflictException('El SKU ya existe en esta organización');
+    }
+
+    // Verificar que la categoría existe y está activa en la organización actual
     const category = await this.categoryService.findOne(
       createProductDto.categoryId,
     );
@@ -68,6 +82,7 @@ export class ProductService {
         category: category,
         createdById: createdById, // ✅ Usa createdById directamente
         createdBy: createdBy,
+        organizationId: tenantId, // ✅ AGREGADO: organization_id del tenant
       });
 
       // ✅ CORREGIDO: Guardar producto individual, no como array
@@ -97,7 +112,17 @@ export class ProductService {
     } catch (err) {
       await queryRunner.rollbackTransaction();
       console.error('Error durante la creación del producto:', err);
-      throw new BadRequestException('Falló la creación del producto');
+      
+      // Proporcionar error más específico
+      if (err.code === '23505') { // Violación de constraint única
+        throw new ConflictException(`El SKU '${createProductDto.sku}' ya existe en esta organización`);
+      } else if (err.code === '23502') { // Violación de constraint NOT NULL
+        throw new BadRequestException(`Campo requerido faltante: ${err.column}`);
+      } else if (err.code === '23503') { // Violación de foreign key
+        throw new BadRequestException('Referencia inválida en los datos del producto');
+      } else {
+        throw new BadRequestException(`Error al crear producto: ${err.message || 'Error desconocido'}`);
+      }
     } finally {
       await queryRunner.release();
     }
@@ -110,8 +135,13 @@ export class ProductService {
   }
 
   async findOne(id: string): Promise<Product> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const product = await this.productRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       relations: ['category', 'prices', 'createdBy'],
     });
 

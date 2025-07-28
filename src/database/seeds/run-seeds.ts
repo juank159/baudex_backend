@@ -1,5 +1,6 @@
 import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
+import { OrganizationSeeder } from './organization.seed';
 import { UserSeeder } from './user.seed';
 import { CategorySeeder } from './category.seed';
 
@@ -13,7 +14,7 @@ const dataSource = new DataSource({
   username: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+  entities: ['src/**/*.entity{.ts,.js}'],
   synchronize: false,
 });
 
@@ -22,8 +23,13 @@ async function runSeeds() {
     await dataSource.initialize();
     console.log('🌱 Iniciando seeds...');
 
-    await UserSeeder.run(dataSource);
-    await CategorySeeder.run(dataSource);
+    // Ejecutar seeds en orden: Organizaciones primero, luego usuarios y categorías
+    const organizationSeeder = new OrganizationSeeder(dataSource);
+    await organizationSeeder.run();
+
+    // Los user y category seeds necesitarán ser actualizados para multitenant
+    // await UserSeeder.run(dataSource);
+    // await CategorySeeder.run(dataSource);
 
     console.log('✅ Seeds completados exitosamente');
   } catch (error) {

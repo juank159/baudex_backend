@@ -41,6 +41,7 @@ import { TemporaryProduct } from './entities/temporary-product.entity';
 import { ProductRepository } from './repositories/product.repository';
 import { CategoryModule } from 'src/categories/categories.module';
 import { AuthModule } from '../auth/auth.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 import { ProductController } from './products.controller';
 import { ProductPriceController } from './product-price.controller';
@@ -61,6 +62,7 @@ import { UsersModule } from 'src/users/users.module';
     CategoryModule,
     UsersModule,
     AuthModule,
+    SubscriptionsModule, // 🔒 IMPORTAR MÓDULO DE SUSCRIPCIONES PARA VALIDACIÓN
   ],
   controllers: [
     ProductController,

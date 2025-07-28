@@ -21,6 +21,8 @@ import { AddPaymentDto } from './dto/payment.dto';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
+import { RequireSubscription } from '../common/decorators/subscription-action.decorator';
 import { User, UserRole } from '../users/entities/user.entity';
 
 @Controller('invoices')
@@ -29,8 +31,9 @@ export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 
   @Post()
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @UseGuards(AuthGuard('jwt'), RolesGuard, SubscriptionGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @RequireSubscription('create_invoice')
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createInvoiceDto: CreateInvoiceDto, @GetUser() user: User) {
     return this.invoicesService.create(createInvoiceDto, user.id);
@@ -72,8 +75,9 @@ export class InvoicesController {
   }
 
   @Patch(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, SubscriptionGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @RequireSubscription('update_invoice')
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateInvoiceDto: UpdateInvoiceDto,

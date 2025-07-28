@@ -1,6 +1,7 @@
-import { Entity, Column, OneToMany } from 'typeorm';
+import { Entity, Column, OneToMany, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Expense } from './expense.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 
 export enum ExpenseCategoryStatus {
   ACTIVE = 'active',
@@ -34,6 +35,15 @@ export class ExpenseCategory extends BaseEntity {
 
   @Column({ type: 'integer', default: 0 })
   sortOrder: number;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.expenses)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // Relaciones
   @OneToMany(() => Expense, (expense) => expense.category)

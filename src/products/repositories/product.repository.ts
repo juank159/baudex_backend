@@ -362,17 +362,31 @@ import {
   PaginationMetaDto,
 } from '../../common/dto/pagination-response.dto';
 import { PriceStatus, PriceType } from '../entities/product-price.entity';
+import { TenantAwareService } from '../../common/services/tenant-aware.service';
 
 @Injectable()
 export class ProductRepository extends Repository<Product> {
-  constructor(private dataSource: DataSource) {
+  constructor(
+    private dataSource: DataSource,
+    private tenantAwareService: TenantAwareService,
+  ) {
     super(Product, dataSource.createEntityManager());
   }
 
   async findAllPaginated(
     query: ProductQueryDto,
   ): Promise<PaginatedResponseDto<Product>> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('product');
+
+    // ✅ MULTITENANT FIX: Filtrar por organización
+    queryBuilder.where('product.organizationId = :organizationId', {
+      organizationId: tenantId,
+    });
 
     // Incluir relaciones según los parámetros
     if (query.includeCategory) {
@@ -427,25 +441,41 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findBySku(sku: string): Promise<Product | null> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.findOne({
-      where: { sku },
+      where: { sku, organizationId: tenantId },
       relations: ['category', 'prices', 'createdBy'],
     });
   }
 
   async findByBarcode(barcode: string): Promise<Product | null> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.findOne({
-      where: { barcode },
+      where: { barcode, organizationId: tenantId },
       relations: ['category', 'prices', 'createdBy'],
     });
   }
 
   async findBySkuOrBarcode(code: string): Promise<Product | null> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where('product.sku = :code OR product.barcode = :code', { code })
+      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('(product.sku = :code OR product.barcode = :code)', { code })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .getOne();
   }
@@ -454,11 +484,17 @@ export class ProductRepository extends Repository<Product> {
     searchTerm: string,
     limit: number = 20,
   ): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where(
+      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere(
         '(product.name ILIKE :search OR product.sku ILIKE :search OR product.barcode ILIKE :search)',
         { search: `%${searchTerm}%` },
       )
@@ -494,9 +530,15 @@ export class ProductRepository extends Repository<Product> {
   // En product.repository.ts
   async findLowStockProducts(): Promise<Product[]> {
     console.log('🔍 ProductRepository: Buscando productos con stock bajo...');
+    
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
 
     const allProducts = await this.find({
       where: {
+        organizationId: tenantId,
         deletedAt: null,
       },
       relations: ['category', 'prices', 'createdBy'],
@@ -527,16 +569,30 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findOutOfStockProducts(): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
-      where: [{ stock: 0 }, { status: ProductStatus.OUT_OF_STOCK }],
+      where: [
+        { organizationId: tenantId, stock: 0 },
+        { organizationId: tenantId, status: ProductStatus.OUT_OF_STOCK }
+      ],
       relations: ['category', 'prices', 'createdBy'],
       order: { updatedAt: 'DESC' },
     });
   }
 
   async getProductsByCategory(categoryId: string): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
       where: {
+        organizationId: tenantId,
         categoryId,
         status: ProductStatus.ACTIVE,
       },
@@ -550,7 +606,14 @@ export class ProductRepository extends Repository<Product> {
     quantity: number,
     operation: 'add' | 'subtract',
   ): Promise<void> {
-    const product = await this.findOne({ where: { id } });
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
+    const product = await this.findOne({ 
+      where: { id, organizationId: tenantId } 
+    });
     if (!product) return;
 
     if (operation === 'add') {
@@ -693,22 +756,29 @@ export class ProductRepository extends Repository<Product> {
   }> {
     console.log('🔍 ProductRepository: Calculando estadísticas...');
 
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     try {
-      const total = await this.count();
+      const total = await this.count({
+        where: { organizationId: tenantId },
+      });
       console.log(`📊 Total de productos: ${total}`);
 
       const active = await this.count({
-        where: { status: ProductStatus.ACTIVE },
+        where: { organizationId: tenantId, status: ProductStatus.ACTIVE },
       });
       console.log(`✅ Productos activos: ${active}`);
 
       const inactive = await this.count({
-        where: { status: ProductStatus.INACTIVE },
+        where: { organizationId: tenantId, status: ProductStatus.INACTIVE },
       });
       console.log(`❌ Productos inactivos: ${inactive}`);
 
       const outOfStock = await this.count({
-        where: { status: ProductStatus.OUT_OF_STOCK },
+        where: { organizationId: tenantId, status: ProductStatus.OUT_OF_STOCK },
       });
       console.log(`🚫 Productos sin stock: ${outOfStock}`);
 
@@ -717,6 +787,7 @@ export class ProductRepository extends Repository<Product> {
 
       const allProducts = await this.find({
         where: {
+          organizationId: tenantId,
           deletedAt: null,
         },
         select: ['id', 'name', 'stock', 'minStock', 'status'],
@@ -789,10 +860,16 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async getStockValue(): Promise<number> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const result = await this.createQueryBuilder('product')
       .leftJoin('product.prices', 'price')
       .select('SUM(product.stock * price.amount)', 'totalValue')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
+      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .andWhere('price.type = :priceType', { priceType: 'cost' })
       .andWhere('price.status = :priceStatus', {
         priceStatus: PriceStatus.ACTIVE,
@@ -803,11 +880,17 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findProductsWithLowStock(threshold?: number): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const queryBuilder = this.createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE });
+      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE });
 
     if (threshold !== undefined) {
       // ✅ CORRECCIÓN: Convertir threshold a número y usar CAST para comparación numérica
@@ -838,8 +921,13 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findTopProducts(limit: number = 10): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
-      where: { status: ProductStatus.ACTIVE },
+      where: { organizationId: tenantId, status: ProductStatus.ACTIVE },
       relations: ['category', 'prices', 'createdBy'],
       order: { createdAt: 'DESC' },
       take: limit,
@@ -847,8 +935,14 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findActiveByIds(ids: string[]): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.createQueryBuilder('product')
-      .where('product.id IN (:...ids)', { ids })
+      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('product.id IN (:...ids)', { ids })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.category', 'category')
@@ -858,8 +952,14 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async countByCategory(categoryId: string): Promise<number> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.count({
       where: {
+        organizationId: tenantId,
         categoryId,
         status: ProductStatus.ACTIVE,
       },
@@ -867,8 +967,13 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async findBestSellingProducts(limit: number = 10): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     return this.find({
-      where: { status: ProductStatus.ACTIVE },
+      where: { organizationId: tenantId, status: ProductStatus.ACTIVE },
       relations: ['category', 'prices', 'createdBy'],
       order: { createdAt: 'DESC' },
       take: limit,
@@ -886,9 +991,15 @@ export class ProductRepository extends Repository<Product> {
   // }
 
   async findProductsNeedingRestock(): Promise<Product[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     // ✅ CORRECCIÓN: Usar el método corregido
     const allProducts = await this.find({
       where: {
+        organizationId: tenantId,
         status: ProductStatus.ACTIVE,
         deletedAt: null,
       },
@@ -978,7 +1089,13 @@ export class ProductRepository extends Repository<Product> {
   }
 
   async debugStockComparisons(): Promise<any[]> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant ID not found');
+    }
+
     const allProducts = await this.find({
+      where: { organizationId: tenantId },
       select: ['id', 'name', 'stock', 'minStock', 'status'],
     });
 

@@ -193,9 +193,10 @@
 // }
 
 // src/modules/customers/entities/customer.entity.ts - ACTUALIZADA
-import { Entity, Column, OneToMany } from 'typeorm';
+import { Entity, Column, OneToMany, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Invoice } from '../../invoices/entities/invoice.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 import { Transform } from 'class-transformer';
 
 export enum CustomerStatus {
@@ -263,6 +264,15 @@ export class Customer extends BaseEntity {
     default: CustomerStatus.ACTIVE,
   })
   status: CustomerStatus;
+
+  // Relación con organización (multitenant)
+  @Column({ type: 'uuid', name: 'organization_id' })
+  @Index()
+  organizationId: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.customers)
+  @JoinColumn({ name: 'organization_id' })
+  organization: Organization;
 
   // ✅ ARREGLO: Configurar transformación para campos decimales
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
