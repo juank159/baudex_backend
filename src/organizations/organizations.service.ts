@@ -26,7 +26,9 @@ export class OrganizationsService {
     private readonly subscriptionService: SubscriptionService,
   ) {}
 
-  async create(createOrganizationDto: CreateOrganizationDto): Promise<Organization> {
+  async create(
+    createOrganizationDto: CreateOrganizationDto,
+  ): Promise<Organization> {
     const {
       name,
       slug,
@@ -89,9 +91,11 @@ export class OrganizationsService {
       });
 
       const savedOrganization = await manager.save(organization);
-      
+
       // Crear suscripción trial automáticamente usando el nuevo servicio
-      await this.subscriptionService.createTrialSubscription(savedOrganization.id);
+      await this.subscriptionService.createTrialSubscription(
+        savedOrganization.id,
+      );
 
       // Crear usuario administrador
       const hashedPassword = await bcrypt.hash(adminPassword, 12);
@@ -136,17 +140,25 @@ export class OrganizationsService {
     return organization;
   }
 
-  async update(id: string, updateOrganizationDto: UpdateOrganizationDto): Promise<Organization> {
+  async update(
+    id: string,
+    updateOrganizationDto: UpdateOrganizationDto,
+  ): Promise<Organization> {
     const organization = await this.findById(id);
 
     // Verificar dominio único (si se está cambiando)
-    if (updateOrganizationDto.domain && updateOrganizationDto.domain !== organization.domain) {
+    if (
+      updateOrganizationDto.domain &&
+      updateOrganizationDto.domain !== organization.domain
+    ) {
       const existingOrgByDomain = await this.organizationRepository.findOne({
         where: { domain: updateOrganizationDto.domain },
       });
 
       if (existingOrgByDomain && existingOrgByDomain.id !== id) {
-        throw new ConflictException(`El dominio '${updateOrganizationDto.domain}' ya está en uso`);
+        throw new ConflictException(
+          `El dominio '${updateOrganizationDto.domain}' ya está en uso`,
+        );
       }
     }
 
@@ -162,10 +174,12 @@ export class OrganizationsService {
 
   async deactivate(id: string): Promise<Organization> {
     const organization = await this.findById(id);
-    
+
     // No permitir desactivar la organización por defecto
     if (organization.slug === 'default') {
-      throw new BadRequestException('No se puede desactivar la organización por defecto');
+      throw new BadRequestException(
+        'No se puede desactivar la organización por defecto',
+      );
     }
 
     organization.isActive = false;
@@ -174,19 +188,15 @@ export class OrganizationsService {
 
   async getStats(organizationId: string): Promise<OrganizationStatsDto> {
     // Obtener estadísticas básicas
-    const [
-      totalUsers,
-      totalProducts,
-      totalCustomers,
-      totalInvoices,
-    ] = await Promise.all([
-      this.userRepository.count({ where: { organizationId } }),
-      // Note: Estas queries fallarán hasta que agreguemos organizationId a todas las entidades
-      // Por ahora retornamos 0 para evitar errores
-      Promise.resolve(0), // this.productRepository.count({ where: { organizationId } }),
-      Promise.resolve(0), // this.customerRepository.count({ where: { organizationId } }),
-      Promise.resolve(0), // this.invoiceRepository.count({ where: { organizationId } }),
-    ]);
+    const [totalUsers, totalProducts, totalCustomers, totalInvoices] =
+      await Promise.all([
+        this.userRepository.count({ where: { organizationId } }),
+        // Note: Estas queries fallarán hasta que agreguemos organizationId a todas las entidades
+        // Por ahora retornamos 0 para evitar errores
+        Promise.resolve(0), // this.productRepository.count({ where: { organizationId } }),
+        Promise.resolve(0), // this.customerRepository.count({ where: { organizationId } }),
+        Promise.resolve(0), // this.invoiceRepository.count({ where: { organizationId } }),
+      ]);
 
     // Calcular ingresos totales y del mes actual
     const totalRevenue = 0; // Implementar cuando tengamos las entidades actualizadas
@@ -206,10 +216,12 @@ export class OrganizationsService {
 
   async remove(id: string): Promise<void> {
     const organization = await this.findById(id);
-    
+
     // No permitir eliminar la organización por defecto
     if (organization.slug === 'default') {
-      throw new BadRequestException('No se puede eliminar la organización por defecto');
+      throw new BadRequestException(
+        'No se puede eliminar la organización por defecto',
+      );
     }
 
     // Verificar que no tenga usuarios activos (excepto el administrador que se puede transferir)
@@ -220,7 +232,7 @@ export class OrganizationsService {
     if (userCount > 1) {
       throw new BadRequestException(
         'No se puede eliminar una organización con múltiples usuarios. ' +
-        'Transfiera los usuarios a otra organización primero.'
+          'Transfiera los usuarios a otra organización primero.',
       );
     }
 
@@ -232,13 +244,16 @@ export class OrganizationsService {
   async validatePlanLimits(
     organizationId: string,
     feature: string,
-    currentCount?: number
+    currentCount?: number,
   ): Promise<boolean> {
     // Para features de usuarios, usar el nuevo sistema
     if (feature === 'maxUsers' && currentCount !== undefined) {
-      return this.subscriptionService.checkUserLimit(organizationId, currentCount);
+      return this.subscriptionService.checkUserLimit(
+        organizationId,
+        currentCount,
+      );
     }
-    
+
     // Para otras features, usar validación genérica
     return this.subscriptionService.canPerformAction(organizationId, feature);
   }
@@ -247,7 +262,7 @@ export class OrganizationsService {
   async getSubscriptionInfo(organizationId: string) {
     // Verificar que la organización existe
     await this.findById(organizationId);
-    
+
     // Usar el nuevo SubscriptionService
     return this.subscriptionService.getSubscriptionInfo(organizationId);
   }
@@ -260,11 +275,13 @@ export class OrganizationsService {
   ): Promise<Organization> {
     // Verificar que la organización existe
     const organization = await this.findById(organizationId);
-    
+
     // Usar el nuevo SubscriptionService para crear una suscripción pagada
     const planEnum = plan as any; // Convertir string a enum
-    const durationMonths = Math.ceil((endDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24 * 30));
-    
+    const durationMonths = Math.ceil(
+      (endDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24 * 30),
+    );
+
     await this.subscriptionService.createPaidSubscription(
       organizationId,
       planEnum,
@@ -273,7 +290,7 @@ export class OrganizationsService {
       'USD', // moneda por defecto
       durationMonths,
     );
-    
+
     return organization;
   }
 
@@ -283,7 +300,7 @@ export class OrganizationsService {
       .createQueryBuilder('organization')
       .where(
         'organization.name ILIKE :query OR organization.slug ILIKE :query OR organization.domain ILIKE :query',
-        { query: `%${query}%` }
+        { query: `%${query}%` },
       )
       .andWhere('organization.isActive = :isActive', { isActive: true })
       .orderBy('organization.name', 'ASC')

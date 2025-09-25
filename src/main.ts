@@ -16,7 +16,7 @@ async function bootstrap() {
 
   // Configurar prefijo global para la API
   app.setGlobalPrefix('api', {
-    exclude: ['health', '/'], // Excluir endpoints específicos del prefijo
+    exclude: ['/'], // Excluir endpoints específicos del prefijo
   });
 
   // Obtener IP local para acceso desde móvil

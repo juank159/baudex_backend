@@ -39,6 +39,11 @@ export class SmartResponseInterceptor<T>
           } as any;
         }
 
+        // Verificar si es una respuesta de transferencia
+        if (this.isTransferResponse(data)) {
+          return data; // Devolver directamente sin envolver
+        }
+
         // Para respuestas normales, envolver en el formato estándar
         return {
           success: true,
@@ -62,6 +67,22 @@ export class SmartResponseInterceptor<T>
       data.meta &&
       typeof data.meta === 'object' &&
       ('totalItems' in data.meta || 'total' in data.meta)
+    );
+  }
+
+  /**
+   * Detecta si la respuesta es de transferencia de inventario
+   */
+  private isTransferResponse(data: any): boolean {
+    return (
+      data &&
+      typeof data === 'object' &&
+      'transferOut' in data &&
+      'transferIn' in data &&
+      data.transferOut &&
+      data.transferIn &&
+      data.transferOut.type === 'transfer_out' &&
+      data.transferIn.type === 'transfer_in'
     );
   }
 }

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   IsOptional,
   IsPositive,
@@ -29,6 +29,7 @@ export class PaginationDto {
   sortBy?: string;
 
   @IsOptional()
+  @Transform(({ value }) => value?.toUpperCase())
   @IsEnum(['ASC', 'DESC'], {
     message: 'El orden debe ser ASC o DESC',
   })

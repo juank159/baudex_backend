@@ -1,5 +1,14 @@
 // src/modules/users/entities/user.entity.ts - CORREGIDA
-import { Entity, Column, OneToMany, ManyToOne, JoinColumn, BeforeInsert, BeforeUpdate, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  OneToMany,
+  ManyToOne,
+  JoinColumn,
+  BeforeInsert,
+  BeforeUpdate,
+  Index,
+} from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Product } from '../../products/entities/product.entity';
 import { Organization } from '../../organizations/entities/organization.entity';

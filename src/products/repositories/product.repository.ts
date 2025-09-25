@@ -474,7 +474,9 @@ export class ProductRepository extends Repository<Product> {
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .where('product.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('(product.sku = :code OR product.barcode = :code)', { code })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .getOne();
@@ -493,7 +495,9 @@ export class ProductRepository extends Repository<Product> {
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .where('product.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere(
         '(product.name ILIKE :search OR product.sku ILIKE :search OR product.barcode ILIKE :search)',
         { search: `%${searchTerm}%` },
@@ -530,7 +534,7 @@ export class ProductRepository extends Repository<Product> {
   // En product.repository.ts
   async findLowStockProducts(): Promise<Product[]> {
     console.log('🔍 ProductRepository: Buscando productos con stock bajo...');
-    
+
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
       throw new Error('Tenant ID not found');
@@ -577,7 +581,7 @@ export class ProductRepository extends Repository<Product> {
     return this.find({
       where: [
         { organizationId: tenantId, stock: 0 },
-        { organizationId: tenantId, status: ProductStatus.OUT_OF_STOCK }
+        { organizationId: tenantId, status: ProductStatus.OUT_OF_STOCK },
       ],
       relations: ['category', 'prices', 'createdBy'],
       order: { updatedAt: 'DESC' },
@@ -611,8 +615,8 @@ export class ProductRepository extends Repository<Product> {
       throw new Error('Tenant ID not found');
     }
 
-    const product = await this.findOne({ 
-      where: { id, organizationId: tenantId } 
+    const product = await this.findOne({
+      where: { id, organizationId: tenantId },
     });
     if (!product) return;
 
@@ -868,7 +872,9 @@ export class ProductRepository extends Repository<Product> {
     const result = await this.createQueryBuilder('product')
       .leftJoin('product.prices', 'price')
       .select('SUM(product.stock * price.amount)', 'totalValue')
-      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .where('product.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .andWhere('price.type = :priceType', { priceType: 'cost' })
       .andWhere('price.status = :priceStatus', {
@@ -889,7 +895,9 @@ export class ProductRepository extends Repository<Product> {
       .leftJoinAndSelect('product.category', 'category')
       .leftJoinAndSelect('product.prices', 'prices')
       .leftJoinAndSelect('product.createdBy', 'createdBy')
-      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .where('product.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE });
 
     if (threshold !== undefined) {
@@ -941,7 +949,9 @@ export class ProductRepository extends Repository<Product> {
     }
 
     return this.createQueryBuilder('product')
-      .where('product.organizationId = :organizationId', { organizationId: tenantId })
+      .where('product.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('product.id IN (:...ids)', { ids })
       .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
       .leftJoinAndSelect('product.prices', 'prices')

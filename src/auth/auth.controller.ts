@@ -1,6 +1,18 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -15,13 +27,12 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @ApiOperation({ summary: 'Registrar nuevo usuario en la organización actual' })
+  @ApiOperation({
+    summary: 'Registrar nuevo usuario en la organización actual',
+  })
   @ApiResponse({ status: 201, description: 'Usuario registrado exitosamente' })
   @ApiResponse({ status: 409, description: 'Usuario ya existe' })
-  register(
-    @Body() registerDto: RegisterDto,
-    @TenantId() tenantId?: string,
-  ) {
+  register(@Body() registerDto: RegisterDto, @TenantId() tenantId?: string) {
     return this.authService.register(registerDto, tenantId);
   }
 
@@ -29,10 +40,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Iniciar sesión' })
   @ApiResponse({ status: 200, description: 'Login exitoso' })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  login(
-    @Body() loginDto: LoginDto,
-    @TenantId() tenantId?: string,
-  ) {
+  login(@Body() loginDto: LoginDto, @TenantId() tenantId?: string) {
     return this.authService.login(loginDto, tenantId);
   }
 

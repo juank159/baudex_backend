@@ -4,7 +4,10 @@ import { Repository } from 'typeorm';
 import { Organization } from '../../organizations/entities/organization.entity';
 
 export interface SubscriptionErrorResponse {
-  error: 'SUBSCRIPTION_EXPIRED' | 'SUBSCRIPTION_INACTIVE' | 'PLAN_LIMIT_EXCEEDED';
+  error:
+    | 'SUBSCRIPTION_EXPIRED'
+    | 'SUBSCRIPTION_INACTIVE'
+    | 'PLAN_LIMIT_EXCEEDED';
   message: string;
   subscriptionPlan?: string;
   subscriptionStatus?: string;
@@ -20,7 +23,10 @@ export class SubscriptionCheckService {
     private organizationRepository: Repository<Organization>,
   ) {}
 
-  async checkSubscription(organizationId: string, action: string): Promise<void> {
+  async checkSubscription(
+    organizationId: string,
+    action: string,
+  ): Promise<void> {
     if (!organizationId) {
       return; // Si no hay organizationId, permitir (para casos especiales)
     }
@@ -36,8 +42,8 @@ export class SubscriptionCheckService {
     // Verificar si la organización puede realizar la acción
     if (!organization.canPerformAction(action)) {
       const errorResponse: SubscriptionErrorResponse = {
-        error: organization.isTrialExpired 
-          ? 'SUBSCRIPTION_EXPIRED' 
+        error: organization.isTrialExpired
+          ? 'SUBSCRIPTION_EXPIRED'
           : 'SUBSCRIPTION_INACTIVE',
         message: this.getSubscriptionErrorMessage(organization, action),
         subscriptionPlan: organization.subscriptionPlan,

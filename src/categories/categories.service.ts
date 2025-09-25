@@ -311,7 +311,9 @@ export class CategoryService {
 
       if (deletedCategory.organizationId !== tenantId) {
         // Si no pertenece al mismo tenant, continuar con creación normal
-        this.logger.log(`Deleted category belongs to different tenant, creating new one`);
+        this.logger.log(
+          `Deleted category belongs to different tenant, creating new one`,
+        );
       } else {
         // Actualizar la categoría eliminada con los nuevos datos
         Object.assign(deletedCategory, createCategoryDto);

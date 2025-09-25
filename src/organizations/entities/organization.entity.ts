@@ -7,7 +7,8 @@ import { Category } from '../../categories/entities/category.entity';
 import { Invoice } from '../../invoices/entities/invoice.entity';
 import { Expense } from '../../expenses/entities/expense.entity';
 import { Subscription } from '../../subscriptions/entities/subscription.entity';
-
+import { Supplier } from '../../suppliers/entities/supplier.entity';
+import { Sale } from '../../sales/entities/sale.entity';
 
 @Entity('organizations')
 export class Organization extends BaseEntity {
@@ -60,6 +61,9 @@ export class Organization extends BaseEntity {
   @Column({ type: 'varchar', length: 50, default: 'America/New_York' })
   timezone: string;
 
+  @Column({ type: 'uuid', nullable: true })
+  mainWarehouseId?: string;
+
   // Relaciones
   @OneToMany(() => User, (user) => user.organization)
   users: User[];
@@ -82,6 +86,12 @@ export class Organization extends BaseEntity {
   @OneToMany(() => Subscription, (subscription) => subscription.organization)
   subscriptions: Subscription[];
 
+  @OneToMany(() => Supplier, (supplier) => supplier.organization)
+  suppliers: Supplier[];
+
+  @OneToMany(() => Sale, (sale) => sale.organization)
+  sales: Sale[];
+
   // Métodos útiles
   get displayName(): string {
     return this.name || this.slug;
@@ -89,43 +99,57 @@ export class Organization extends BaseEntity {
 
   // DEPRECADO: Usar currentSubscription en su lugar
   get isActivePlan(): boolean {
-    console.warn('⚠️  isActivePlan está deprecado. Usar currentSubscription?.isActive');
+    console.warn(
+      '⚠️  isActivePlan está deprecado. Usar currentSubscription?.isActive',
+    );
     return this.isActive;
   }
 
   // DEPRECADO: Usar currentSubscription en su lugar
   get hasValidSubscription(): boolean {
-    console.warn('⚠️  hasValidSubscription está deprecado. Usar currentSubscription?.isActive');
+    console.warn(
+      '⚠️  hasValidSubscription está deprecado. Usar currentSubscription?.isActive',
+    );
     return true; // Temporalmente true para compatibilidad
   }
 
   // DEPRECADO: Usar currentSubscription en su lugar
   get isTrialExpired(): boolean {
-    console.warn('⚠️  isTrialExpired está deprecado. Usar currentSubscription?.isExpired');
+    console.warn(
+      '⚠️  isTrialExpired está deprecado. Usar currentSubscription?.isExpired',
+    );
     return false; // Temporalmente false para compatibilidad
   }
 
   // DEPRECADO: Usar currentSubscription en su lugar
   get daysUntilExpiration(): number {
-    console.warn('⚠️  daysUntilExpiration está deprecado. Usar currentSubscription?.daysUntilExpiration');
+    console.warn(
+      '⚠️  daysUntilExpiration está deprecado. Usar currentSubscription?.daysUntilExpiration',
+    );
     return 30; // Temporalmente 30 para compatibilidad
   }
 
   // DEPRECADO: Usar currentSubscription en su lugar
   canPerformAction(action: string): boolean {
-    console.warn('⚠️  canPerformAction está deprecado. Usar currentSubscription?.canPerformAction');
+    console.warn(
+      '⚠️  canPerformAction está deprecado. Usar currentSubscription?.canPerformAction',
+    );
     return true; // Temporalmente true para compatibilidad
   }
 
   // DEPRECADO: Usar currentSubscription en su lugar
   checkPlanLimits(feature: string): boolean {
-    console.warn('⚠️  checkPlanLimits está deprecado. Usar currentSubscription?.checkUserLimit');
+    console.warn(
+      '⚠️  checkPlanLimits está deprecado. Usar currentSubscription?.checkUserLimit',
+    );
     return true; // Temporalmente true para compatibilidad
   }
 
   // DEPRECADO: Las suscripciones ahora se crean automáticamente via SubscriptionService
   startTrial(): void {
-    console.warn('⚠️  startTrial está deprecado. Usar SubscriptionService.createTrialSubscription');
+    console.warn(
+      '⚠️  startTrial está deprecado. Usar SubscriptionService.createTrialSubscription',
+    );
     // Método mantenido solo para compatibilidad temporal
   }
 
@@ -134,10 +158,10 @@ export class Organization extends BaseEntity {
     if (!this.subscriptions || this.subscriptions.length === 0) {
       return undefined;
     }
-    
+
     // Buscar la suscripción activa más reciente
     return this.subscriptions
-      .filter(sub => sub.status === 'active')
+      .filter((sub) => sub.status === 'active')
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
   }
 
@@ -157,4 +181,7 @@ export class Organization extends BaseEntity {
 }
 
 // Re-export enums from Subscription entity for backward compatibility
-export { SubscriptionPlan, SubscriptionStatus } from '../../subscriptions/entities/subscription.entity';
+export {
+  SubscriptionPlan,
+  SubscriptionStatus,
+} from '../../subscriptions/entities/subscription.entity';

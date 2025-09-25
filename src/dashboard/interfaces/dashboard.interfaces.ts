@@ -112,3 +112,48 @@ export interface FinancialKPIs {
   accountsReceivable: number;
   averageCollectionPeriod: number;
 }
+
+// ==================== NUEVAS INTERFACES PARA RENTABILIDAD FIFO ====================
+
+export interface ProfitabilityStats {
+  totalRevenue: number;
+  totalCOGS: number;
+  grossProfit: number;
+  grossMarginPercentage: number;
+  netProfit: number;
+  netMarginPercentage: number;
+  averageMarginPerSale: number;
+  topProfitableProducts: ProductProfitability[];
+  lowProfitableProducts: ProductProfitability[];
+  marginsByCategory: { [categoryName: string]: number };
+  trend: ProfitabilityTrend;
+}
+
+export interface ProductProfitability {
+  productId: string;
+  productName: string;
+  sku: string;
+  categoryName?: string;
+  totalRevenue: number;
+  totalCOGS: number;
+  grossProfit: number;
+  marginPercentage: number;
+  unitsSold: number;
+  averageSellingPrice: number;
+  averageFifoCost: number;
+}
+
+export interface ProfitabilityTrend {
+  previousPeriodGrossMargin: number;
+  currentPeriodGrossMargin: number;
+  marginGrowth: number;
+  isImproving: boolean;
+  dailyMargins: DailyMarginPoint[];
+}
+
+export interface DailyMarginPoint {
+  date: Date;
+  grossMarginPercentage: number;
+  dailyRevenue: number;
+  dailyCOGS: number;
+}

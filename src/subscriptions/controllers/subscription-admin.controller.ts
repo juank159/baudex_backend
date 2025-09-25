@@ -1,13 +1,31 @@
 // src/subscriptions/controllers/subscription-admin.controller.ts
-import { Controller, Post, Get, UseGuards, Body, Param, ParseUUIDPipe } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Get,
+  UseGuards,
+  Body,
+  Param,
+  ParseUUIDPipe,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '../../users/entities/user.entity';
 import { SubscriptionExpirationService } from '../services/subscription-expiration.service';
 import { SubscriptionRenewalService } from '../services/subscription-renewal.service';
-import { RenewSubscriptionDto, RenewSubscriptionResponseDto } from '../dto/renew-subscription.dto';
+import { SubscriptionService } from '../services/subscription.service';
+import {
+  RenewSubscriptionDto,
+  RenewSubscriptionResponseDto,
+} from '../dto/renew-subscription.dto';
 
 @ApiTags('Subscription Admin')
 @ApiBearerAuth()
@@ -18,27 +36,34 @@ export class SubscriptionAdminController {
   constructor(
     private readonly subscriptionExpirationService: SubscriptionExpirationService,
     private readonly subscriptionRenewalService: SubscriptionRenewalService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   @Post('force-expire')
-  @ApiOperation({ summary: 'Forzar expiración manual de suscripciones vencidas' })
+  @ApiOperation({
+    summary: 'Forzar expiración manual de suscripciones vencidas',
+  })
   @ApiResponse({
     status: 200,
     description: 'Suscripciones expiradas actualizadas',
     schema: {
       type: 'object',
       properties: {
-        affected: { type: 'number', description: 'Número de suscripciones afectadas' },
+        affected: {
+          type: 'number',
+          description: 'Número de suscripciones afectadas',
+        },
         subscriptions: {
           type: 'array',
-          description: 'Lista de suscripciones que fueron expiradas'
-        }
-      }
-    }
+          description: 'Lista de suscripciones que fueron expiradas',
+        },
+      },
+    },
   })
   async forceExpireSubscriptions() {
-    const result = await this.subscriptionExpirationService.forceExpireSubscriptions();
-    
+    const result =
+      await this.subscriptionExpirationService.forceExpireSubscriptions();
+
     return {
       success: true,
       message: `${result.affected} suscripciones actualizadas a estado EXPIRED`,
@@ -54,8 +79,9 @@ export class SubscriptionAdminController {
     description: 'Estadísticas de suscripciones',
   })
   async getSubscriptionStats() {
-    const stats = await this.subscriptionExpirationService.getSubscriptionStats();
-    
+    const stats =
+      await this.subscriptionExpirationService.getSubscriptionStats();
+
     return {
       success: true,
       data: stats,
@@ -71,7 +97,7 @@ export class SubscriptionAdminController {
   })
   async checkExpiringTrials() {
     await this.subscriptionExpirationService.handleTrialWarnings();
-    
+
     return {
       success: true,
       message: 'Verificación de trials completada - revisar logs para detalles',
@@ -94,9 +120,12 @@ export class SubscriptionAdminController {
     status: 400,
     description: 'Datos de entrada inválidos',
   })
-  async renewSubscription(@Body() renewData: RenewSubscriptionDto): Promise<RenewSubscriptionResponseDto> {
-    const result = await this.subscriptionRenewalService.renewSubscription(renewData);
-    
+  async renewSubscription(
+    @Body() renewData: RenewSubscriptionDto,
+  ): Promise<RenewSubscriptionResponseDto> {
+    const result =
+      await this.subscriptionRenewalService.renewSubscription(renewData);
+
     return {
       success: true,
       message: `Suscripción renovada exitosamente. Plan ${result.plan} por ${result.durationMonths} mes(es)`,
@@ -106,7 +135,9 @@ export class SubscriptionAdminController {
   }
 
   @Get('organization/:organizationId/details')
-  @ApiOperation({ summary: 'Obtener detalles de suscripciones de una organización' })
+  @ApiOperation({
+    summary: 'Obtener detalles de suscripciones de una organización',
+  })
   @ApiParam({
     name: 'organizationId',
     description: 'ID de la organización',
@@ -121,13 +152,43 @@ export class SubscriptionAdminController {
     description: 'Organización no encontrada',
   })
   async getOrganizationSubscriptionDetails(
-    @Param('organizationId', ParseUUIDPipe) organizationId: string
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
   ) {
-    const details = await this.subscriptionRenewalService.getOrganizationSubscriptionDetails(organizationId);
-    
+    const details =
+      await this.subscriptionRenewalService.getOrganizationSubscriptionDetails(
+        organizationId,
+      );
+
     return {
       success: true,
       data: details,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Post('sync-organization-data')
+  @ApiOperation({
+    summary:
+      'Sincronizar datos de suscripción en entidades Organization (campos deprecated)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Sincronización completada exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        timestamp: { type: 'string' },
+      },
+    },
+  })
+  async syncOrganizationSubscriptionData() {
+    await this.subscriptionService.syncAllOrganizationsSubscriptionData();
+
+    return {
+      success: true,
+      message: 'Datos de suscripción sincronizados en todas las organizaciones',
       timestamp: new Date().toISOString(),
     };
   }

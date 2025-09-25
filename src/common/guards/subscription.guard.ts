@@ -14,7 +14,10 @@ import { Organization } from '../../organizations/entities/organization.entity';
 import { Subscription } from '../../subscriptions/entities/subscription.entity';
 
 export interface SubscriptionErrorResponse {
-  error: 'SUBSCRIPTION_EXPIRED' | 'SUBSCRIPTION_INACTIVE' | 'PLAN_LIMIT_EXCEEDED';
+  error:
+    | 'SUBSCRIPTION_EXPIRED'
+    | 'SUBSCRIPTION_INACTIVE'
+    | 'PLAN_LIMIT_EXCEEDED';
   message: string;
   subscriptionPlan?: string;
   subscriptionStatus?: string;
@@ -64,15 +67,25 @@ export class SubscriptionGuard implements CanActivate {
     const currentSubscription = organization.currentSubscription;
     if (!currentSubscription || !currentSubscription.canPerformAction(action)) {
       const errorResponse: SubscriptionErrorResponse = {
-        error: currentSubscription?.isExpired 
-          ? 'SUBSCRIPTION_EXPIRED' 
+        error: currentSubscription?.isExpired
+          ? 'SUBSCRIPTION_EXPIRED'
           : 'SUBSCRIPTION_INACTIVE',
-        message: this.getSubscriptionErrorMessage(organization, action, currentSubscription),
-        subscriptionPlan: currentSubscription?.plan || organization.subscriptionPlan,
-        subscriptionStatus: currentSubscription?.status || organization.subscriptionStatus,
-        trialEndDate: currentSubscription?.trialEndsAt || organization.trialEndDate,
-        subscriptionEndDate: currentSubscription?.endDate || organization.subscriptionEndDate,
-        daysUntilExpiration: currentSubscription?.daysUntilExpiration || organization.daysUntilExpiration,
+        message: this.getSubscriptionErrorMessage(
+          organization,
+          action,
+          currentSubscription,
+        ),
+        subscriptionPlan:
+          currentSubscription?.plan || organization.subscriptionPlan,
+        subscriptionStatus:
+          currentSubscription?.status || organization.subscriptionStatus,
+        trialEndDate:
+          currentSubscription?.trialEndsAt || organization.trialEndDate,
+        subscriptionEndDate:
+          currentSubscription?.endDate || organization.subscriptionEndDate,
+        daysUntilExpiration:
+          currentSubscription?.daysUntilExpiration ||
+          organization.daysUntilExpiration,
       };
 
       throw new ForbiddenException(errorResponse);
@@ -82,8 +95,11 @@ export class SubscriptionGuard implements CanActivate {
     request.subscription = {
       plan: currentSubscription?.plan || organization.subscriptionPlan,
       status: currentSubscription?.status || organization.subscriptionStatus,
-      daysUntilExpiration: currentSubscription?.daysUntilExpiration || organization.daysUntilExpiration,
-      isTrialExpired: currentSubscription?.isExpired || organization.isTrialExpired,
+      daysUntilExpiration:
+        currentSubscription?.daysUntilExpiration ||
+        organization.daysUntilExpiration,
+      isTrialExpired:
+        currentSubscription?.isExpired || organization.isTrialExpired,
     };
 
     return true;

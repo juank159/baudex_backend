@@ -30,7 +30,10 @@ import { User } from '../users/entities/user.entity';
 import { OrganizationsService } from './organizations.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
-import { OrganizationResponseDto, OrganizationStatsDto } from './dto/organization-response.dto';
+import {
+  OrganizationResponseDto,
+  OrganizationStatsDto,
+} from './dto/organization-response.dto';
 import { Organization } from './entities/organization.entity';
 import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
@@ -58,7 +61,9 @@ export class OrganizationsController {
   async create(
     @Body() createOrganizationDto: CreateOrganizationDto,
   ): Promise<OrganizationResponseDto> {
-    const organization = await this.organizationsService.create(createOrganizationDto);
+    const organization = await this.organizationsService.create(
+      createOrganizationDto,
+    );
     return await this.transformToResponseDto(organization);
   }
 
@@ -79,14 +84,16 @@ export class OrganizationsController {
     @Query('search') search?: string,
   ): Promise<OrganizationResponseDto[]> {
     let organizations: Organization[];
-    
+
     if (search) {
       organizations = await this.organizationsService.search(search);
     } else {
       organizations = await this.organizationsService.findAll();
     }
 
-    return await Promise.all(organizations.map(org => this.transformToResponseDto(org)));
+    return await Promise.all(
+      organizations.map((org) => this.transformToResponseDto(org)),
+    );
   }
 
   @Get('current')
@@ -99,7 +106,9 @@ export class OrganizationsController {
   async getCurrentOrganization(
     @GetUser() user: User,
   ): Promise<OrganizationResponseDto> {
-    const organization = await this.organizationsService.findById(user.organizationId);
+    const organization = await this.organizationsService.findById(
+      user.organizationId,
+    );
     return await this.transformToResponseDto(organization);
   }
 
@@ -183,7 +192,10 @@ export class OrganizationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateOrganizationDto: UpdateOrganizationDto,
   ): Promise<OrganizationResponseDto> {
-    const organization = await this.organizationsService.update(id, updateOrganizationDto);
+    const organization = await this.organizationsService.update(
+      id,
+      updateOrganizationDto,
+    );
     return await this.transformToResponseDto(organization);
   }
 
@@ -212,7 +224,10 @@ export class OrganizationsController {
     description: 'Organización desactivada exitosamente',
     type: OrganizationResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'No se puede desactivar la organización por defecto' })
+  @ApiResponse({
+    status: 400,
+    description: 'No se puede desactivar la organización por defecto',
+  })
   async deactivate(
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<OrganizationResponseDto> {
@@ -225,9 +240,16 @@ export class OrganizationsController {
   @Roles(UserRole.ADMIN) // Solo super admins
   @ApiOperation({ summary: 'Eliminar organización' })
   @ApiParam({ name: 'id', description: 'ID de la organización' })
-  @ApiResponse({ status: 204, description: 'Organización eliminada exitosamente' })
+  @ApiResponse({
+    status: 204,
+    description: 'Organización eliminada exitosamente',
+  })
   @ApiResponse({ status: 404, description: 'Organización no encontrada' })
-  @ApiResponse({ status: 400, description: 'No se puede eliminar la organización por defecto o con usuarios activos' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'No se puede eliminar la organización por defecto o con usuarios activos',
+  })
   async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     await this.organizationsService.remove(id);
   }
@@ -240,9 +262,7 @@ export class OrganizationsController {
     status: 200,
     description: 'Información de suscripción de la organización',
   })
-  async getCurrentSubscriptionInfo(
-    @GetUser() user: User,
-  ) {
+  async getCurrentSubscriptionInfo(@GetUser() user: User) {
     return this.organizationsService.getSubscriptionInfo(user.organizationId);
   }
 
@@ -260,7 +280,7 @@ export class OrganizationsController {
   ): Promise<OrganizationResponseDto> {
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + body.durationMonths);
-    
+
     const organization = await this.organizationsService.updateSubscription(
       user.organizationId,
       body.plan,
@@ -270,13 +290,20 @@ export class OrganizationsController {
   }
 
   // Método helper para transformar la entidad a DTO
-  private async transformToResponseDto(organization: Organization): Promise<OrganizationResponseDto> {
+  private async transformToResponseDto(
+    organization: Organization,
+  ): Promise<OrganizationResponseDto> {
     // Obtener información de suscripción usando el nuevo servicio
     let subscriptionInfo;
     try {
-      subscriptionInfo = await this.subscriptionService.getSubscriptionInfo(organization.id);
+      subscriptionInfo = await this.subscriptionService.getSubscriptionInfo(
+        organization.id,
+      );
     } catch (error) {
-      console.warn(`No se pudo obtener información de suscripción para organización ${organization.id}:`, error.message);
+      console.warn(
+        `No se pudo obtener información de suscripción para organización ${organization.id}:`,
+        error.message,
+      );
       subscriptionInfo = null;
     }
 
@@ -294,21 +321,30 @@ export class OrganizationsController {
       createdAt: organization.createdAt.toISOString(),
       updatedAt: organization.updatedAt.toISOString(),
       displayName: organization.displayName,
-      
+
       // Información de suscripción nueva
       subscription: subscriptionInfo,
-      
+
       // Campos legacy para compatibilidad (deprecados)
       subscriptionPlan: subscriptionInfo?.plan || organization.subscriptionPlan,
       isActivePlan: subscriptionInfo?.isActive ?? organization.isActive,
-      subscriptionStatus: subscriptionInfo?.status || organization.subscriptionStatus,
+      subscriptionStatus:
+        subscriptionInfo?.status || organization.subscriptionStatus,
       hasValidSubscription: subscriptionInfo?.isActive ?? false,
       isTrialExpired: subscriptionInfo?.isExpired ?? true,
       daysUntilExpiration: subscriptionInfo?.daysUntilExpiration ?? 30,
-      trialStartDate: subscriptionInfo?.startDate || organization.trialStartDate?.toISOString(),
-      trialEndDate: subscriptionInfo?.trialEndsAt || organization.trialEndDate?.toISOString(),
-      subscriptionStartDate: subscriptionInfo?.startDate || organization.subscriptionStartDate?.toISOString(),
-      subscriptionEndDate: subscriptionInfo?.endDate || organization.subscriptionEndDate?.toISOString(),
+      trialStartDate:
+        subscriptionInfo?.startDate ||
+        organization.trialStartDate?.toISOString(),
+      trialEndDate:
+        subscriptionInfo?.trialEndsAt ||
+        organization.trialEndDate?.toISOString(),
+      subscriptionStartDate:
+        subscriptionInfo?.startDate ||
+        organization.subscriptionStartDate?.toISOString(),
+      subscriptionEndDate:
+        subscriptionInfo?.endDate ||
+        organization.subscriptionEndDate?.toISOString(),
     };
   }
 }

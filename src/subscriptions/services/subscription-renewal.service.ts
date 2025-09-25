@@ -1,8 +1,17 @@
 // src/subscriptions/services/subscription-renewal.service.ts
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Subscription, SubscriptionStatus, SubscriptionPlan } from '../entities/subscription.entity';
+import {
+  Subscription,
+  SubscriptionStatus,
+  SubscriptionPlan,
+} from '../entities/subscription.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { RenewSubscriptionDto } from '../dto/renew-subscription.dto';
 
@@ -21,7 +30,9 @@ export class SubscriptionRenewalService {
    * Renovar suscripción de una organización
    */
   async renewSubscription(renewData: RenewSubscriptionDto) {
-    this.logger.log(`🔄 Iniciando renovación de suscripción para organización: ${renewData.organizationId}`);
+    this.logger.log(
+      `🔄 Iniciando renovación de suscripción para organización: ${renewData.organizationId}`,
+    );
 
     // 1. Verificar que la organización existe
     const organization = await this.organizationRepository.findOne({
@@ -30,11 +41,13 @@ export class SubscriptionRenewalService {
 
     if (!organization) {
       throw new NotFoundException(
-        `Organización con ID ${renewData.organizationId} no encontrada`
+        `Organización con ID ${renewData.organizationId} no encontrada`,
       );
     }
 
-    this.logger.log(`✅ Organización encontrada: ${organization.name} (${organization.slug})`);
+    this.logger.log(
+      `✅ Organización encontrada: ${organization.name} (${organization.slug})`,
+    );
 
     // 2. Buscar suscripciones actuales de la organización
     const currentSubscriptions = await this.subscriptionRepository.find({
@@ -42,10 +55,14 @@ export class SubscriptionRenewalService {
       order: { createdAt: 'DESC' },
     });
 
-    this.logger.log(`📋 Suscripciones actuales encontradas: ${currentSubscriptions.length}`);
+    this.logger.log(
+      `📋 Suscripciones actuales encontradas: ${currentSubscriptions.length}`,
+    );
 
     // 3. Marcar todas las suscripciones actuales como expiradas
-    const expiredCount = await this.expireCurrentSubscriptions(renewData.organizationId);
+    const expiredCount = await this.expireCurrentSubscriptions(
+      renewData.organizationId,
+    );
     this.logger.log(`⏰ ${expiredCount} suscripciones marcadas como expiradas`);
 
     // 4. Calcular fechas de la nueva suscripción
@@ -68,7 +85,8 @@ export class SubscriptionRenewalService {
       isTrialUsed: renewData.plan !== 'trial', // Si no es trial, marca como usado
     });
 
-    const savedSubscription = await this.subscriptionRepository.save(newSubscription);
+    const savedSubscription =
+      await this.subscriptionRepository.save(newSubscription);
     this.logger.log(`✅ Nueva suscripción creada: ${savedSubscription.id}`);
 
     // 6. Actualizar campos legacy en la organización
@@ -76,10 +94,12 @@ export class SubscriptionRenewalService {
       renewData.organizationId,
       renewData.plan,
       startDate,
-      endDate
+      endDate,
     );
 
-    this.logger.log(`🎉 Renovación completada exitosamente para organización: ${organization.name}`);
+    this.logger.log(
+      `🎉 Renovación completada exitosamente para organización: ${organization.name}`,
+    );
 
     return {
       subscriptionId: savedSubscription.id,
@@ -101,7 +121,9 @@ export class SubscriptionRenewalService {
   /**
    * Marcar todas las suscripciones actuales como expiradas
    */
-  private async expireCurrentSubscriptions(organizationId: string): Promise<number> {
+  private async expireCurrentSubscriptions(
+    organizationId: string,
+  ): Promise<number> {
     const result = await this.subscriptionRepository
       .createQueryBuilder()
       .update(Subscription)
@@ -110,7 +132,9 @@ export class SubscriptionRenewalService {
         updatedAt: new Date(),
       })
       .where('organizationId = :organizationId', { organizationId })
-      .andWhere('status != :expiredStatus', { expiredStatus: SubscriptionStatus.EXPIRED })
+      .andWhere('status != :expiredStatus', {
+        expiredStatus: SubscriptionStatus.EXPIRED,
+      })
       .execute();
 
     return result.affected || 0;
@@ -123,7 +147,7 @@ export class SubscriptionRenewalService {
     organizationId: string,
     plan: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
   ): Promise<void> {
     await this.organizationRepository
       .createQueryBuilder()
@@ -167,7 +191,9 @@ export class SubscriptionRenewalService {
     });
 
     if (!organization) {
-      throw new NotFoundException(`Organización con ID ${organizationId} no encontrada`);
+      throw new NotFoundException(
+        `Organización con ID ${organizationId} no encontrada`,
+      );
     }
 
     // Obtener todas las suscripciones
@@ -178,7 +204,8 @@ export class SubscriptionRenewalService {
 
     // Obtener suscripción activa
     const activeSubscription = subscriptions.find(
-      sub => sub.status === SubscriptionStatus.ACTIVE && new Date() <= sub.endDate
+      (sub) =>
+        sub.status === SubscriptionStatus.ACTIVE && new Date() <= sub.endDate,
     );
 
     return {
@@ -188,21 +215,25 @@ export class SubscriptionRenewalService {
         slug: organization.slug,
         subscriptionPlan: organization.subscriptionPlan,
         subscriptionStatus: organization.subscriptionStatus,
-        subscriptionStartDate: organization.subscriptionStartDate?.toISOString(),
+        subscriptionStartDate:
+          organization.subscriptionStartDate?.toISOString(),
         subscriptionEndDate: organization.subscriptionEndDate?.toISOString(),
       },
-      activeSubscription: activeSubscription ? {
-        id: activeSubscription.id,
-        plan: activeSubscription.plan,
-        status: activeSubscription.status,
-        startDate: activeSubscription.startDate.toISOString(),
-        endDate: activeSubscription.endDate.toISOString(),
-        isExpired: new Date() > activeSubscription.endDate,
-        daysUntilExpiration: Math.ceil(
-          (activeSubscription.endDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
-        ),
-      } : null,
-      allSubscriptions: subscriptions.map(sub => ({
+      activeSubscription: activeSubscription
+        ? {
+            id: activeSubscription.id,
+            plan: activeSubscription.plan,
+            status: activeSubscription.status,
+            startDate: activeSubscription.startDate.toISOString(),
+            endDate: activeSubscription.endDate.toISOString(),
+            isExpired: new Date() > activeSubscription.endDate,
+            daysUntilExpiration: Math.ceil(
+              (activeSubscription.endDate.getTime() - new Date().getTime()) /
+                (1000 * 60 * 60 * 24),
+            ),
+          }
+        : null,
+      allSubscriptions: subscriptions.map((sub) => ({
         id: sub.id,
         plan: sub.plan,
         status: sub.status,
@@ -212,8 +243,12 @@ export class SubscriptionRenewalService {
       })),
       stats: {
         totalSubscriptions: subscriptions.length,
-        activeSubscriptions: subscriptions.filter(sub => sub.status === SubscriptionStatus.ACTIVE).length,
-        expiredSubscriptions: subscriptions.filter(sub => sub.status === SubscriptionStatus.EXPIRED).length,
+        activeSubscriptions: subscriptions.filter(
+          (sub) => sub.status === SubscriptionStatus.ACTIVE,
+        ).length,
+        expiredSubscriptions: subscriptions.filter(
+          (sub) => sub.status === SubscriptionStatus.EXPIRED,
+        ).length,
       },
     };
   }

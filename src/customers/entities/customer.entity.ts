@@ -193,7 +193,15 @@
 // }
 
 // src/modules/customers/entities/customer.entity.ts - ACTUALIZADA
-import { Entity, Column, OneToMany, ManyToOne, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  OneToMany,
+  ManyToOne,
+  JoinColumn,
+  Index,
+  Unique,
+} from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Invoice } from '../../invoices/entities/invoice.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
@@ -214,6 +222,12 @@ export enum DocumentType {
 }
 
 @Entity('customers')
+@Unique('UQ_customer_email_organization', ['email', 'organizationId'])
+@Unique('UQ_customer_document_organization', [
+  'documentType',
+  'documentNumber',
+  'organizationId',
+])
 export class Customer extends BaseEntity {
   @Column({ type: 'varchar', length: 100 })
   firstName: string;
@@ -224,7 +238,7 @@ export class Customer extends BaseEntity {
   @Column({ type: 'varchar', length: 100, nullable: true })
   companyName?: string;
 
-  @Column({ type: 'varchar', length: 255, unique: true })
+  @Column({ type: 'varchar', length: 255 })
   email: string;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
@@ -240,7 +254,7 @@ export class Customer extends BaseEntity {
   })
   documentType: DocumentType;
 
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   documentNumber: string;
 
   @Column({ type: 'text', nullable: true })

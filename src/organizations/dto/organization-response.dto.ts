@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose, Transform } from 'class-transformer';
-import { SubscriptionPlan, SubscriptionStatus } from '../../subscriptions/entities/subscription.entity';
+import {
+  SubscriptionPlan,
+  SubscriptionStatus,
+} from '../../subscriptions/entities/subscription.entity';
 
 export class OrganizationResponseDto {
   @ApiProperty({
@@ -223,7 +226,7 @@ export class OrganizationStatsDto {
 
   @ApiProperty({
     description: 'Ingresos totales',
-    example: 25000.50,
+    example: 25000.5,
   })
   totalRevenue: number;
 

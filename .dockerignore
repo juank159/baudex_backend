@@ -1,67 +1,74 @@
-# Dependencias
+# Node modules
 node_modules
 npm-debug.log*
 
-# Build outputs
+# Build artifacts
 dist
 build
 
 # Environment files
 .env.local
-.env.production
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Git
-.git
-.gitignore
+# Logs
+*.log
+logs
 
-# Docker
-Dockerfile
-.dockerignore
-docker-compose*.yml
-
-# Testing
+# Coverage reports
 coverage
-*.lcov
 
-# IDE
+# IDE files
 .vscode
 .idea
 *.swp
 *.swo
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Logs
-logs
-*.log
+# Temporary files
+*.tmp
+*.temp
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
+# Git
+.git
+.gitignore
+README.md
+.github
 
-# Temporary folders
-tmp
-temp
+# Test files
+test
+*.test.ts
+*.spec.ts
 
-# PostgreSQL data
+# Docker files
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Database data
 postgres
+*.sql
 
-# Optional npm cache directory
-.npm
-
-# ESLint cache
-.eslintcache
-
-# TypeScript cache
-*.tsbuildinfo
-
-# Serverless directories
-.serverless
+# Scripts y backups
+scripts
+backup*.sql
+migration_auto_*.sql
 
 # Documentation
-README.md
+docs
 *.md
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Otros
+auto_migrate.py
+backend.log
+error.txt

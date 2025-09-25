@@ -127,7 +127,14 @@
 // }
 
 // src/modules/products/entities/product.entity.ts - CORRECCIÓN FINAL
-import { Entity, Column, ManyToOne, OneToMany, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Category } from '../../categories/entities/category.entity';
 import { User } from '../../users/entities/user.entity';
@@ -179,6 +186,10 @@ export class Product extends BaseEntity {
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   minStock: number;
+
+  // FIFO Cost for profitability calculations
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  cost: number;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   unit?: string;

@@ -6,17 +6,21 @@ export class CreateExpenseCategoriesTable1700000000000
   name = 'CreateExpenseCategoriesTable1700000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // 1. Crear enum para el status de categorías de gastos
+    // 1. Crear enum para el status de categorías de gastos (solo si no existe)
     await queryRunner.query(`
-      CREATE TYPE "expense_categories_status_enum" AS ENUM(
-        'active', 
-        'inactive'
-      )
+      DO $$ BEGIN
+        CREATE TYPE "expense_categories_status_enum" AS ENUM(
+          'active', 
+          'inactive'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
     `);
 
-    // 2. Crear tabla expense_categories
+    // 2. Crear tabla expense_categories (solo si no existe)
     await queryRunner.query(`
-      CREATE TABLE "expense_categories" (
+      CREATE TABLE IF NOT EXISTS "expense_categories" (
         "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "name" character varying(100) NOT NULL,
         "description" text,

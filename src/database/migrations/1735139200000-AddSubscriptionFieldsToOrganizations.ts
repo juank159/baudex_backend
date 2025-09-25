@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddSubscriptionFieldsToOrganizations1735139200000 implements MigrationInterface {
+export class AddSubscriptionFieldsToOrganizations1735139200000
+  implements MigrationInterface
+{
   name = 'AddSubscriptionFieldsToOrganizations1735139200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -72,16 +74,30 @@ export class AddSubscriptionFieldsToOrganizations1735139200000 implements Migrat
         OR "subscriptionPlan" IS NULL;
     `);
 
-    console.log('✅ Migración completada: Se agregaron campos de suscripción y se inicializaron períodos de prueba');
+    console.log(
+      '✅ Migración completada: Se agregaron campos de suscripción y se inicializaron períodos de prueba',
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Remover columnas de suscripción
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "trialEndDate"`);
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "trialStartDate"`);
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionEndDate"`);
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionStartDate"`);
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionStatus"`);
-    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionPlan"`);
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "trialEndDate"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "trialStartDate"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionEndDate"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionStartDate"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionStatus"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN IF EXISTS "subscriptionPlan"`,
+    );
   }
 }

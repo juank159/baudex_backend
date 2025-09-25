@@ -8,7 +8,7 @@ import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Customer]), 
+    TypeOrmModule.forFeature([Customer]),
     forwardRef(() => AuthModule),
     CommonModule,
   ],

@@ -235,6 +235,35 @@ export class InvoiceItem extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   notes?: string;
 
+  // ✅ CAMPOS PARA CÁLCULO FIFO
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 4,
+    default: 0.0000,
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  unitCost?: number;
+
+  @Column({
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    default: 0.00,
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  totalCost?: number;
+
   // ✅ RELACIONES MEJORADAS
   @Column({ type: 'uuid', nullable: true })
   invoiceId?: string;
@@ -278,7 +307,7 @@ export class InvoiceItem extends BaseEntity {
 
     // Calcular precio base sin IVA (asumiendo 19% IVA incluido)
     const priceWithoutTax = unitPrice / 1.19;
-    let baseAmount = quantity * priceWithoutTax;
+    const baseAmount = quantity * priceWithoutTax;
 
     // Aplicar descuento
     if (discountPercentage > 0) {

@@ -47,19 +47,26 @@ export class ProductService {
     const repository = this.dataSource.getRepository(Product);
     const existingSku = await this.tenantAwareService.findOneWithTenant(
       repository,
-      { where: { sku: createProductDto.sku } }
+      { where: { sku: createProductDto.sku } },
     );
-    
+
     if (existingSku) {
       throw new ConflictException('El SKU ya existe en esta organización');
     }
 
-    // Verificar que la categoría existe y está activa en la organización actual
+    // Verificar que la categoría existe, está activa y pertenece a la organización actual
     const category = await this.categoryService.findOne(
       createProductDto.categoryId,
     );
     if (!category || category.status === 'inactive') {
       throw new NotFoundException('Categoría no encontrada o inactiva');
+    }
+
+    // Verificar que la categoría pertenece a la misma organización
+    if (category.organizationId !== tenantId) {
+      throw new BadRequestException(
+        'La categoría no pertenece a su organización',
+      );
     }
 
     // Verificar que el usuario creador existe
@@ -102,6 +109,160 @@ export class ProductService {
         await queryRunner.manager.save(ProductPrice, productPrices);
       }
 
+      // 🚀 NUEVA FUNCIONALIDAD: Crear lote inicial si tiene stock
+      if (createProductDto.stock && createProductDto.stock > 0) {
+        console.log(
+          `🏗️ Producto creado con stock inicial: ${createProductDto.stock} unidades`,
+        );
+
+        try {
+          // Obtener el producto completo con precios para determinar costo
+          const fullProduct = await queryRunner.manager.findOne(Product, {
+            where: { id: savedProduct.id },
+            relations: ['prices'],
+          });
+
+          // Determinar costo unitario usando la función del InventoryService
+          const inventoryService =
+            new (require('../inventory/services/inventory.service').InventoryService)(
+              queryRunner.manager.getRepository(
+                require('../inventory/entities/inventory-movement.entity')
+                  .InventoryMovement,
+              ),
+              queryRunner.manager.getRepository(
+                require('../inventory/entities/inventory-batch.entity')
+                  .InventoryBatch,
+              ),
+              queryRunner.manager.getRepository(
+                require('../inventory/entities/inventory-batch-movement.entity')
+                  .InventoryBatchMovement,
+              ),
+              queryRunner.manager.getRepository(Product),
+              this.dataSource,
+            );
+
+          // Determinar precio de costo
+          let unitCost = 1000; // Valor por defecto
+          if (fullProduct.prices && fullProduct.prices.length > 0) {
+            const costPrice = fullProduct.prices.find(
+              (p) => p.type === 'cost' && p.status === 'active',
+            );
+            if (costPrice) {
+              unitCost = parseFloat(costPrice.amount.toString());
+            } else {
+              const salePrice = fullProduct.prices.find(
+                (p) => p.type === 'price1' && p.status === 'active',
+              );
+              if (salePrice) {
+                unitCost = parseFloat(salePrice.amount.toString()) * 0.7; // 70% del precio de venta
+              }
+            }
+          }
+
+          console.log(
+            `💰 Usando costo unitario: $${unitCost} para stock inicial`,
+          );
+
+          // Crear lote inicial usando el queryRunner existente
+          const batchNumber = await this.generateBatchNumber(
+            tenantId,
+            queryRunner,
+          );
+
+          const initialBatch = queryRunner.manager.create(
+            require('../inventory/entities/inventory-batch.entity')
+              .InventoryBatch,
+            {
+              batchNumber,
+              productId: savedProduct.id,
+              organizationId: tenantId,
+              purchaseDate: new Date(),
+              originalQuantity: createProductDto.stock,
+              currentQuantity: createProductDto.stock,
+              reservedQuantity: 0,
+              unitCost,
+              totalCost: createProductDto.stock * unitCost,
+              remainingValue: createProductDto.stock * unitCost,
+              status: 'active',
+              metadata: {
+                source: 'initial_stock',
+                createdWithProduct: true,
+                note: 'Stock inicial creado junto con el producto',
+              },
+            },
+          );
+
+          const savedBatch = (await queryRunner.manager.save(
+            initialBatch,
+          )) as any;
+          console.log(`✅ Lote inicial creado: ${savedBatch.batchNumber}`);
+
+          // Crear movimiento de inventario
+          const movementNumber = await this.generateMovementNumber(
+            tenantId,
+            queryRunner,
+          );
+
+          const initialMovement = queryRunner.manager.create(
+            require('../inventory/entities/inventory-movement.entity')
+              .InventoryMovement,
+            {
+              movementNumber,
+              type: 'initial_stock',
+              status: 'confirmed',
+              productId: savedProduct.id,
+              organizationId: tenantId,
+              createdById: createdById,
+              movementDate: new Date(),
+              quantity: createProductDto.stock,
+              unitCost,
+              totalCost: createProductDto.stock * unitCost,
+              stockAfter: createProductDto.stock,
+              stockValueAfter: createProductDto.stock * unitCost,
+              referenceType: 'initial_stock',
+              notes: 'Stock inicial del producto',
+              metadata: {
+                batchId: savedBatch.id,
+                source: 'product_creation',
+              },
+            },
+          );
+
+          const savedMovement = (await queryRunner.manager.save(
+            initialMovement,
+          )) as any;
+          console.log(
+            `✅ Movimiento inicial creado: ${savedMovement.movementNumber}`,
+          );
+
+          // Crear relación batch-movement
+          const batchMovement = queryRunner.manager.create(
+            require('../inventory/entities/inventory-batch-movement.entity')
+              .InventoryBatchMovement,
+            {
+              type: 'consume',
+              batchId: savedBatch.id,
+              inventoryMovementId: savedMovement.id,
+              organizationId: tenantId,
+              quantity: createProductDto.stock,
+              unitCost,
+              totalCost: createProductDto.stock * unitCost,
+              batchQuantityAfter: savedBatch.currentQuantity,
+              batchValueAfter: savedBatch.remainingValue,
+            },
+          );
+
+          await queryRunner.manager.save(batchMovement);
+          console.log(`🎉 Stock inicial configurado completamente`);
+        } catch (stockError) {
+          console.error(
+            `⚠️ Error creando stock inicial (producto creado exitosamente):`,
+            stockError,
+          );
+          // No fallar la creación del producto, solo loggear el error
+        }
+      }
+
       await queryRunner.commitTransaction();
 
       // ✅ CORREGIDO: Usar savedProduct.id (no savedProduct como array)
@@ -112,16 +273,27 @@ export class ProductService {
     } catch (err) {
       await queryRunner.rollbackTransaction();
       console.error('Error durante la creación del producto:', err);
-      
+
       // Proporcionar error más específico
-      if (err.code === '23505') { // Violación de constraint única
-        throw new ConflictException(`El SKU '${createProductDto.sku}' ya existe en esta organización`);
-      } else if (err.code === '23502') { // Violación de constraint NOT NULL
-        throw new BadRequestException(`Campo requerido faltante: ${err.column}`);
-      } else if (err.code === '23503') { // Violación de foreign key
-        throw new BadRequestException('Referencia inválida en los datos del producto');
+      if (err.code === '23505') {
+        // Violación de constraint única
+        throw new ConflictException(
+          `El SKU '${createProductDto.sku}' ya existe en esta organización`,
+        );
+      } else if (err.code === '23502') {
+        // Violación de constraint NOT NULL
+        throw new BadRequestException(
+          `Campo requerido faltante: ${err.column}`,
+        );
+      } else if (err.code === '23503') {
+        // Violación de foreign key
+        throw new BadRequestException(
+          'Referencia inválida en los datos del producto',
+        );
       } else {
-        throw new BadRequestException(`Error al crear producto: ${err.message || 'Error desconocido'}`);
+        throw new BadRequestException(
+          `Error al crear producto: ${err.message || 'Error desconocido'}`,
+        );
       }
     } finally {
       await queryRunner.release();
@@ -296,7 +468,19 @@ export class ProductService {
 
     // Verificar categoría si se está actualizando
     if (updateProductDto.categoryId) {
-      await this.categoryService.findOne(updateProductDto.categoryId);
+      const tenantId = this.tenantAwareService.getTenantId();
+      if (!tenantId) {
+        throw new BadRequestException('No se pudo determinar la organización');
+      }
+
+      const category = await this.categoryService.findOne(
+        updateProductDto.categoryId,
+      );
+      if (category.organizationId !== tenantId) {
+        throw new BadRequestException(
+          'La categoría no pertenece a su organización',
+        );
+      }
     }
 
     // ✅ CORRECCIÓN PRINCIPAL: Manejo mejorado de precios
@@ -606,5 +790,73 @@ export class ProductService {
 
   async getInventoryValue(): Promise<number> {
     return this.productRepository.getStockValue();
+  }
+
+  /**
+   * Generar número de lote único
+   */
+  private async generateBatchNumber(
+    organizationId: string,
+    queryRunner: any,
+  ): Promise<string> {
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const prefix = `BATCH-${year}${month}-`;
+
+    const existingBatches = await queryRunner.manager
+      .createQueryBuilder('InventoryBatch', 'batch')
+      .select('batch.batchNumber')
+      .where('batch.organizationId = :organizationId', { organizationId })
+      .andWhere('batch.batchNumber LIKE :pattern', { pattern: `${prefix}%` })
+      .orderBy('batch.batchNumber', 'DESC')
+      .getMany();
+
+    let maxSequence = 0;
+    for (const batch of existingBatches) {
+      const sequencePart = batch.batchNumber.substring(prefix.length);
+      const sequenceNumber = parseInt(sequencePart);
+      if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
+        maxSequence = sequenceNumber;
+      }
+    }
+
+    const nextSequence = maxSequence + 1;
+    const sequence = String(nextSequence).padStart(6, '0');
+    return `${prefix}${sequence}`;
+  }
+
+  /**
+   * Generar número de movimiento único
+   */
+  private async generateMovementNumber(
+    organizationId: string,
+    queryRunner: any,
+  ): Promise<string> {
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const prefix = `MOV-${year}${month}-`;
+
+    const existingMovements = await queryRunner.manager
+      .createQueryBuilder('InventoryMovement', 'movement')
+      .select('movement.movementNumber')
+      .where('movement.organizationId = :organizationId', { organizationId })
+      .andWhere('movement.movementNumber LIKE :pattern', {
+        pattern: `${prefix}%`,
+      })
+      .orderBy('movement.movementNumber', 'DESC')
+      .getMany();
+
+    let maxSequence = 0;
+    for (const movement of existingMovements) {
+      const sequencePart = movement.movementNumber.substring(prefix.length);
+      const sequenceNumber = parseInt(sequencePart);
+      if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
+        maxSequence = sequenceNumber;
+      }
+    }
+
+    const nextSequence = maxSequence + 1;
+    const sequence = String(nextSequence).padStart(6, '0');
+    return `${prefix}${sequence}`;
   }
 }

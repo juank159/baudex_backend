@@ -31,34 +31,75 @@ export class CustomersService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    // Verificar si el email ya existe en la organización actual
-    const existingEmail = await this.customerRepository.findOne({
-      where: { 
-        email: createCustomerDto.email,
+    // Verificar si el email ya existe en la organización actual (excluyendo soft-deleted)
+    const existingEmail = await this.customerRepository
+      .createQueryBuilder('customer')
+      .where('customer.organizationId = :organizationId', {
         organizationId: tenantId,
-      },
-    });
+      })
+      .andWhere('LOWER(customer.email) = LOWER(:email)', {
+        email: createCustomerDto.email,
+      })
+      .andWhere('customer.deletedAt IS NULL')
+      .getOne();
+
     if (existingEmail) {
-      throw new ConflictException('El email ya está registrado en esta organización');
+      throw new ConflictException(
+        'El email ya está registrado en esta organización',
+      );
     }
 
-    // Verificar si el documento ya existe en la organización actual
-    const existingDocument = await this.customerRepository.findOne({
-      where: {
-        documentType: createCustomerDto.documentType,
-        documentNumber: createCustomerDto.documentNumber,
+    // Verificar si el documento ya existe en la organización actual (excluyendo soft-deleted)
+    const existingDocument = await this.customerRepository
+      .createQueryBuilder('customer')
+      .where('customer.organizationId = :organizationId', {
         organizationId: tenantId,
-      },
-    });
+      })
+      .andWhere('customer.documentType = :documentType', {
+        documentType: createCustomerDto.documentType,
+      })
+      .andWhere('customer.documentNumber = :documentNumber', {
+        documentNumber: createCustomerDto.documentNumber,
+      })
+      .andWhere('customer.deletedAt IS NULL')
+      .getOne();
+
     if (existingDocument) {
-      throw new ConflictException('El número de documento ya está registrado en esta organización');
+      throw new ConflictException(
+        'El número de documento ya está registrado en esta organización',
+      );
     }
 
     const customer = this.customerRepository.create({
       ...createCustomerDto,
       organizationId: tenantId,
     });
-    return this.customerRepository.save(customer);
+
+    try {
+      return await this.customerRepository.save(customer);
+    } catch (error) {
+      // Manejar errores de constraint de base de datos
+      if (error.code === '23505') {
+        // Unique constraint violation
+        if (error.constraint === 'UQ_customer_email_organization') {
+          throw new ConflictException(
+            'El email ya está registrado en esta organización',
+          );
+        }
+        if (error.constraint === 'UQ_customer_document_organization') {
+          throw new ConflictException(
+            'El número de documento ya está registrado en esta organización',
+          );
+        }
+        // Para cualquier otro constraint único
+        throw new ConflictException(
+          'Ya existe un cliente con estos datos en la organización',
+        );
+      }
+
+      // Re-lanzar cualquier otro error
+      throw error;
+    }
   }
 
   async findAll(
@@ -164,10 +205,10 @@ export class CustomersService {
     }
 
     const customer = await this.customerRepository.findOne({
-      where: { 
-        documentType: documentType as any, 
-        documentNumber, 
-        organizationId: tenantId 
+      where: {
+        documentType: documentType as any,
+        documentNumber,
+        organizationId: tenantId,
       },
     });
 
@@ -221,7 +262,8 @@ export class CustomersService {
         })
         .andWhere('LOWER(customer.email) = LOWER(:email)', {
           email: email.trim(),
-        });
+        })
+        .andWhere('customer.deletedAt IS NULL'); // Excluir registros soft-deleted
 
       // Si hay un ID a excluir (para edición), agregarlo a la consulta
       if (excludeId && excludeId.trim() !== '') {
@@ -280,7 +322,8 @@ export class CustomersService {
         })
         .andWhere('customer.documentNumber = :documentNumber', {
           documentNumber: documentNumber.trim(),
-        });
+        })
+        .andWhere('customer.deletedAt IS NULL'); // Excluir registros soft-deleted
 
       // Si hay un ID a excluir (para edición), agregarlo a la consulta
       if (excludeId && excludeId.trim() !== '') {
@@ -429,7 +472,9 @@ export class CustomersService {
       .createQueryBuilder('customer')
       .select('SUM(customer.creditLimit)', 'totalCreditLimit')
       .addSelect('SUM(customer.currentBalance)', 'totalBalance')
-      .where('customer.organizationId = :organizationId', { organizationId: tenantId })
+      .where('customer.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('customer.status = :status', { status: CustomerStatus.ACTIVE })
       .getRawOne();
 

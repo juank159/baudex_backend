@@ -139,7 +139,9 @@ export class CategoryRepository extends Repository<Category> {
 
     const queryBuilder = this.createQueryBuilder('category')
       .withDeleted()
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.deletedAt IS NOT NULL'); // Solo elementos eliminados
 
     // Incluir relaciones según los parámetros
@@ -198,7 +200,9 @@ export class CategoryRepository extends Repository<Category> {
     }
 
     const queryBuilder = this.createQueryBuilder('category')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.slug = :slug', { slug })
       .leftJoinAndSelect('category.parent', 'parent')
       .leftJoinAndSelect('category.children', 'children');
@@ -230,7 +234,9 @@ export class CategoryRepository extends Repository<Category> {
     }
 
     const existingCategory = await this.createQueryBuilder('category')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.slug = :slug', { slug })
       .withDeleted() // Incluir eliminados para verificar conflictos
       .getOne();
@@ -248,7 +254,9 @@ export class CategoryRepository extends Repository<Category> {
     }
 
     const queryBuilder = this.createQueryBuilder('category')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.slug = :slug', { slug });
 
     if (excludeId) {
@@ -267,7 +275,9 @@ export class CategoryRepository extends Repository<Category> {
     }
 
     return this.createQueryBuilder('category')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere(
         '(category.name ILIKE :search OR category.description ILIKE :search OR category.slug ILIKE :search)',
         { search: `%${searchTerm}%` },
@@ -286,7 +296,9 @@ export class CategoryRepository extends Repository<Category> {
 
     const categories = await this.createQueryBuilder('category')
       .select('category.slug')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .getMany();
 
     return categories.map((cat) => cat.slug);
@@ -322,7 +334,9 @@ export class CategoryRepository extends Repository<Category> {
       .leftJoinAndSelect('category.children', 'children')
       .leftJoinAndSelect('children.children', 'grandchildren')
       .leftJoinAndSelect('grandchildren.children', 'greatgrandchildren')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.parentId IS NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
@@ -344,7 +358,9 @@ export class CategoryRepository extends Repository<Category> {
 
     return this.createQueryBuilder('category')
       .leftJoin('category.children', 'children')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('children.id IS NOT NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
@@ -358,7 +374,9 @@ export class CategoryRepository extends Repository<Category> {
     }
 
     return this.createQueryBuilder('category')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .loadRelationCountAndMap('category.productsCount', 'category.products')
       .orderBy('category.sortOrder', 'ASC')
@@ -373,7 +391,9 @@ export class CategoryRepository extends Repository<Category> {
 
     return this.createQueryBuilder('category')
       .leftJoin('category.products', 'product')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId })
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
       .andWhere('product.id IS NULL')
       .andWhere('category.status = :status', { status: CategoryStatus.ACTIVE })
       .orderBy('category.sortOrder', 'ASC')
@@ -422,7 +442,9 @@ export class CategoryRepository extends Repository<Category> {
 
     const query = this.createQueryBuilder('category')
       .select('MAX(category.sortOrder)', 'maxOrder')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId });
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      });
 
     if (parentId) {
       query.andWhere('category.parentId = :parentId', { parentId });
@@ -442,7 +464,9 @@ export class CategoryRepository extends Repository<Category> {
 
     const query = this.createQueryBuilder('category')
       .select('MIN(category.sortOrder)', 'minOrder')
-      .where('category.organizationId = :organizationId', { organizationId: tenantId });
+      .where('category.organizationId = :organizationId', {
+        organizationId: tenantId,
+      });
 
     if (parentId) {
       query.andWhere('category.parentId = :parentId', { parentId });

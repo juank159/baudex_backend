@@ -9,13 +9,8 @@ import { Subscription } from './entities/subscription.entity';
 import { Organization } from '../organizations/entities/organization.entity';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Subscription, Organization]),
-  ],
-  controllers: [
-    SubscriptionsController,
-    SubscriptionAdminController,
-  ],
+  imports: [TypeOrmModule.forFeature([Subscription, Organization])],
+  controllers: [SubscriptionsController, SubscriptionAdminController],
   providers: [
     SubscriptionService,
     SubscriptionExpirationService,

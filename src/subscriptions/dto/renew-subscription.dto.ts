@@ -1,5 +1,13 @@
 // src/subscriptions/dto/renew-subscription.dto.ts
-import { IsUUID, IsIn, IsInt, Min, Max, IsOptional, IsNumber } from 'class-validator';
+import {
+  IsUUID,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+  IsOptional,
+  IsNumber,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class RenewSubscriptionDto {

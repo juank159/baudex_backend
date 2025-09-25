@@ -39,11 +39,23 @@ export class SubscriptionService {
     });
 
     if (existingTrial) {
-      throw new ConflictException('La organización ya tiene un período de prueba');
+      throw new ConflictException(
+        'La organización ya tiene un período de prueba',
+      );
     }
 
+    // Crear y guardar la suscripción
     const subscription = Subscription.createTrial(organizationId);
-    return this.subscriptionRepository.save(subscription);
+    const savedSubscription =
+      await this.subscriptionRepository.save(subscription);
+
+    // Actualizar campos deprecated en Organization para compatibilidad
+    await this.syncOrganizationSubscriptionData(
+      organizationId,
+      savedSubscription,
+    );
+
+    return savedSubscription;
   }
 
   /**
@@ -79,7 +91,16 @@ export class SubscriptionService {
       subscription.paymentMethod = paymentMethod;
     }
 
-    return this.subscriptionRepository.save(subscription);
+    const savedSubscription =
+      await this.subscriptionRepository.save(subscription);
+
+    // Actualizar campos deprecated en Organization para compatibilidad
+    await this.syncOrganizationSubscriptionData(
+      organizationId,
+      savedSubscription,
+    );
+
+    return savedSubscription;
   }
 
   // ==================== OBTENER SUSCRIPCIONES ====================
@@ -87,7 +108,9 @@ export class SubscriptionService {
   /**
    * Obtener suscripción activa de una organización
    */
-  async getActiveSubscription(organizationId: string): Promise<Subscription | null> {
+  async getActiveSubscription(
+    organizationId: string,
+  ): Promise<Subscription | null> {
     return this.subscriptionRepository.findOne({
       where: {
         organizationId,
@@ -103,7 +126,9 @@ export class SubscriptionService {
   /**
    * Obtener todas las suscripciones de una organización
    */
-  async getOrganizationSubscriptions(organizationId: string): Promise<Subscription[]> {
+  async getOrganizationSubscriptions(
+    organizationId: string,
+  ): Promise<Subscription[]> {
     return this.subscriptionRepository.find({
       where: { organizationId },
       order: { createdAt: 'DESC' },
@@ -115,7 +140,7 @@ export class SubscriptionService {
    */
   async getSubscriptionInfo(organizationId: string) {
     const subscription = await this.getActiveSubscription(organizationId);
-    
+
     if (!subscription) {
       // Si no hay suscripción activa, crear trial automáticamente
       const newTrial = await this.createTrialSubscription(organizationId);
@@ -161,12 +186,12 @@ export class SubscriptionService {
     price?: number,
   ): Promise<Subscription> {
     const subscription = await this.findById(subscriptionId);
-    
+
     const newEndDate = new Date(subscription.endDate);
     newEndDate.setMonth(newEndDate.getMonth() + durationMonths);
-    
+
     subscription.renew(newEndDate, price);
-    
+
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -179,9 +204,9 @@ export class SubscriptionService {
     newPrice?: number,
   ): Promise<Subscription> {
     const subscription = await this.findById(subscriptionId);
-    
+
     subscription.upgrade(newPlan, newPrice);
-    
+
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -193,9 +218,9 @@ export class SubscriptionService {
     reason?: string,
   ): Promise<Subscription> {
     const subscription = await this.findById(subscriptionId);
-    
+
     subscription.cancel(reason);
-    
+
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -207,7 +232,7 @@ export class SubscriptionService {
     reason?: string,
   ): Promise<void> {
     const activeSubscription = await this.getActiveSubscription(organizationId);
-    
+
     if (activeSubscription) {
       await this.cancelSubscription(activeSubscription.id, reason);
     }
@@ -221,9 +246,9 @@ export class SubscriptionService {
     reason?: string,
   ): Promise<Subscription> {
     const subscription = await this.findById(subscriptionId);
-    
+
     subscription.suspend(reason);
-    
+
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -232,13 +257,15 @@ export class SubscriptionService {
    */
   async reactivateSubscription(subscriptionId: string): Promise<Subscription> {
     const subscription = await this.findById(subscriptionId);
-    
+
     if (subscription.status !== SubscriptionStatus.SUSPENDED) {
-      throw new BadRequestException('Solo se pueden reactivar suscripciones suspendidas');
+      throw new BadRequestException(
+        'Solo se pueden reactivar suscripciones suspendidas',
+      );
     }
-    
+
     subscription.activate();
-    
+
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -247,26 +274,32 @@ export class SubscriptionService {
   /**
    * Verificar si una organización puede realizar una acción
    */
-  async canPerformAction(organizationId: string, action: string): Promise<boolean> {
+  async canPerformAction(
+    organizationId: string,
+    action: string,
+  ): Promise<boolean> {
     const subscription = await this.getActiveSubscription(organizationId);
-    
+
     if (!subscription) {
       return false;
     }
-    
+
     return subscription.canPerformAction(action);
   }
 
   /**
    * Verificar límite de usuarios
    */
-  async checkUserLimit(organizationId: string, currentUserCount: number): Promise<boolean> {
+  async checkUserLimit(
+    organizationId: string,
+    currentUserCount: number,
+  ): Promise<boolean> {
     const subscription = await this.getActiveSubscription(organizationId);
-    
+
     if (!subscription) {
       return false;
     }
-    
+
     return subscription.checkUserLimit(currentUserCount);
   }
 
@@ -275,11 +308,11 @@ export class SubscriptionService {
    */
   async getMaxUsers(organizationId: string): Promise<number> {
     const subscription = await this.getActiveSubscription(organizationId);
-    
+
     if (!subscription) {
       return 0;
     }
-    
+
     return subscription.maxUsers;
   }
 
@@ -292,7 +325,7 @@ export class SubscriptionService {
   @Cron('0 * * * *') // Cada hora
   async expireSubscriptions(): Promise<void> {
     console.log('🔄 Ejecutando tarea de expiración de suscripciones...');
-    
+
     const expiredSubscriptions = await this.subscriptionRepository.find({
       where: {
         status: SubscriptionStatus.ACTIVE,
@@ -303,11 +336,15 @@ export class SubscriptionService {
     for (const subscription of expiredSubscriptions) {
       subscription.expire();
       await this.subscriptionRepository.save(subscription);
-      
-      console.log(`⏰ Suscripción ${subscription.id} expirada para organización ${subscription.organizationId}`);
+
+      console.log(
+        `⏰ Suscripción ${subscription.id} expirada para organización ${subscription.organizationId}`,
+      );
     }
 
-    console.log(`✅ Procesadas ${expiredSubscriptions.length} suscripciones expiradas`);
+    console.log(
+      `✅ Procesadas ${expiredSubscriptions.length} suscripciones expiradas`,
+    );
   }
 
   /**
@@ -317,10 +354,10 @@ export class SubscriptionService {
   @Cron('0 2 * * *') // Diario a las 2 AM
   async processAutoRenewals(): Promise<void> {
     console.log('🔄 Ejecutando tarea de renovaciones automáticas...');
-    
+
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
+
     const subscriptionsToRenew = await this.subscriptionRepository.find({
       where: {
         status: SubscriptionStatus.ACTIVE,
@@ -336,16 +373,26 @@ export class SubscriptionService {
         const durationMonths = subscription.billingCycle;
         if (durationMonths > 0) {
           await this.renewSubscription(subscription.id, durationMonths);
-          console.log(`🔄 Suscripción ${subscription.id} renovada automáticamente`);
+          console.log(
+            `🔄 Suscripción ${subscription.id} renovada automáticamente`,
+          );
         }
       } catch (error) {
-        console.error(`❌ Error renovando suscripción ${subscription.id}:`, error);
+        console.error(
+          `❌ Error renovando suscripción ${subscription.id}:`,
+          error,
+        );
         // En caso de error, suspender la suscripción
-        await this.suspendSubscription(subscription.id, 'Error en renovación automática');
+        await this.suspendSubscription(
+          subscription.id,
+          'Error en renovación automática',
+        );
       }
     }
 
-    console.log(`✅ Procesadas ${subscriptionsToRenew.length} renovaciones automáticas`);
+    console.log(
+      `✅ Procesadas ${subscriptionsToRenew.length} renovaciones automáticas`,
+    );
   }
 
   // ==================== MÉTODOS AUXILIARES ====================
@@ -375,13 +422,27 @@ export class SubscriptionService {
       totalPremium,
       totalEnterprise,
     ] = await Promise.all([
-      this.subscriptionRepository.count({ where: { status: SubscriptionStatus.ACTIVE } }),
-      this.subscriptionRepository.count({ where: { status: SubscriptionStatus.EXPIRED } }),
-      this.subscriptionRepository.count({ where: { status: SubscriptionStatus.CANCELLED } }),
-      this.subscriptionRepository.count({ where: { plan: SubscriptionPlan.TRIAL } }),
-      this.subscriptionRepository.count({ where: { plan: SubscriptionPlan.BASIC } }),
-      this.subscriptionRepository.count({ where: { plan: SubscriptionPlan.PREMIUM } }),
-      this.subscriptionRepository.count({ where: { plan: SubscriptionPlan.ENTERPRISE } }),
+      this.subscriptionRepository.count({
+        where: { status: SubscriptionStatus.ACTIVE },
+      }),
+      this.subscriptionRepository.count({
+        where: { status: SubscriptionStatus.EXPIRED },
+      }),
+      this.subscriptionRepository.count({
+        where: { status: SubscriptionStatus.CANCELLED },
+      }),
+      this.subscriptionRepository.count({
+        where: { plan: SubscriptionPlan.TRIAL },
+      }),
+      this.subscriptionRepository.count({
+        where: { plan: SubscriptionPlan.BASIC },
+      }),
+      this.subscriptionRepository.count({
+        where: { plan: SubscriptionPlan.PREMIUM },
+      }),
+      this.subscriptionRepository.count({
+        where: { plan: SubscriptionPlan.ENTERPRISE },
+      }),
     ]);
 
     return {
@@ -398,5 +459,95 @@ export class SubscriptionService {
       },
       total: totalActive + totalExpired + totalCancelled,
     };
+  }
+
+  /**
+   * Sincronizar todas las organizaciones existentes con sus suscripciones activas
+   * Método de utilidad para migración/corrección de datos
+   */
+  async syncAllOrganizationsSubscriptionData(): Promise<void> {
+    console.log(
+      '🔄 Iniciando sincronización de datos de suscripción en todas las organizaciones...',
+    );
+
+    const organizations = await this.organizationRepository.find({
+      where: { isActive: true },
+    });
+
+    let syncedCount = 0;
+    let errorCount = 0;
+
+    for (const organization of organizations) {
+      try {
+        const activeSubscription = await this.getActiveSubscription(
+          organization.id,
+        );
+
+        if (activeSubscription) {
+          await this.syncOrganizationSubscriptionData(
+            organization.id,
+            activeSubscription,
+          );
+          syncedCount++;
+        } else {
+          console.warn(
+            `⚠️ Organización ${organization.name} no tiene suscripción activa`,
+          );
+        }
+      } catch (error) {
+        console.error(
+          `❌ Error sincronizando organización ${organization.name}:`,
+          error,
+        );
+        errorCount++;
+      }
+    }
+
+    console.log(
+      `✅ Sincronización completada: ${syncedCount} exitosas, ${errorCount} errores`,
+    );
+  }
+
+  /**
+   * Sincronizar datos de suscripción con campos deprecated en Organization
+   * para mantener compatibilidad con código legacy
+   */
+  private async syncOrganizationSubscriptionData(
+    organizationId: string,
+    subscription: Subscription,
+  ): Promise<void> {
+    try {
+      // Buscar la organización
+      const organization = await this.organizationRepository.findOne({
+        where: { id: organizationId },
+      });
+
+      if (!organization) {
+        console.warn(
+          `⚠️ Organización ${organizationId} no encontrada para sincronizar datos de suscripción`,
+        );
+        return;
+      }
+
+      // Actualizar campos deprecated para compatibilidad
+      await this.organizationRepository.update(organizationId, {
+        subscriptionPlan: subscription.plan,
+        subscriptionStatus: subscription.status,
+        subscriptionStartDate: subscription.startDate,
+        subscriptionEndDate: subscription.endDate,
+        trialStartDate: subscription.isTrial ? subscription.startDate : null,
+        trialEndDate: subscription.isTrial ? subscription.endDate : null,
+      });
+
+      console.log(
+        `✅ Datos de suscripción sincronizados en Organization para ${organization.name}`,
+      );
+    } catch (error) {
+      console.error(
+        `❌ Error sincronizando datos de suscripción para organización ${organizationId}:`,
+        error,
+      );
+      // No lanzar error para no fallar la creación de suscripción
+    }
   }
 }

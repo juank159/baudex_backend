@@ -11,7 +11,11 @@ import {
   Min,
   IsObject,
 } from 'class-validator';
-import { ExpenseType, PaymentMethod, ExpenseStatus } from '../entities/expense.entity';
+import {
+  ExpenseType,
+  PaymentMethod,
+  ExpenseStatus,
+} from '../entities/expense.entity';
 
 export class CreateExpenseDto {
   @IsString({ message: 'La descripción es requerida' })

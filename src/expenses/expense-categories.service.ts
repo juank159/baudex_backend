@@ -33,7 +33,7 @@ export class ExpenseCategoriesService {
     const queryBuilder = this.categoryRepository
       .createQueryBuilder('category')
       .where('category.name = :name', { name: createCategoryDto.name });
-    
+
     this.tenantService.addTenantFilterToQueryBuilder(queryBuilder, 'category');
     const existingCategory = await queryBuilder.getOne();
 
@@ -51,7 +51,9 @@ export class ExpenseCategoriesService {
   async findAll(): Promise<ExpenseCategory[]> {
     const queryBuilder = this.categoryRepository
       .createQueryBuilder('category')
-      .where('category.status = :status', { status: ExpenseCategoryStatus.ACTIVE })
+      .where('category.status = :status', {
+        status: ExpenseCategoryStatus.ACTIVE,
+      })
       .orderBy('category.sortOrder', 'ASC')
       .addOrderBy('category.name', 'ASC');
 
@@ -62,7 +64,9 @@ export class ExpenseCategoriesService {
   async findAllWithStats(): Promise<ExpenseCategory[]> {
     const queryBuilder = this.categoryRepository
       .createQueryBuilder('category')
-      .where('category.status = :status', { status: ExpenseCategoryStatus.ACTIVE })
+      .where('category.status = :status', {
+        status: ExpenseCategoryStatus.ACTIVE,
+      })
       .orderBy('category.sortOrder', 'ASC')
       .addOrderBy('category.name', 'ASC');
 
@@ -223,7 +227,9 @@ export class ExpenseCategoriesService {
   async seedDefaultCategories(): Promise<{ message: string; created: number }> {
     const tenantId = this.tenantService.getTenantId();
     if (!tenantId) {
-      throw new BadRequestException('No se pudo determinar la organización actual');
+      throw new BadRequestException(
+        'No se pudo determinar la organización actual',
+      );
     }
 
     // Verificar si ya existen categorías
@@ -262,14 +268,16 @@ export class ExpenseCategoriesService {
       },
       {
         name: 'Materiales y Suministros',
-        description: 'Compra de materiales de oficina, suministros y herramientas',
+        description:
+          'Compra de materiales de oficina, suministros y herramientas',
         color: '#96CEB4',
         monthlyBudget: 400000,
         sortOrder: 4,
       },
       {
         name: 'Capacitación',
-        description: 'Cursos, seminarios, entrenamientos y desarrollo profesional',
+        description:
+          'Cursos, seminarios, entrenamientos y desarrollo profesional',
         color: '#FECA57',
         monthlyBudget: 600000,
         sortOrder: 5,

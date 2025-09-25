@@ -31,6 +31,8 @@ export class RegisterDto {
 
   @IsOptional()
   @IsString({ message: 'El nombre de la organización debe ser una cadena' })
-  @MinLength(2, { message: 'El nombre de la organización debe tener al menos 2 caracteres' })
+  @MinLength(2, {
+    message: 'El nombre de la organización debe tener al menos 2 caracteres',
+  })
   organizationName?: string;
 }

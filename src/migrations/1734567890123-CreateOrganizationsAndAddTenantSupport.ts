@@ -31,7 +31,7 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
     await queryRunner.query(`
       CREATE UNIQUE INDEX "IDX_organizations_slug" ON "organizations" ("slug") WHERE "deletedAt" IS NULL
     `);
-    
+
     await queryRunner.query(`
       CREATE UNIQUE INDEX "IDX_organizations_domain" ON "organizations" ("domain") WHERE "deletedAt" IS NULL AND "domain" IS NOT NULL
     `);
@@ -74,12 +74,12 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
     // 9. Agregar organization_id a todas las tablas principales
     const tablesToUpdate = [
       'products',
-      'customers', 
+      'customers',
       'categories',
       'invoices',
       'invoice_items',
       'expenses',
-      'expense_categories'
+      'expense_categories',
     ];
 
     for (const tableName of tablesToUpdate) {
@@ -118,7 +118,7 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
     }
 
     // 10. Modificar índices únicos existentes para incluir organization_id
-    
+
     // Para categories (slug debe ser único por organización)
     if (await queryRunner.hasTable('categories')) {
       // Eliminar índice único anterior si existe
@@ -127,7 +127,7 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
       } catch (error) {
         // Ignorar si no existe
       }
-      
+
       // Crear nuevo índice único compuesto
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_categories_slug_organization" 
@@ -143,7 +143,7 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
       } catch (error) {
         // Ignorar si no existe
       }
-      
+
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_products_sku_organization" 
         ON "products" ("sku", "organization_id") 
@@ -158,7 +158,7 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
       } catch (error) {
         // Ignorar si no existe
       }
-      
+
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_customers_email_organization" 
         ON "customers" ("email", "organization_id") 
@@ -169,17 +169,17 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Revertir cambios en orden inverso
-    
+
     // 1. Eliminar foreign keys y columnas organization_id de todas las tablas
     const tablesToRevert = [
       'users',
       'products',
       'customers',
-      'categories', 
+      'categories',
       'invoices',
       'invoice_items',
       'expenses',
-      'expense_categories'
+      'expense_categories',
     ];
 
     for (const tableName of tablesToRevert) {
@@ -205,7 +205,9 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
 
     // 2. Restaurar índices únicos originales
     if (await queryRunner.hasTable('categories')) {
-      await queryRunner.query(`DROP INDEX IF EXISTS "IDX_categories_slug_organization"`);
+      await queryRunner.query(
+        `DROP INDEX IF EXISTS "IDX_categories_slug_organization"`,
+      );
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_categories_slug" ON "categories" ("slug") 
         WHERE "deletedAt" IS NULL
@@ -213,7 +215,9 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
     }
 
     if (await queryRunner.hasTable('products')) {
-      await queryRunner.query(`DROP INDEX IF EXISTS "IDX_products_sku_organization"`);
+      await queryRunner.query(
+        `DROP INDEX IF EXISTS "IDX_products_sku_organization"`,
+      );
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_products_sku" ON "products" ("sku") 
         WHERE "deletedAt" IS NULL AND "sku" IS NOT NULL
@@ -221,7 +225,9 @@ export class CreateOrganizationsAndAddTenantSupport1734567890123
     }
 
     if (await queryRunner.hasTable('customers')) {
-      await queryRunner.query(`DROP INDEX IF EXISTS "IDX_customers_email_organization"`);
+      await queryRunner.query(
+        `DROP INDEX IF EXISTS "IDX_customers_email_organization"`,
+      );
       await queryRunner.query(`
         CREATE UNIQUE INDEX "IDX_customers_email" ON "customers" ("email") 
         WHERE "deletedAt" IS NULL AND "email" IS NOT NULL

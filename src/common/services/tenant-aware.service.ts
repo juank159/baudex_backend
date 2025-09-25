@@ -1,5 +1,10 @@
 import { Injectable, Scope } from '@nestjs/common';
-import { Repository, FindManyOptions, FindOneOptions, SelectQueryBuilder } from 'typeorm';
+import {
+  Repository,
+  FindManyOptions,
+  FindOneOptions,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { Request } from 'express';
 import { REQUEST } from '@nestjs/core';
 import { Inject } from '@nestjs/common';
@@ -13,9 +18,7 @@ export interface TenantAwareEntity {
 export class TenantAwareService {
   private tenantId: string | null = null;
 
-  constructor(
-    @Inject(REQUEST) private readonly request: Request,
-  ) {
+  constructor(@Inject(REQUEST) private readonly request: Request) {
     // Obtener el tenant ID del request actual
     this.tenantId = this.request.tenant?.id || null;
   }
@@ -75,7 +78,9 @@ export class TenantAwareService {
   }
 
   // Método para agregar organization_id a los datos de creación
-  addTenantToEntity<T extends Partial<TenantAwareEntity>>(entity: T): T & { organizationId: string } {
+  addTenantToEntity<T extends Partial<TenantAwareEntity>>(
+    entity: T,
+  ): T & { organizationId: string } {
     if (!this.tenantId) {
       throw new Error('No se pudo determinar el tenant actual');
     }
@@ -118,14 +123,16 @@ export class TenantAwareService {
     updateData: Partial<Omit<T, 'organizationId'>>,
   ): Promise<T | null> {
     // Primero verificar que la entidad pertenece al tenant actual
-    const entity = await this.findOneWithTenant(repository, { where: { id } as any });
+    const entity = await this.findOneWithTenant(repository, {
+      where: { id } as any,
+    });
     if (!entity) {
       return null;
     }
 
     // Actualizar la entidad
     await repository.update(id, updateData as any);
-    
+
     // Devolver la entidad actualizada
     return this.findOneWithTenant(repository, { where: { id } as any });
   }
@@ -136,7 +143,9 @@ export class TenantAwareService {
     id: string | number,
   ): Promise<boolean> {
     // Verificar que la entidad pertenece al tenant actual
-    const entity = await this.findOneWithTenant(repository, { where: { id } as any });
+    const entity = await this.findOneWithTenant(repository, {
+      where: { id } as any,
+    });
     if (!entity) {
       return false;
     }

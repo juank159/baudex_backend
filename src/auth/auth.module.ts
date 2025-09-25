@@ -9,6 +9,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { User } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
 
@@ -28,6 +29,7 @@ import { Organization } from '../organizations/entities/organization.entity';
       }),
     }),
     forwardRef(() => UsersModule), // 👈 AGREGAR forwardRef aquí
+    SubscriptionsModule, // Para crear suscripciones trial
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

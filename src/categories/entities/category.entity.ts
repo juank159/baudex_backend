@@ -104,11 +104,15 @@ export enum CategoryStatus {
   INACTIVE = 'inactive',
 }
 
-// Índice único parcial que excluye registros eliminados
-@Index('UQ_categories_slug_not_deleted', ['slug'], {
-  unique: true,
-  where: 'deleted_at IS NULL',
-})
+// Índice único parcial que excluye registros eliminados y scoped por organización
+@Index(
+  'UQ_categories_slug_organization_not_deleted',
+  ['slug', 'organizationId'],
+  {
+    unique: true,
+    where: 'deleted_at IS NULL',
+  },
+)
 @Entity('categories')
 export class Category extends BaseEntity {
   @Column({ type: 'varchar', length: 100 })

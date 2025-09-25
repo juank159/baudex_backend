@@ -22,6 +22,7 @@ import { Expense } from '../expenses/entities/expense.entity';
 import { Invoice } from '../invoices/entities/invoice.entity';
 import { InvoiceItem } from '../invoices/entities/invoice-item.entity';
 import { Organization } from '../organizations/entities/organization.entity';
+import { Warehouse } from '../warehouses/entities/warehouse.entity';
 
 @Global()
 @Module({
@@ -36,6 +37,7 @@ import { Organization } from '../organizations/entities/organization.entity';
       Invoice,
       InvoiceItem,
       Organization,
+      Warehouse,
     ]),
   ],
   providers: [

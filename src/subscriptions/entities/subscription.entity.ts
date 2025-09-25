@@ -33,7 +33,7 @@ export class Subscription extends BaseEntity {
   @Index()
   organizationId: string;
 
-  @ManyToOne(() => Organization, organization => organization.subscriptions)
+  @ManyToOne(() => Organization, (organization) => organization.subscriptions)
   @JoinColumn({ name: 'organizationId' })
   organization: Organization;
 
@@ -108,7 +108,9 @@ export class Subscription extends BaseEntity {
 
   // Computed properties
   get isActive(): boolean {
-    return this.status === SubscriptionStatus.ACTIVE && this.endDate > new Date();
+    return (
+      this.status === SubscriptionStatus.ACTIVE && this.endDate > new Date()
+    );
   }
 
   get isExpired(): boolean {
@@ -130,7 +132,7 @@ export class Subscription extends BaseEntity {
     const now = new Date();
     const totalDays = this.endDate.getTime() - this.startDate.getTime();
     const elapsedDays = now.getTime() - this.startDate.getTime();
-    
+
     if (totalDays <= 0) return 1.0;
     return Math.min(Math.max(elapsedDays / totalDays, 0), 1);
   }
@@ -145,7 +147,7 @@ export class Subscription extends BaseEntity {
     if (!this.isActive) {
       const restrictedActions = [
         'create_product',
-        'update_product', 
+        'update_product',
         'delete_product',
         'create_customer',
         'update_customer',
@@ -168,7 +170,7 @@ export class Subscription extends BaseEntity {
       return !restrictedActions.includes(action);
     }
 
-    // ✅ Si la suscripción está ACTIVA, permitir TODAS las acciones CRUD 
+    // ✅ Si la suscripción está ACTIVA, permitir TODAS las acciones CRUD
     // (según solicitud del usuario: solo limitación de usuarios)
     return true;
   }
@@ -207,13 +209,13 @@ export class Subscription extends BaseEntity {
     this.status = SubscriptionStatus.ACTIVE;
     this.endDate = endDate;
     this.lastBillingDate = new Date();
-    
+
     if (this.billingCycle > 0) {
       const nextBilling = new Date(this.lastBillingDate);
       nextBilling.setMonth(nextBilling.getMonth() + this.billingCycle);
       this.nextBillingDate = nextBilling;
     }
-    
+
     if (price !== undefined) {
       this.price = price;
     }
@@ -222,7 +224,7 @@ export class Subscription extends BaseEntity {
   upgrade(newPlan: SubscriptionPlan, newPrice?: number): void {
     this.plan = newPlan;
     this.updateMaxUsers();
-    
+
     if (newPrice !== undefined) {
       this.price = newPrice;
     }
@@ -235,7 +237,7 @@ export class Subscription extends BaseEntity {
       [SubscriptionPlan.PREMIUM]: 15,
       [SubscriptionPlan.ENTERPRISE]: -1, // Unlimited
     };
-    
+
     this.maxUsers = limits[this.plan];
   }
 
@@ -246,16 +248,16 @@ export class Subscription extends BaseEntity {
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.type = SubscriptionType.TRIAL;
     subscription.startDate = new Date();
-    
+
     const endDate = new Date();
     endDate.setDate(endDate.getDate() + 30); // 30 days trial
     subscription.endDate = endDate;
     subscription.trialEndsAt = endDate;
-    
+
     subscription.maxUsers = 2;
     subscription.autoRenew = false;
     subscription.isTrialUsed = true;
-    
+
     return subscription;
   }
 
@@ -265,7 +267,7 @@ export class Subscription extends BaseEntity {
     type: SubscriptionType,
     price: number,
     currency: string,
-    durationMonths: number = 1
+    durationMonths: number = 1,
   ): Subscription {
     const subscription = new Subscription();
     subscription.organizationId = organizationId;
@@ -275,24 +277,28 @@ export class Subscription extends BaseEntity {
     subscription.price = price;
     subscription.currency = currency;
     subscription.startDate = new Date();
-    
+
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + durationMonths);
     subscription.endDate = endDate;
-    
-    subscription.billingCycle = type === SubscriptionType.MONTHLY ? 1 : 
-                               type === SubscriptionType.YEARLY ? 12 : 0;
-    
+
+    subscription.billingCycle =
+      type === SubscriptionType.MONTHLY
+        ? 1
+        : type === SubscriptionType.YEARLY
+          ? 12
+          : 0;
+
     subscription.lastBillingDate = new Date();
     if (subscription.billingCycle > 0) {
       const nextBilling = new Date();
       nextBilling.setMonth(nextBilling.getMonth() + subscription.billingCycle);
       subscription.nextBillingDate = nextBilling;
     }
-    
+
     subscription.autoRenew = type !== SubscriptionType.LIFETIME;
     subscription.updateMaxUsers();
-    
+
     return subscription;
   }
 }

@@ -4,41 +4,53 @@ export class CreateExpensesTable1700000000001 implements MigrationInterface {
   name = 'CreateExpensesTable1700000000001';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // 1. Crear enums para expenses
+    // 1. Crear enums para expenses (solo si no existen)
     await queryRunner.query(`
-      CREATE TYPE "expenses_status_enum" AS ENUM(
-        'draft', 
-        'pending', 
-        'approved', 
-        'rejected', 
-        'paid'
-      )
+      DO $$ BEGIN
+        CREATE TYPE "expenses_status_enum" AS ENUM(
+          'draft', 
+          'pending', 
+          'approved', 
+          'rejected', 
+          'paid'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
     `);
 
     await queryRunner.query(`
-      CREATE TYPE "expenses_type_enum" AS ENUM(
-        'operating', 
-        'administrative', 
-        'sales', 
-        'financial', 
-        'extraordinary'
-      )
+      DO $$ BEGIN
+        CREATE TYPE "expenses_type_enum" AS ENUM(
+          'operating', 
+          'administrative', 
+          'sales', 
+          'financial', 
+          'extraordinary'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
     `);
 
     await queryRunner.query(`
-      CREATE TYPE "expenses_paymentmethod_enum" AS ENUM(
-        'cash', 
-        'credit_card', 
-        'debit_card', 
-        'bank_transfer', 
-        'check', 
-        'other'
-      )
+      DO $$ BEGIN
+        CREATE TYPE "expenses_paymentmethod_enum" AS ENUM(
+          'cash', 
+          'credit_card', 
+          'debit_card', 
+          'bank_transfer', 
+          'check', 
+          'other'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
     `);
 
-    // 2. Crear tabla expenses
+    // 2. Crear tabla expenses (solo si no existe)
     await queryRunner.query(`
-      CREATE TABLE "expenses" (
+      CREATE TABLE IF NOT EXISTS "expenses" (
         "id" uuid NOT NULL DEFAULT gen_random_uuid(),
         "description" character varying(200) NOT NULL,
         "amount" numeric(12,2) NOT NULL,

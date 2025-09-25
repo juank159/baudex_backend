@@ -1,5 +1,8 @@
 import { DataSource } from 'typeorm';
-import { ExpenseCategory, ExpenseCategoryStatus } from '../../expenses/entities/expense-category.entity';
+import {
+  ExpenseCategory,
+  ExpenseCategoryStatus,
+} from '../../expenses/entities/expense-category.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 
 export default async function seedExpenseCategories(dataSource: DataSource) {
@@ -35,14 +38,16 @@ export default async function seedExpenseCategories(dataSource: DataSource) {
     },
     {
       name: 'Materiales y Suministros',
-      description: 'Compra de materiales de oficina, suministros y herramientas',
+      description:
+        'Compra de materiales de oficina, suministros y herramientas',
       color: '#96CEB4',
       monthlyBudget: 400000,
       sortOrder: 4,
     },
     {
       name: 'Capacitación',
-      description: 'Cursos, seminarios, entrenamientos y desarrollo profesional',
+      description:
+        'Cursos, seminarios, entrenamientos y desarrollo profesional',
       color: '#FECA57',
       monthlyBudget: 600000,
       sortOrder: 5,
@@ -101,7 +106,9 @@ export default async function seedExpenseCategories(dataSource: DataSource) {
   let totalCreated = 0;
 
   for (const organization of organizations) {
-    console.log(`   📁 Creando categorías para organización: ${organization.name}`);
+    console.log(
+      `   📁 Creando categorías para organización: ${organization.name}`,
+    );
 
     for (const categoryData of defaultCategories) {
       // Verificar si la categoría ya existe para esta organización
@@ -129,5 +136,7 @@ export default async function seedExpenseCategories(dataSource: DataSource) {
     }
   }
 
-  console.log(`✅ Seed de categorías de gastos completado: ${totalCreated} categorías creadas`);
+  console.log(
+    `✅ Seed de categorías de gastos completado: ${totalCreated} categorías creadas`,
+  );
 }

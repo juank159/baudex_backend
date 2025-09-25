@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'crypto';
 
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
@@ -16,6 +17,7 @@ import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthResponse } from './interfaces/auth-response.interface';
 import { SeedService } from '../common/services/seed.service';
+import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
 @Injectable()
 export class AuthService {
@@ -26,9 +28,13 @@ export class AuthService {
     private readonly organizationRepository: Repository<Organization>,
     private readonly jwtService: JwtService,
     private readonly seedService: SeedService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
-  async register(registerDto: RegisterDto, organizationId?: string): Promise<AuthResponse> {
+  async register(
+    registerDto: RegisterDto,
+    organizationId?: string,
+  ): Promise<AuthResponse> {
     const {
       email,
       password,
@@ -43,76 +49,88 @@ export class AuthService {
 
     // MULTITENANT: Lógica para crear/obtener organización
     if (organizationName) {
-      // Generar slug a partir del nombre de la organización
-      const slug = organizationName
+      // SIEMPRE crear una nueva organización única para cada usuario, incluso con organizationName
+      const baseSlug = organizationName
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '')
-        .substring(0, 20);
-      
-      // Buscar si ya existe una organización con este slug
-      organization = await this.organizationRepository.findOne({
-        where: { slug, isActive: true },
+        .substring(0, 15); // Reducir a 15 para dejar espacio al sufijo único
+
+      // Generar ID temporal para crear nombres únicos
+      const tempId = this.generateUniqueId();
+      const uniqueSuffix = tempId.slice(-8); // Últimos 8 caracteres del ID
+
+      // Generar slug y nombre únicos
+      const uniqueSlug = `${baseSlug}-${uniqueSuffix}`;
+      const uniqueName = `${organizationName} ${uniqueSuffix}`;
+
+      // Crear nueva organización única
+      organization = this.organizationRepository.create({
+        name: uniqueName,
+        slug: uniqueSlug,
+        isActive: true,
       });
-      
-      if (!organization) {
-        // Crear nueva organización
-        organization = this.organizationRepository.create({
-          name: organizationName,
-          slug,
-          isActive: true,
-        });
-        
-        organization = await this.organizationRepository.save(organization);
-        console.log(`🏢 Nueva organización creada: ${organizationName} (${slug})`);
-      }
-      
+
+      organization = await this.organizationRepository.save(organization);
+      console.log(
+        `🏢 Nueva organización única creada: ${uniqueName} (${uniqueSlug})`,
+      );
+
       targetOrganizationId = organization.id;
     } else if (!targetOrganizationId) {
-      // Fallback: crear organización basada en dominio del email
+      // SIEMPRE crear una nueva organización única para cada usuario
       const emailDomain = email.split('@')[1];
       const domainSlug = emailDomain
         .split('.')[0]
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '')
         .substring(0, 20);
-      
-      organization = await this.organizationRepository.findOne({
-        where: { slug: domainSlug, isActive: true },
+
+      // Generar ID temporal para crear nombres únicos
+      const tempId = this.generateUniqueId();
+      const uniqueSuffix = tempId.slice(-8); // Últimos 8 caracteres del ID
+
+      // Generar nombre único basado en dominio + sufijo único
+      const domainBase = emailDomain.split('.')[0];
+      const uniqueName = `${domainBase.charAt(0).toUpperCase() + domainBase.slice(1)} ${uniqueSuffix}`;
+      const uniqueSlug = `${domainSlug}-${uniqueSuffix}`;
+
+      organization = this.organizationRepository.create({
+        name: uniqueName,
+        slug: uniqueSlug,
+        isActive: true,
       });
-      
-      if (!organization) {
-        organization = this.organizationRepository.create({
-          name: `${emailDomain.split('.')[0].toUpperCase()} Corp`,
-          slug: domainSlug,
-          isActive: true,
-        });
-        
-        organization = await this.organizationRepository.save(organization);
-        console.log(`🏢 Organización generada: ${organization.name} (${domainSlug})`);
-      }
-      
+
+      organization = await this.organizationRepository.save(organization);
+      console.log(
+        `🏢 Nueva organización única creada: ${organization.name} (${uniqueSlug})`,
+      );
+
       targetOrganizationId = organization.id;
     } else {
       // Verificar que la organización existe y está activa
       organization = await this.organizationRepository.findOne({
         where: { id: targetOrganizationId, isActive: true },
       });
-      
+
       if (!organization) {
-        throw new BadRequestException('La organización especificada no existe o está inactiva');
+        throw new BadRequestException(
+          'La organización especificada no existe o está inactiva',
+        );
       }
     }
 
     // Verificar si el usuario ya existe en la misma organización
     const existingUser = await this.userRepository.findOne({
-      where: { 
+      where: {
         email,
-        organizationId: targetOrganizationId 
+        organizationId: targetOrganizationId,
       },
     });
 
     if (existingUser) {
-      throw new ConflictException('El usuario ya existe con este email en esta organización');
+      throw new ConflictException(
+        'El usuario ya existe con este email en esta organización',
+      );
     }
 
     // Crear usuario (el password se encripta automáticamente en @BeforeInsert)
@@ -130,11 +148,33 @@ export class AuthService {
 
     // SEED: Crear datos de muestra para la nueva organización
     try {
-      await this.seedService.createSampleDataForOrganization(targetOrganizationId, user);
+      await this.seedService.createSampleDataForOrganization(
+        targetOrganizationId,
+        user,
+      );
       console.log(`🌱 Datos de muestra creados para usuario: ${user.email}`);
     } catch (seedError) {
-      console.error(`❌ Error creando datos de muestra para ${user.email}:`, seedError);
+      console.error(
+        `❌ Error creando datos de muestra para ${user.email}:`,
+        seedError,
+      );
       // No fallar el registro si hay error en el seed, solo loguearlo
+    }
+
+    // SUBSCRIPTION: Crear suscripción trial automáticamente para la nueva organización
+    try {
+      await this.subscriptionService.createTrialSubscription(
+        targetOrganizationId,
+      );
+      console.log(
+        `💳 Suscripción trial creada para organización: ${organization.name}`,
+      );
+    } catch (subscriptionError) {
+      console.error(
+        `❌ Error creando suscripción trial para ${organization.name}:`,
+        subscriptionError,
+      );
+      // No fallar el registro si hay error en la suscripción, solo loguearlo
     }
 
     // Generar token
@@ -158,7 +198,10 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto, organizationId?: string): Promise<AuthResponse> {
+  async login(
+    loginDto: LoginDto,
+    organizationId?: string,
+  ): Promise<AuthResponse> {
     const { email, password } = loginDto;
 
     // Construir las condiciones de búsqueda
@@ -246,30 +289,32 @@ export class AuthService {
         'organizationId',
         'lastLoginAt',
         'avatar',
-        'phone'
+        'phone',
       ],
       relations: ['organization'],
     });
 
     if (!user) {
-      console.error('❌ AuthService.validateUser: User not found', { userId: id });
+      console.error('❌ AuthService.validateUser: User not found', {
+        userId: id,
+      });
       throw new UnauthorizedException('Token inválido');
     }
 
     // Verificar que el usuario tenga un rol asignado
     if (!user.role) {
-      console.error('❌ AuthService.validateUser: User has no role', { 
-        userId: user.id, 
-        email: user.email 
+      console.error('❌ AuthService.validateUser: User has no role', {
+        userId: user.id,
+        email: user.email,
       });
       throw new UnauthorizedException('Usuario sin rol asignado');
     }
 
     // Verificar que tenga una organización asignada
     if (!user.organizationId) {
-      console.error('❌ AuthService.validateUser: User has no organization', { 
-        userId: user.id, 
-        email: user.email 
+      console.error('❌ AuthService.validateUser: User has no organization', {
+        userId: user.id,
+        email: user.email,
       });
       throw new UnauthorizedException('Usuario sin organización asignada');
     }
@@ -279,7 +324,7 @@ export class AuthService {
       console.error('❌ AuthService.validateUser: Organization is inactive', {
         userId: user.id,
         organizationId: user.organizationId,
-        organizationSlug: user.organization.slug
+        organizationSlug: user.organization.slug,
       });
       throw new UnauthorizedException('La organización está inactiva');
     }
@@ -287,17 +332,22 @@ export class AuthService {
     // Si no se encontró la organización en la relación, buscarla
     if (!user.organization) {
       const organization = await this.organizationRepository.findOne({
-        where: { id: user.organizationId, isActive: true }
+        where: { id: user.organizationId, isActive: true },
       });
-      
+
       if (!organization) {
-        console.error('❌ AuthService.validateUser: Organization not found or inactive', {
-          userId: user.id,
-          organizationId: user.organizationId
-        });
-        throw new UnauthorizedException('Organización no encontrada o inactiva');
+        console.error(
+          '❌ AuthService.validateUser: Organization not found or inactive',
+          {
+            userId: user.id,
+            organizationId: user.organizationId,
+          },
+        );
+        throw new UnauthorizedException(
+          'Organización no encontrada o inactiva',
+        );
       }
-      
+
       user.organization = organization;
     }
 
@@ -305,7 +355,7 @@ export class AuthService {
       userId: user.id,
       email: user.email,
       role: user.role,
-      organizationId: user.organizationId
+      organizationId: user.organizationId,
     });
 
     return user;
@@ -318,5 +368,12 @@ export class AuthService {
   async refreshToken(user: User): Promise<{ token: string }> {
     const token = this.getJwtToken({ id: user.id });
     return { token };
+  }
+
+  /**
+   * Genera un ID único para usar en nombres de organizaciones
+   */
+  private generateUniqueId(): string {
+    return randomUUID();
   }
 }

@@ -3,7 +3,10 @@ import { Organization } from '../../organizations/entities/organization.entity';
 
 // Decorator para obtener información del tenant actual
 export const CurrentTenant = createParamDecorator(
-  (data: keyof Express.Request['tenant'] | undefined, ctx: ExecutionContext) => {
+  (
+    data: keyof Express.Request['tenant'] | undefined,
+    ctx: ExecutionContext,
+  ) => {
     const request = ctx.switchToHttp().getRequest();
     const tenant = request.tenant;
 

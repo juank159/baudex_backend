@@ -24,6 +24,10 @@ import { CustomersService } from '../customers/customers.service';
 import { ProductService } from '../products/products.service';
 import { TemporaryProductService } from '../products/temporary-product.service';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
+import { UserPreferencesService } from '../users/user-preferences.service';
+import { InventoryService } from '../inventory/services/inventory.service';
+import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import { Organization } from '../organizations/entities/organization.entity';
 
 @Injectable()
 export class InvoicesService {
@@ -32,11 +36,17 @@ export class InvoicesService {
     private readonly invoiceRepository: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
     private readonly invoiceItemRepository: Repository<InvoiceItem>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepository: Repository<Warehouse>,
+    @InjectRepository(Organization)
+    private readonly organizationRepository: Repository<Organization>,
     private readonly customersService: CustomersService,
     private readonly productsService: ProductService,
     private readonly temporaryProductService: TemporaryProductService,
     private readonly dataSource: DataSource,
     private readonly tenantAwareService: TenantAwareService,
+    private readonly userPreferencesService: UserPreferencesService,
+    private readonly inventoryService: InventoryService,
   ) {}
 
   async create(
@@ -169,7 +179,19 @@ export class InvoicesService {
       }
 
       completeInvoice.calculateTotals();
-      await this.applyBusinessLogicByStatus(completeInvoice, manager);
+
+      // Consultar configuración de usuario para descuento automático
+      const shouldAutoDeduct =
+        await this.userPreferencesService.shouldAutoDeductInventory(
+          createdById,
+          tenantId,
+        );
+
+      await this.applyBusinessLogicByStatus(
+        completeInvoice,
+        manager,
+        shouldAutoDeduct,
+      );
 
       return await manager.save(Invoice, completeInvoice);
     });
@@ -266,7 +288,7 @@ export class InvoicesService {
   private async applyBusinessLogicByStatus(
     invoice: Invoice,
     manager: any,
-    reduceInventory: boolean = false, // ❌ Por defecto NO reduce inventario
+    shouldAutoDeductInventory: boolean = false,
   ): Promise<void> {
     switch (invoice.status) {
       case InvoiceStatus.PAID:
@@ -275,14 +297,42 @@ export class InvoicesService {
         invoice.paidAmount = invoice.total;
         invoice.balanceDue = 0;
 
-        // Solo reducir stock si está habilitado
-        if (reduceInventory) {
+        // Solo reducir stock si está habilitado usando FIFO
+        if (shouldAutoDeductInventory) {
+          // Obtener almacén principal para el descuento
+          const mainWarehouseId = await this.getMainWarehouseId(
+            invoice.organizationId,
+          );
+
           for (const item of invoice.items) {
             if (item.productId) {
-              await this.productsService.reduceStockForSale(
-                item.productId,
-                item.quantity,
-              );
+              try {
+                await this.inventoryService.registerSale(
+                  item.productId,
+                  item.quantity,
+                  item.unitPrice,
+                  invoice.organizationId,
+                  invoice.createdById,
+                  'invoice_paid',
+                  invoice.id,
+                  {
+                    invoiceNumber: invoice.number,
+                    customerName: invoice.customer?.firstName || 'N/A',
+                  },
+                  mainWarehouseId, // 🏪 Usar almacén principal
+                );
+                console.log(
+                  `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,
+                );
+              } catch (error) {
+                console.error(
+                  `❌ Error descontando stock FIFO para producto ${item.productId}:`,
+                  error,
+                );
+                throw new BadRequestException(
+                  `Error procesando inventario para ${item.description}: ${error.message}`,
+                );
+              }
             }
           }
         }
@@ -297,14 +347,42 @@ export class InvoicesService {
 
       case InvoiceStatus.PENDING:
         console.log('⏰ Aplicando lógica para factura PENDIENTE');
-        // Solo reducir stock si está habilitado
-        if (reduceInventory) {
+        // Solo reducir stock si está habilitado usando FIFO
+        if (shouldAutoDeductInventory) {
+          // Obtener almacén principal para el descuento
+          const mainWarehouseId = await this.getMainWarehouseId(
+            invoice.organizationId,
+          );
+
           for (const item of invoice.items) {
             if (item.productId) {
-              await this.productsService.reduceStockForSale(
-                item.productId,
-                item.quantity,
-              );
+              try {
+                await this.inventoryService.registerSale(
+                  item.productId,
+                  item.quantity,
+                  item.unitPrice,
+                  invoice.organizationId,
+                  invoice.createdById,
+                  'invoice_paid',
+                  invoice.id,
+                  {
+                    invoiceNumber: invoice.number,
+                    customerName: invoice.customer?.firstName || 'N/A',
+                  },
+                  mainWarehouseId, // 🏪 Usar almacén principal
+                );
+                console.log(
+                  `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,
+                );
+              } catch (error) {
+                console.error(
+                  `❌ Error descontando stock FIFO para producto ${item.productId}:`,
+                  error,
+                );
+                throw new BadRequestException(
+                  `Error procesando inventario para ${item.description}: ${error.message}`,
+                );
+              }
             }
           }
         }
@@ -760,5 +838,56 @@ export class InvoicesService {
 
     await this.invoiceRepository.softRemove(invoice);
     return { message: 'Factura eliminada exitosamente' };
+  }
+
+  /**
+   * Obtener el almacén principal para descontar inventario
+   */
+  private async getMainWarehouseId(
+    organizationId: string,
+  ): Promise<string | null> {
+    // 1. Buscar almacén marcado como principal
+    const mainWarehouse = await this.warehouseRepository.findOne({
+      where: {
+        organizationId,
+        isActive: true,
+        isMainWarehouse: true,
+      },
+    });
+
+    if (mainWarehouse) {
+      return mainWarehouse.id;
+    }
+
+    // 2. Si no hay almacén principal, buscar el referenciado en la organización
+    const organization = await this.organizationRepository.findOne({
+      where: { id: organizationId },
+      select: ['mainWarehouseId'],
+    });
+
+    if (organization?.mainWarehouseId) {
+      const orgMainWarehouse = await this.warehouseRepository.findOne({
+        where: {
+          id: organization.mainWarehouseId,
+          organizationId,
+          isActive: true,
+        },
+      });
+      if (orgMainWarehouse) {
+        return orgMainWarehouse.id;
+      }
+    }
+
+    // 3. Si solo hay un almacén, usarlo
+    const warehouses = await this.warehouseRepository.find({
+      where: { organizationId, isActive: true },
+    });
+
+    if (warehouses.length === 1) {
+      return warehouses[0].id;
+    }
+
+    // 4. Si no se puede determinar, retornar null (se manejará en la lógica superior)
+    return null;
   }
 }

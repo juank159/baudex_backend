@@ -1,4 +1,15 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, IsUrl, IsObject, MinLength, MaxLength, Matches } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsEnum,
+  IsUrl,
+  IsObject,
+  MinLength,
+  MaxLength,
+  Matches,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SubscriptionPlan } from '../entities/organization.entity';
 
@@ -27,7 +38,8 @@ export class CreateOrganizationDto {
   @MinLength(2)
   @MaxLength(100)
   @Matches(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, {
-    message: 'El slug debe contener solo letras minúsculas, números y guiones, sin empezar o terminar con guión',
+    message:
+      'El slug debe contener solo letras minúsculas, números y guiones, sin empezar o terminar con guión',
   })
   slug: string;
 
@@ -89,10 +101,10 @@ export class CreateOrganizationDto {
 
   @ApiPropertyOptional({
     description: 'Configuraciones adicionales de la organización',
-    example: { 
+    example: {
       companyAddress: 'Calle 123, Ciudad',
       taxId: 'RFC123456789',
-      phone: '+1234567890' 
+      phone: '+1234567890',
     },
   })
   @IsOptional()

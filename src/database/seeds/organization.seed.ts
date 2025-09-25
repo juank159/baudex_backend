@@ -1,5 +1,8 @@
 import { DataSource } from 'typeorm';
-import { Organization, SubscriptionPlan } from '../../organizations/entities/organization.entity';
+import {
+  Organization,
+  SubscriptionPlan,
+} from '../../organizations/entities/organization.entity';
 import { User, UserRole, UserStatus } from '../../users/entities/user.entity';
 import * as bcrypt from 'bcryptjs';
 
@@ -62,7 +65,9 @@ export class OrganizationSeeder {
       });
 
       await userRepository.save(adminUser);
-      console.log('✅ Created default admin user: admin@default.com / admin123');
+      console.log(
+        '✅ Created default admin user: admin@default.com / admin123',
+      );
     }
 
     // Crear organizaciones de demostración
@@ -121,7 +126,9 @@ export class OrganizationSeeder {
       });
 
       if (existingDemoOrg) {
-        console.log(`⏭️  Organization ${orgData.slug} already exists, skipping...`);
+        console.log(
+          `⏭️  Organization ${orgData.slug} already exists, skipping...`,
+        );
         continue;
       }
 
@@ -158,7 +165,9 @@ export class OrganizationSeeder {
         });
 
         await userRepository.save(adminUser);
-        console.log(`✅ Created admin user: ${orgData.adminEmail} / ${orgData.adminPassword}`);
+        console.log(
+          `✅ Created admin user: ${orgData.adminEmail} / ${orgData.adminPassword}`,
+        );
       }
     }
 

@@ -1,6 +1,14 @@
-import { MigrationInterface, QueryRunner, Table, Index, ForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  Index,
+  ForeignKey,
+} from 'typeorm';
 
-export class CreateSubscriptionsTable1735159200000 implements MigrationInterface {
+export class CreateSubscriptionsTable1735159200000
+  implements MigrationInterface
+{
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Crear tabla subscriptions
     await queryRunner.createTable(
@@ -218,7 +226,9 @@ export class CreateSubscriptionsTable1735159200000 implements MigrationInterface
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Eliminar foreign key
-    await queryRunner.query('ALTER TABLE "subscriptions" DROP CONSTRAINT "FK_subscriptions_organization"');
+    await queryRunner.query(
+      'ALTER TABLE "subscriptions" DROP CONSTRAINT "FK_subscriptions_organization"',
+    );
 
     // Eliminar índices
     await queryRunner.query(`

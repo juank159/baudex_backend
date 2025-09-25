@@ -17,10 +17,25 @@ import { CustomersModule } from './customers/customers.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TestController } from './test.controller';
+import { DashboardSimpleController } from './dashboard/dashboard-simple.controller';
+import { ProfitabilityProxyController } from './profitability-proxy.controller';
+import { HealthController } from './health/health.controller';
 import { Organization } from './organizations/entities/organization.entity';
+import { ProfitabilityService } from './common/services/profitability.service';
+import { Sale } from './sales/entities/sale.entity';
+import { SaleItem } from './sales/entities/sale-item.entity';
+import { Invoice } from './invoices/entities/invoice.entity';
+import { InvoiceItem } from './invoices/entities/invoice-item.entity';
 import { SubscriptionModule } from './common/modules/subscription.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ScheduleModule } from '@nestjs/schedule';
+// Nuevos módulos PEPS/FIFO
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { InventoryModule } from './inventory/inventory.module';
+import { SalesModule } from './sales/sales.module';
+import { ReportsModule } from './reports/reports.module';
+import { WarehousesModule } from './warehouses/warehouses.module';
 
 @Module({
   imports: [
@@ -32,19 +47,19 @@ import { ScheduleModule } from '@nestjs/schedule';
 
     // Módulo de base de datos separado
     DatabaseModule,
-    
-    // TypeORM para el middleware de tenant
-    TypeOrmModule.forFeature([Organization]),
+
+    // TypeORM para el middleware de tenant y servicios globales
+    TypeOrmModule.forFeature([Organization, Sale, SaleItem, Invoice, InvoiceItem]),
 
     // Módulo común con servicios utilitarios
     CommonModule,
-    
+
     // Módulo global de suscripciones (legacy)
     SubscriptionModule,
-    
+
     // Nuevo módulo de suscripciones
     SubscriptionsModule,
-    
+
     // Módulo de tareas programadas
     ScheduleModule.forRoot(),
 
@@ -58,9 +73,16 @@ import { ScheduleModule } from '@nestjs/schedule';
     InvoicesModule,
     ExpensesModule,
     DashboardModule,
+
+    // Nuevos módulos PEPS/FIFO
+    SuppliersModule,
+    InventoryModule,
+    SalesModule,
+    ReportsModule,
+    WarehousesModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  controllers: [AppController, TestController, DashboardSimpleController, ProfitabilityProxyController, HealthController],
+  providers: [AppService, ProfitabilityService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
@@ -69,11 +91,12 @@ export class AppModule implements NestModule {
       .exclude(
         // Rutas que no requieren tenant
         'health',
+        'api/health',
         'api-docs/(.*)',
         '/',
         // Rutas de sistema que pueden manejar múltiples tenants
         'auth/system/(.*)',
-        'organizations'
+        'organizations',
       )
       .forRoutes('*');
   }
