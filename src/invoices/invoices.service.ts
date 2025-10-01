@@ -144,18 +144,47 @@ export class InvoicesService {
         status: finalStatus,
         organizationId: tenantId, // ✅ AGREGADO: organization_id del tenant
 
-        // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES
-        items: processedItems.map((itemDto) =>
-          manager.create(InvoiceItem, {
-            description: itemDto.description,
-            quantity: itemDto.quantity,
-            unitPrice: itemDto.unitPrice,
-            discountPercentage: itemDto.discountPercentage || 0,
-            discountAmount: itemDto.discountAmount || 0,
-            unit: itemDto.unit,
-            notes: itemDto.notes,
-            productId: itemDto.productId,
-            temporaryProductId: itemDto.temporaryProductId,
+        // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES Y CÁLCULO FIFO
+        items: await Promise.all(
+          processedItems.map(async (itemDto) => {
+            let unitCost = 0;
+            let totalCost = 0;
+
+            // ✅ CALCULAR COSTO FIFO PARA PRODUCTOS REGISTRADOS
+            if (itemDto.productId) {
+              try {
+                const fifoCost = await this.inventoryService.calculateFifoCost(
+                  itemDto.productId,
+                  itemDto.quantity,
+                  tenantId,
+                );
+                unitCost = fifoCost.unitCost;
+                totalCost = fifoCost.totalCost;
+                console.log(
+                  `💰 FIFO calculado para ${itemDto.description}: Costo unitario=${unitCost}, Costo total=${totalCost}`,
+                );
+              } catch (error) {
+                console.warn(
+                  `⚠️ No se pudo calcular FIFO para producto ${itemDto.productId}: ${error.message}`,
+                );
+                // Continuar sin FIFO cost (quedará en 0)
+              }
+            }
+
+            return manager.create(InvoiceItem, {
+              description: itemDto.description,
+              quantity: itemDto.quantity,
+              unitPrice: itemDto.unitPrice,
+              discountPercentage: itemDto.discountPercentage || 0,
+              discountAmount: itemDto.discountAmount || 0,
+              unit: itemDto.unit,
+              notes: itemDto.notes,
+              productId: itemDto.productId,
+              temporaryProductId: itemDto.temporaryProductId,
+              // ✅ ASIGNAR COSTOS FIFO CALCULADOS
+              unitCost,
+              totalCost,
+            });
           }),
         ),
       });

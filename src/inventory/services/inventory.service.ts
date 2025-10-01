@@ -42,6 +42,11 @@ export interface FifoConsumptionResult {
   averageCost: number;
 }
 
+export interface FifoCostCalculation {
+  unitCost: number;
+  totalCost: number;
+}
+
 export interface InventoryValuation {
   productId: string;
   productName: string;
@@ -394,6 +399,60 @@ export class InventoryService {
         : 0;
 
     return result;
+  }
+
+  /**
+   * Calcular costo FIFO sin consumir stock (para facturas)
+   */
+  async calculateFifoCost(
+    productId: string,
+    quantity: number,
+    organizationId: string,
+  ): Promise<{ unitCost: number; totalCost: number }> {
+    // Obtener lotes activos con stock disponible ordenados por fecha de compra (FIFO)
+    const activeBatches = await this.batchRepository
+      .createQueryBuilder('batch')
+      .where('batch.productId = :productId', { productId })
+      .andWhere('batch.organizationId = :organizationId', { organizationId })
+      .andWhere('batch.status = :status', { status: BatchStatus.ACTIVE })
+      .andWhere('batch.currentQuantity > batch.reservedQuantity') // Solo lotes con stock disponible
+      .andWhere('batch.currentQuantity > 0') // Evitar lotes agotados
+      .orderBy('batch.purchaseDate', 'ASC') // FIFO: primero en entrar, primero en salir
+      .addOrderBy('batch.createdAt', 'ASC')
+      .getMany();
+
+    let totalCost = 0;
+    let totalQuantityCalculated = 0;
+    let remainingToCalculate = quantity;
+
+    for (const batch of activeBatches) {
+      if (remainingToCalculate <= 0) break;
+
+      const availableInBatch = batch.availableQuantity;
+      if (availableInBatch <= 0) continue;
+
+      const quantityFromBatch = Math.min(remainingToCalculate, availableInBatch);
+      const costFromBatch = quantityFromBatch * batch.unitCost;
+
+      totalCost += costFromBatch;
+      totalQuantityCalculated += quantityFromBatch;
+      remainingToCalculate -= quantityFromBatch;
+    }
+
+    if (remainingToCalculate > 0) {
+      console.warn(
+        `⚠️  Insuficiente stock para calcular FIFO completo. Faltante: ${remainingToCalculate} de producto ${productId}`,
+      );
+      // En lugar de fallar, retornar costo parcial
+    }
+
+    const averageUnitCost =
+      totalQuantityCalculated > 0 ? totalCost / totalQuantityCalculated : 0;
+
+    return {
+      unitCost: averageUnitCost,
+      totalCost: quantity * averageUnitCost, // Usar cantidad total solicitada
+    };
   }
 
   /**
