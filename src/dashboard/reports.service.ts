@@ -406,7 +406,7 @@ export class ReportsService {
         'customer.lastName as last_name',
         'invoice.total as total',
         'invoice.balanceDue as balance_due',
-        'invoice.dueDate as due_date',
+        'invoice.dueDate as dueDate',
       ])
       .where('invoice.dueDate < :today', { today: new Date() })
       .andWhere('invoice.status IN (:...statuses)', {
@@ -428,7 +428,7 @@ export class ReportsService {
           customerName: `${invoice.first_name} ${invoice.last_name}`,
           total: parseFloat(invoice.total),
           balanceDue: parseFloat(invoice.balance_due),
-          dueDate: invoice.due_date,
+          dueDate: invoice.dueDate,
         })),
       },
       details: [],

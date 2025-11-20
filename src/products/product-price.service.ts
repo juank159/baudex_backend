@@ -27,7 +27,7 @@ export class ProductPriceService {
     // Verificar si ya existe un precio del mismo tipo para este producto
     const existingPrice = await this.productPriceRepository.findOne({
       where: {
-        productId,
+        product: { id: productId },
         type: createPriceDto.type,
         status: PriceStatus.ACTIVE,
       },
@@ -41,7 +41,7 @@ export class ProductPriceService {
 
     const price = this.productPriceRepository.create({
       ...createPriceDto,
-      productId,
+      product: { id: productId },
     });
 
     return this.productPriceRepository.save(price);
@@ -49,7 +49,8 @@ export class ProductPriceService {
 
   async findAll(productId: string): Promise<ProductPrice[]> {
     return this.productPriceRepository.find({
-      where: { productId },
+      where: { product: { id: productId } },
+      relations: ['product'],
       order: { type: 'ASC', createdAt: 'DESC' },
     });
   }
@@ -73,10 +74,11 @@ export class ProductPriceService {
   ): Promise<ProductPrice | null> {
     return this.productPriceRepository.findOne({
       where: {
-        productId,
+        product: { id: productId },
         type,
         status: PriceStatus.ACTIVE,
       },
+      relations: ['product'],
     });
   }
 
@@ -90,7 +92,7 @@ export class ProductPriceService {
     if (updatePriceDto.type && updatePriceDto.type !== price.type) {
       const existingPrice = await this.productPriceRepository.findOne({
         where: {
-          productId: price.productId,
+          product: { id: price.product.id },
           type: updatePriceDto.type,
           status: PriceStatus.ACTIVE,
         },

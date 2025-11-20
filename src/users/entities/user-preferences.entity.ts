@@ -5,12 +5,10 @@ import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity('user_preferences')
 export class UserPreferences extends BaseEntity {
-  @Column({ type: 'uuid', name: 'user_id' })
-  @Index()
+  @Column({ type: 'uuid' })
   userId: string;
 
   @ManyToOne(() => User)
-  @JoinColumn({ name: 'user_id' })
   user: User;
 
   @Column({ type: 'uuid', name: 'organization_id' })

@@ -5,6 +5,8 @@ import {
   Get,
   UseGuards,
   Request,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -77,5 +79,23 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Token refrescado exitosamente' })
   refreshToken(@GetUser() user: User) {
     return this.authService.refreshToken(user);
+  }
+
+  @Post('validate-password')
+  @UseGuards(AuthGuard())
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Validar contraseña del usuario actual',
+    description: 'Verifica que la contraseña proporcionada coincida con la del usuario autenticado. Usado para operaciones sensibles.'
+  })
+  @ApiResponse({ status: 200, description: 'Contraseña válida' })
+  @ApiResponse({ status: 401, description: 'Contraseña incorrecta' })
+  @ApiResponse({ status: 400, description: 'Contraseña requerida' })
+  validatePassword(
+    @GetUser() user: User,
+    @Body() body: { password: string }
+  ) {
+    return this.authService.validatePassword(user.id, body.password);
   }
 }

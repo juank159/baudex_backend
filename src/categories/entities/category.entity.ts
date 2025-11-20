@@ -148,14 +148,14 @@ export class Category extends BaseEntity {
   organization: Organization;
 
   // Jerarquía de categorías (categoría padre)
-  @Column({ type: 'uuid', nullable: true, name: 'parent_id' }) // ✅ Especificar nombre explícito
+  @Column({ type: 'uuid', nullable: true, name: 'parent_id' })
   parentId?: string;
 
   @ManyToOne(() => Category, (category) => category.children, {
     nullable: true,
     onDelete: 'SET NULL',
   })
-  @JoinColumn({ name: 'parent_id' }) // ✅ Usar el mismo nombre
+  @JoinColumn({ name: 'parent_id' })
   parent?: Category;
 
   @OneToMany(() => Category, (category) => category.parent)

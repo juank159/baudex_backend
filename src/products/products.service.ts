@@ -103,7 +103,6 @@ export class ProductService {
           productPrice.status = PriceStatus.ACTIVE;
           // ✅ CORREGIDO: Asignar el producto individual
           productPrice.product = savedProduct;
-          productPrice.productId = savedProduct.id;
           return productPrice;
         });
         await queryRunner.manager.save(ProductPrice, productPrices);
@@ -502,7 +501,7 @@ export class ProductService {
 
         // Obtener precios actuales del producto
         const currentPrices = await queryRunner.manager.find(ProductPrice, {
-          where: { productId: id },
+          where: { product: { id } },
         });
 
         console.log('📊 Precios actuales encontrados:', currentPrices.length);
@@ -586,7 +585,6 @@ export class ProductService {
               newPrice.minQuantity = priceDto.minQuantity || 1;
               newPrice.notes = priceDto.notes || null;
               newPrice.product = updatedProduct;
-              newPrice.productId = updatedProduct.id;
               newPrice.createdAt = new Date();
               newPrice.updatedAt = new Date();
 

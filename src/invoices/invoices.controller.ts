@@ -93,6 +93,17 @@ export class InvoicesController {
     return this.invoicesService.confirm(id);
   }
 
+  @Post(':id/generate-missing-payment')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @HttpCode(HttpStatus.OK)
+  generateMissingPaymentRecord(
+    @Param('id', ParseUUIDPipe) id: string,
+    @GetUser() user: User,
+  ) {
+    return this.invoicesService.generateMissingPaymentRecord(id, user.id);
+  }
+
   @Post(':id/payments')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
@@ -100,8 +111,9 @@ export class InvoicesController {
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() paymentDto: AddPaymentDto,
+    @GetUser() user: User,
   ) {
-    return this.invoicesService.addPayment(id, paymentDto);
+    return this.invoicesService.addPayment(id, paymentDto, user.id);
   }
 
   @Post(':id/cancel')

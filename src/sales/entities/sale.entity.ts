@@ -137,11 +137,9 @@ export class Sale extends BaseEntity {
 
   // Relación con cliente
   @Column({ type: 'uuid' })
-  @Index()
   customerId: string;
 
   @ManyToOne(() => Customer)
-  @JoinColumn({ name: 'customer_id' })
   customer: Customer;
 
   // Usuario que creó la venta
@@ -149,7 +147,6 @@ export class Sale extends BaseEntity {
   createdById: string;
 
   @ManyToOne(() => User)
-  @JoinColumn({ name: 'created_by_id' })
   createdBy: User;
 
   // Usuario que confirmó la venta
@@ -157,7 +154,6 @@ export class Sale extends BaseEntity {
   confirmedById?: string;
 
   @ManyToOne(() => User, { nullable: true })
-  @JoinColumn({ name: 'confirmed_by_id' })
   confirmedBy?: User;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -168,7 +164,6 @@ export class Sale extends BaseEntity {
   invoiceId?: string;
 
   @ManyToOne(() => Invoice, { nullable: true })
-  @JoinColumn({ name: 'invoice_id' })
   invoice?: Invoice;
 
   // Items de la venta

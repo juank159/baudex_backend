@@ -42,7 +42,8 @@ export class ProductPriceResponseDto {
   notes?: string;
 
   @Expose()
-  productId: string;
+  @Transform(({ obj }) => obj.product?.id)
+  productId?: string;
 
   @Expose()
   createdAt: Date;

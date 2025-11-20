@@ -27,7 +27,7 @@ export class Warehouse extends BaseEntity {
   organizationId: string;
 
   @ManyToOne(() => Organization)
-  @JoinColumn({ name: 'organization_id' })
+  @JoinColumn({ name: 'organizationId' })
   organization: Organization;
 
   @OneToMany(() => InventoryMovement, (movement) => movement.warehouse)

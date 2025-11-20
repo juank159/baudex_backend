@@ -62,8 +62,8 @@ export class TransferMovementResponseDto {
   @ApiProperty({ description: 'ID del producto' })
   productId: string;
 
-  @ApiProperty({ description: 'ID del usuario que creó el movimiento' })
-  createdById: string;
+  @ApiProperty({ description: 'ID del usuario que realizó el movimiento' })
+  performedById: string;
 
   @ApiProperty({ description: 'ID del almacén', nullable: true })
   warehouseId: string | null;

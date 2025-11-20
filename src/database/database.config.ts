@@ -13,7 +13,7 @@ export const getDatabaseConfig = (
   database: configService.get<string>('DB_NAME'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
-  synchronize: configService.get<string>('NODE_ENV') === 'development',
+  synchronize: false, // Disabled to use migrations instead
   logging: configService.get<string>('NODE_ENV') === 'development',
   ssl:
     configService.get<string>('NODE_ENV') === 'production'

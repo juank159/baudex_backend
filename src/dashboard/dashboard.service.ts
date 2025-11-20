@@ -1496,18 +1496,23 @@ export class DashboardService {
 
       console.log('📅 Fechas directas:', { startDate, endDate });
 
-      // 1. USAR DATOS REALES DE TU FACTURA DE SAL DEL 23 SEPT
-      console.log('📈 Paso 1: Usando datos reales de tu factura de sal...');
-      const revenueData = {
-        totalRevenue: 6400, // Tu factura real: 2 × $3,200
-        salesCount: 1 // Una factura
-      };
+      // ✅ 1. CALCULAR INGRESOS REALES DESDE INVOICE ITEMS
+      console.log('📈 Paso 1: Calculando ingresos reales desde facturas...');
+      const revenueData = await this.calculateTotalRevenue(
+        organizationId,
+        startDate,
+        endDate,
+        query.warehouseId,
+      );
 
-      // 2. USAR COSTO REAL DE TU SAL ACTUALIZADA  
-      console.log('💸 Paso 2: Usando costo real de sal actualizada...');
-      const cogsData = {
-        totalCOGS: 2500 // Tu costo real: 2 × $1,250
-      };
+      // ✅ 2. CALCULAR COSTOS REALES USANDO FIFO + PRODUCTOS TEMPORALES CON MARGEN
+      console.log('💸 Paso 2: Calculando costos reales (FIFO + productos temporales)...');
+      const cogsData = await this.calculateRealCOGS(
+        organizationId,
+        startDate,
+        endDate,
+        query.warehouseId,
+      );
 
       // 3. Calcular métricas básicas CORRECTAMENTE
       // GANANCIA = (precio_venta × cantidad) - (costo_fifo × cantidad)
@@ -1947,6 +1952,65 @@ export class DashboardService {
         dailyCOGS,
       };
     });
+  }
+
+  // ✅ NUEVO: Calcular costos REALES usando totalCost de InvoiceItem (incluye FIFO + productos temporales)
+  private async calculateRealCOGS(
+    organizationId: string,
+    startDate: Date,
+    endDate: Date,
+    warehouseId?: string,
+  ): Promise<{ totalCOGS: number }> {
+    console.log('🔍 Calculando costos reales desde invoiceItem.totalCost...');
+
+    const queryBuilder = this.invoiceRepository
+      .createQueryBuilder('invoice')
+      .leftJoin('invoice.items', 'invoiceItem')
+      .leftJoin('invoiceItem.product', 'product')
+      .leftJoin('invoiceItem.temporaryProduct', 'temporaryProduct')
+      .select([
+        // ✅ USAR totalCost que ya incluye FIFO para productos registrados y margen para temporales
+        'SUM(COALESCE(invoiceItem.totalCost, 0)) as totalCOGS'
+      ])
+      .where('invoice.organizationId = :organizationId', { organizationId })
+      .andWhere('invoice.date >= :startDate', { startDate })
+      .andWhere('invoice.date <= :endDate', { endDate })
+      .andWhere('invoice.status IN (:...statuses)', {
+        statuses: ['paid', 'partially_paid'],
+      });
+
+    if (warehouseId) {
+      queryBuilder.andWhere('product.warehouseId = :warehouseId', {
+        warehouseId,
+      });
+    }
+
+    const result = await queryBuilder.getRawOne();
+    const totalCOGS = parseFloat(result?.totalCOGS || 0);
+
+    console.log('💸 COSTOS REALES CALCULADOS (DESDE INVOICE ITEMS):');
+    console.log(`   📦 Total COGS: $${totalCOGS.toLocaleString()}`);
+    console.log(`   📝 Query usada: SUM(COALESCE(invoiceItem.totalCost, 0))`);
+    console.log(`   ✅ Incluye FIFO para productos registrados`);
+    console.log(`   ✅ Incluye margen configurado para productos temporales`);
+    console.log(`   🎯 Este valor refleja tu configuración de margen para productos temporales`);
+
+    return {
+      totalCOGS,
+    };
+  }
+
+  // ✅ AUXILIAR: Obtener margen de ganancia configurado para logging
+  private async getOrgMarginPercentage(organizationId: string): Promise<number> {
+    try {
+      const organization = await this.invoiceRepository.manager
+        .getRepository('Organization')
+        .findOne({ where: { id: organizationId } });
+      
+      return organization?.settings?.defaultProfitMarginPercentage || 20;
+    } catch (error) {
+      return 20; // fallback
+    }
   }
 
   // Método auxiliar para actualizar costo de producto

@@ -362,6 +362,31 @@ export class ProductResponseDto {
   @Expose()
   metadata?: Record<string, any>;
 
+  // ========== CAMPOS FACTURACIÓN ELECTRÓNICA ==========
+
+  @Expose()
+  taxCategory: string;
+
+  @Expose()
+  taxRate: number;
+
+  @Expose()
+  isTaxable: boolean;
+
+  @Expose()
+  taxDescription?: string;
+
+  @Expose()
+  retentionCategory?: string;
+
+  @Expose()
+  retentionRate?: number;
+
+  @Expose()
+  hasRetention: boolean;
+
+  // ========== FIN CAMPOS FACTURACIÓN ELECTRÓNICA ==========
+
   // Getters expuestos - ✅ CORRECCIÓN FINAL
   @Expose()
   @Transform(({ obj }) =>

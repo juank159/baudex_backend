@@ -68,7 +68,7 @@ export class InventoryController {
       metadata: movement.metadata ?? {},
       organizationId: movement.organizationId,
       productId: movement.productId,
-      createdById: movement.createdById,
+      performedById: movement.performedById,
       warehouseId: movement.warehouseId ?? null,
       createdAt: movement.createdAt,
       updatedAt: movement.updatedAt,

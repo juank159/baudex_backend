@@ -61,7 +61,6 @@ export class ExpensesService {
       limit = 10,
       search,
       status,
-      type,
       paymentMethod,
       categoryId,
       createdById,
@@ -98,9 +97,6 @@ export class ExpensesService {
       queryBuilder.andWhere('expense.status = :status', { status });
     }
 
-    if (type) {
-      queryBuilder.andWhere('expense.type = :type', { type });
-    }
 
     if (paymentMethod) {
       queryBuilder.andWhere('expense.paymentMethod = :paymentMethod', {

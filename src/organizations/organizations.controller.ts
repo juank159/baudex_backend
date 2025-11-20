@@ -11,6 +11,8 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Put,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +21,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiParam,
+  ApiBody,
 } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -175,6 +178,65 @@ export class OrganizationsController {
       updateOrganizationDto,
     );
     return await this.transformToResponseDto(organization);
+  }
+
+  @Put('current/profit-margin')
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER) // Cualquier usuario puede configurar su margen
+  @ApiOperation({ 
+    summary: 'Configurar margen de ganancia para productos temporales',
+    description: 'Establece el porcentaje de ganancia usado para calcular costos estimados de productos temporales'
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        marginPercentage: {
+          type: 'number',
+          minimum: 5,
+          maximum: 50,
+          description: 'Porcentaje de margen de ganancia (5% - 50%)',
+          example: 20
+        }
+      },
+      required: ['marginPercentage']
+    }
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Margen de ganancia actualizado exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        marginPercentage: { type: 'number', example: 20 },
+        message: { type: 'string', example: 'Margen de ganancia actualizado exitosamente' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Porcentaje inválido (debe estar entre 5% y 50%)' })
+  async updateProfitMargin(
+    @GetUser() user: User,
+    @Body() body: { marginPercentage: number },
+  ): Promise<{ success: boolean; marginPercentage: number; message: string }> {
+    const { marginPercentage } = body;
+
+    // Validar rango
+    if (marginPercentage < 5 || marginPercentage > 50) {
+      throw new BadRequestException(
+        'El margen de ganancia debe estar entre 5% y 50%'
+      );
+    }
+
+    const result = await this.organizationsService.updateProfitMargin(
+      user.organizationId,
+      marginPercentage,
+    );
+
+    return {
+      success: true,
+      marginPercentage: result.marginPercentage,
+      message: 'Margen de ganancia actualizado exitosamente',
+    };
   }
 
   @Patch(':id')

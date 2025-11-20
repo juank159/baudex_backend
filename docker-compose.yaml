@@ -49,7 +49,7 @@ services:
       # Para desarrollo: montar código fuente para hot-reload
       - .:/usr/src/app
       - /usr/src/app/node_modules
-    command: sh -c "npm install && npx nest start --watch"
+    command: sh -c "npm install && npm run start:dev"
 
   # pgAdmin para administración
   pgadmin:

@@ -30,11 +30,9 @@ export enum SubscriptionType {
 @Index(['endDate'])
 export class Subscription extends BaseEntity {
   @Column({ type: 'uuid' })
-  @Index()
   organizationId: string;
 
   @ManyToOne(() => Organization, (organization) => organization.subscriptions)
-  @JoinColumn({ name: 'organizationId' })
   organization: Organization;
 
   @Column({

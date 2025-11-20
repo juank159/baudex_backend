@@ -67,20 +67,16 @@ export class ProductPurchaseHistory extends BaseEntity {
 
   // Relación con producto
   @Column({ type: 'uuid' })
-  @Index()
   productId: string;
 
   @ManyToOne(() => Product)
-  @JoinColumn({ name: 'product_id' })
   product: Product;
 
   // Relación con proveedor
   @Column({ type: 'uuid' })
-  @Index()
   supplierId: string;
 
   @ManyToOne(() => Supplier, (supplier) => supplier.purchaseHistory)
-  @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
 
   // Relación con orden de compra (opcional)
@@ -88,7 +84,6 @@ export class ProductPurchaseHistory extends BaseEntity {
   purchaseOrderId?: string;
 
   @ManyToOne(() => PurchaseOrder, { nullable: true })
-  @JoinColumn({ name: 'purchase_order_id' })
   purchaseOrder?: PurchaseOrder;
 
   // Métodos útiles

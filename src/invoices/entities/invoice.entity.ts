@@ -279,6 +279,7 @@ import { Customer } from '../../customers/entities/customer.entity';
 import { User } from '../../users/entities/user.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { InvoiceItem } from './invoice-item.entity';
+import { Payment } from './payment.entity';
 
 export enum InvoiceStatus {
   DRAFT = 'draft',
@@ -432,19 +433,17 @@ export class Invoice extends BaseEntity {
   @JoinColumn({ name: 'organization_id' })
   organization: Organization;
 
-  // ✅ RELACIONES CORREGIDAS - ESTE ES EL FIX PRINCIPAL
+  // Relaciones
   @Column({ type: 'uuid' })
   customerId: string;
 
   @ManyToOne(() => Customer, { onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'customerId' }) // ✅ CORREGIDO: usar 'customerId' no 'customer_id'
   customer: Customer;
 
   @Column({ type: 'uuid' })
   createdById: string;
 
   @ManyToOne(() => User, { onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'createdById' }) // ✅ CORREGIDO: usar 'createdById' no 'created_by_id'
   createdBy: User;
 
   @OneToMany(() => InvoiceItem, (item) => item.invoice, {
@@ -452,6 +451,11 @@ export class Invoice extends BaseEntity {
     eager: true,
   })
   items: InvoiceItem[];
+
+  @OneToMany(() => Payment, (payment) => payment.invoice, {
+    cascade: true,
+  })
+  payments: Payment[];
 
   // Métodos útiles
   get isOverdue(): boolean {

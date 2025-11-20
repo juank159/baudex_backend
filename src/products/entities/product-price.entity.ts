@@ -181,9 +181,6 @@ export class ProductPrice extends BaseEntity {
   notes?: string;
 
   // Relación con producto
-  @Column({ type: 'uuid' })
-  productId: string;
-
   @ManyToOne(() => Product, (product) => product.prices, {
     onDelete: 'CASCADE',
   })

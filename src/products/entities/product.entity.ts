@@ -140,6 +140,7 @@ import { Category } from '../../categories/entities/category.entity';
 import { User } from '../../users/entities/user.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { ProductPrice } from './product-price.entity';
+import { TaxCategory, RetentionCategory } from '../enums/tax.enums';
 
 export enum ProductStatus {
   ACTIVE = 'active',
@@ -214,6 +215,101 @@ export class Product extends BaseEntity {
   // Campos adicionales
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
+
+  // ========== CAMPOS PARA FACTURACIÓN ELECTRÓNICA ==========
+
+  /**
+   * Categoría de impuesto según la DIAN
+   * Por defecto IVA para productos físicos
+   */
+  @Column({
+    type: 'enum',
+    enum: TaxCategory,
+    default: TaxCategory.IVA,
+    name: 'tax_category',
+    comment: 'Categoría de impuesto para facturación electrónica',
+  })
+  taxCategory: TaxCategory;
+
+  /**
+   * Tasa de impuesto (porcentaje)
+   * Ejemplos: 0, 5, 19 para IVA; 4, 8, 16 para INC
+   */
+  @Column({
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    default: 19,
+    name: 'tax_rate',
+    comment: 'Tasa de impuesto en porcentaje',
+  })
+  taxRate: number;
+
+  /**
+   * Indica si el producto está sujeto a impuestos
+   * Si es false, se ignoran taxCategory y taxRate
+   */
+  @Column({
+    type: 'boolean',
+    default: true,
+    name: 'is_taxable',
+    comment: 'Indica si el producto está gravado con impuestos',
+  })
+  isTaxable: boolean;
+
+  /**
+   * Descripción adicional del impuesto
+   * Ejemplo: "IVA 19% - Productos generales"
+   */
+  @Column({
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+    name: 'tax_description',
+    comment: 'Descripción del impuesto para la factura',
+  })
+  taxDescription?: string;
+
+  /**
+   * Categoría de retención (opcional)
+   * Solo aplica para ciertos productos/clientes
+   */
+  @Column({
+    type: 'enum',
+    enum: RetentionCategory,
+    nullable: true,
+    name: 'retention_category',
+    comment: 'Categoría de retención en la fuente',
+  })
+  retentionCategory?: RetentionCategory;
+
+  /**
+   * Tasa de retención (porcentaje)
+   * Ejemplo: 15 para RET_IVA, 2.5 para RET_RENTA
+   */
+  @Column({
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+    default: 0,
+    name: 'retention_rate',
+    comment: 'Tasa de retención en porcentaje',
+  })
+  retentionRate?: number;
+
+  /**
+   * Indica si el producto aplica retención
+   */
+  @Column({
+    type: 'boolean',
+    default: false,
+    name: 'has_retention',
+    comment: 'Indica si el producto aplica retención en la fuente',
+  })
+  hasRetention: boolean;
+
+  // ========== FIN CAMPOS FACTURACIÓN ELECTRÓNICA ==========
 
   // Relación con organización (multitenant)
   @Column({ type: 'uuid', name: 'organization_id' })
@@ -302,4 +398,106 @@ export class Product extends BaseEntity {
       - isInStock: ${this.isInStock}
     `);
   }
+
+  // ========== MÉTODOS PARA FACTURACIÓN ELECTRÓNICA ==========
+
+  /**
+   * Calcula el monto del impuesto para un precio dado
+   * @param baseAmount Monto base sobre el cual calcular el impuesto
+   * @returns Monto del impuesto
+   */
+  calculateTaxAmount(baseAmount: number): number {
+    if (!this.isTaxable) return 0;
+    return (baseAmount * this.taxRate) / 100;
+  }
+
+  /**
+   * Calcula el monto de la retención para un precio dado
+   * @param baseAmount Monto base sobre el cual calcular la retención
+   * @returns Monto de la retención
+   */
+  calculateRetentionAmount(baseAmount: number): number {
+    if (!this.hasRetention || !this.retentionRate) return 0;
+    return (baseAmount * this.retentionRate) / 100;
+  }
+
+  /**
+   * Obtiene la información de impuestos formateada para Dataico
+   * @param quantity Cantidad del producto
+   * @param unitPrice Precio unitario
+   * @returns Objeto con información de impuestos para API de Dataico
+   */
+  getTaxInfoForInvoice(quantity: number, unitPrice: number) {
+    const baseAmount = quantity * unitPrice;
+    const taxAmount = this.calculateTaxAmount(baseAmount);
+
+    return {
+      'tax-category': this.taxCategory,
+      'tax-rate': this.taxRate,
+      'tax-amount': taxAmount,
+      'tax-description': this.taxDescription || `${this.taxCategory} ${this.taxRate}%`,
+      'tax-base': unitPrice,
+      'base-amount': baseAmount,
+    };
+  }
+
+  /**
+   * Obtiene la información de retenciones formateada para Dataico
+   * @param quantity Cantidad del producto
+   * @param unitPrice Precio unitario
+   * @returns Objeto con información de retenciones para API de Dataico o null
+   */
+  getRetentionInfoForInvoice(quantity: number, unitPrice: number) {
+    if (!this.hasRetention || !this.retentionCategory || !this.retentionRate) {
+      return null;
+    }
+
+    const baseAmount = quantity * unitPrice;
+    const retentionAmount = this.calculateRetentionAmount(baseAmount);
+
+    return {
+      'tax-category': this.retentionCategory,
+      'tax-rate': this.retentionRate,
+      'base-amount': baseAmount,
+      amount: retentionAmount,
+    };
+  }
+
+  /**
+   * Genera el objeto completo del item para Dataico
+   * @param quantity Cantidad
+   * @param unitPrice Precio unitario (opcional, usa el precio principal si no se especifica)
+   * @param discountRate Tasa de descuento (opcional)
+   * @returns Objeto item formateado para API de Dataico
+   */
+  toDataicoItem(
+    quantity: number,
+    unitPrice?: number,
+    discountRate: number = 0,
+  ) {
+    // Usar precio principal si no se especifica
+    const price = unitPrice || this.prices?.[0]?.amount || 0;
+    const originalPrice = price;
+    const finalPrice = originalPrice - (originalPrice * discountRate) / 100;
+
+    const taxes = this.isTaxable
+      ? [this.getTaxInfoForInvoice(quantity, finalPrice)]
+      : [];
+
+    const retentions = this.getRetentionInfoForInvoice(quantity, finalPrice);
+
+    return {
+      sku: this.sku,
+      'measuring-unit': this.unit || 'UND',
+      quantity,
+      'original-price': originalPrice,
+      'discount-rate': discountRate,
+      price: finalPrice,
+      description: this.description || this.name,
+      taxes,
+      ...(retentions && { retentions: [retentions] }),
+    };
+  }
+
+  // ========== FIN MÉTODOS FACTURACIÓN ELECTRÓNICA ==========
 }

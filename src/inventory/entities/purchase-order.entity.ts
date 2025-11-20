@@ -121,36 +121,30 @@ export class PurchaseOrder extends BaseEntity {
 
   // Relación con almacén de destino
   @Column({ type: 'uuid', nullable: true })
-  @Index()
   warehouseId?: string;
 
   @ManyToOne('Warehouse')
-  @JoinColumn({ name: 'warehouse_id' })
   warehouse?: any;
 
   // Relación con proveedor
-  @Column({ type: 'uuid', name: 'supplier_id' })
-  @Index()
+  @Column({ type: 'uuid' })
   supplierId: string;
 
   @ManyToOne(() => Supplier, (supplier) => supplier.purchaseOrders)
-  @JoinColumn({ name: 'supplier_id' })
   supplier: Supplier;
 
   // Usuario que creó la orden
-  @Column({ type: 'uuid', name: 'created_by_id', nullable: true })
+  @Column({ type: 'uuid' })
   createdById: string;
 
   @ManyToOne(() => User)
-  @JoinColumn({ name: 'created_by_id' })
   createdBy: User;
 
   // Usuario que aprobó la orden
-  @Column({ type: 'uuid', nullable: true, name: 'approved_by_id' })
+  @Column({ type: 'uuid', nullable: true })
   approvedById?: string;
 
   @ManyToOne(() => User, { nullable: true })
-  @JoinColumn({ name: 'approved_by_id' })
   approvedBy?: User;
 
   @Column({ type: 'timestamp', nullable: true })

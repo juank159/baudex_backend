@@ -60,20 +60,16 @@ export class InventoryBatchMovement extends BaseEntity {
 
   // Relación con lote
   @Column({ type: 'uuid' })
-  @Index()
   batchId: string;
 
   @ManyToOne(() => InventoryBatch, (batch) => batch.movements)
-  @JoinColumn({ name: 'batch_id' })
   batch: InventoryBatch;
 
   // Relación con movimiento de inventario
   @Column({ type: 'uuid' })
-  @Index()
-  inventoryMovementId: string;
+  movementId: string;
 
   @ManyToOne(() => InventoryMovement)
-  @JoinColumn({ name: 'inventory_movement_id' })
   inventoryMovement: InventoryMovement;
 
   // Métodos útiles

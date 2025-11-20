@@ -29,6 +29,7 @@ import { InvoicesService } from './invoices.service';
 import { InvoicesController } from './invoices.controller';
 import { Invoice } from './entities/invoice.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
+import { Payment } from './entities/payment.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Organization } from '../organizations/entities/organization.entity';
 import { AuthModule } from '../auth/auth.module';
@@ -40,7 +41,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Invoice, InvoiceItem, Warehouse, Organization]),
+    TypeOrmModule.forFeature([Invoice, InvoiceItem, Payment, Warehouse, Organization]),
     forwardRef(() => AuthModule),
     forwardRef(() => CustomersModule),
     // ✅ IMPORTANTE: NO usar forwardRef para ProductModule

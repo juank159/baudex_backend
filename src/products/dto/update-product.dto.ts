@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsArray,
   IsObject,
+  IsBoolean,
   MinLength,
   MaxLength,
   Min,
@@ -14,6 +15,7 @@ import {
 import { Type } from 'class-transformer';
 import { ProductStatus, ProductType } from '../entities/product.entity';
 import { UpdateProductPriceDto } from './update-product-price.dto';
+import { TaxCategory, RetentionCategory } from '../enums/tax.enums';
 
 export class UpdateProductDto {
   @IsOptional()
@@ -110,4 +112,49 @@ export class UpdateProductDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateProductPriceDto)
   prices?: UpdateProductPriceDto[];
+
+  // ========== CAMPOS PARA FACTURACIÓN ELECTRÓNICA ==========
+
+  @IsOptional()
+  @IsEnum(TaxCategory, {
+    message: 'La categoría de impuesto debe ser IVA, INC, INC_BOLSA, EXENTO o NO_GRAVADO',
+  })
+  taxCategory?: TaxCategory;
+
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'La tasa de impuesto debe tener máximo 2 decimales' },
+  )
+  @Min(0, { message: 'La tasa de impuesto debe ser mayor o igual a 0' })
+  taxRate?: number;
+
+  @IsOptional()
+  @IsBoolean({ message: 'isTaxable debe ser un valor booleano' })
+  isTaxable?: boolean;
+
+  @IsOptional()
+  @IsString({ message: 'La descripción del impuesto debe ser una cadena de texto' })
+  @MaxLength(200, {
+    message: 'La descripción del impuesto no puede exceder 200 caracteres',
+  })
+  taxDescription?: string;
+
+  @IsOptional()
+  @IsEnum(RetentionCategory, {
+    message: 'La categoría de retención debe ser RET_IVA, RET_RENTA, RET_ICA o RET_CREE',
+  })
+  retentionCategory?: RetentionCategory;
+
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'La tasa de retención debe tener máximo 2 decimales' },
+  )
+  @Min(0, { message: 'La tasa de retención debe ser mayor o igual a 0' })
+  retentionRate?: number;
+
+  @IsOptional()
+  @IsBoolean({ message: 'hasRetention debe ser un valor booleano' })
+  hasRetention?: boolean;
 }

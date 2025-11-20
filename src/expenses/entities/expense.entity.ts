@@ -12,14 +12,6 @@ export enum ExpenseStatus {
   PAID = 'paid',
 }
 
-export enum ExpenseType {
-  OPERATING = 'operating', // Gastos operativos
-  ADMINISTRATIVE = 'administrative', // Gastos administrativos
-  SALES = 'sales', // Gastos de ventas
-  FINANCIAL = 'financial', // Gastos financieros
-  EXTRAORDINARY = 'extraordinary', // Gastos extraordinarios
-}
-
 export enum PaymentMethod {
   CASH = 'cash',
   CREDIT_CARD = 'credit_card',
@@ -46,13 +38,6 @@ export class Expense extends BaseEntity {
     default: ExpenseStatus.DRAFT,
   })
   status: ExpenseStatus;
-
-  @Column({
-    type: 'enum',
-    enum: ExpenseType,
-    default: ExpenseType.OPERATING,
-  })
-  type: ExpenseType;
 
   @Column({
     type: 'enum',
@@ -108,18 +93,18 @@ export class Expense extends BaseEntity {
   @ManyToOne(() => ExpenseCategory, (category) => category.expenses, {
     onDelete: 'RESTRICT',
   })
-  @JoinColumn({ name: 'category_id' })
+  @JoinColumn({ name: 'categoryId' })
   category: ExpenseCategory;
 
   @Column({ type: 'uuid' })
   createdById: string;
 
   @ManyToOne(() => User, { onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'created_by_id' })
+  @JoinColumn({ name: 'createdById' })
   createdBy: User;
 
   @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'approved_by_id' })
+  @JoinColumn({ name: 'approvedById' })
   approvedBy?: User;
 
   // Métodos útiles

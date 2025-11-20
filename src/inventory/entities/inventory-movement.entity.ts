@@ -105,28 +105,23 @@ export class InventoryMovement extends BaseEntity {
 
   // Relación con producto
   @Column({ type: 'uuid' })
-  @Index()
   productId: string;
 
   @ManyToOne(() => Product)
-  @JoinColumn({ name: 'productId' })
   product: Product;
 
   // Usuario que realizó el movimiento
   @Column({ type: 'uuid' })
-  createdById: string;
+  performedById: string;
 
   @ManyToOne(() => User)
-  @JoinColumn({ name: 'created_by_id' })
-  createdBy: User;
+  performedBy: User;
 
   // Relación con almacén
   @Column({ type: 'uuid', nullable: true })
-  @Index()
   warehouseId?: string;
 
   @ManyToOne(() => Warehouse, (warehouse) => warehouse.movements)
-  @JoinColumn({ name: 'warehouse_id' })
   warehouse?: Warehouse;
 
   // Generar número de movimiento automáticamente

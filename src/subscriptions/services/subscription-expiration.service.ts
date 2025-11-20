@@ -35,7 +35,6 @@ export class SubscriptionExpirationService {
           status: SubscriptionStatus.ACTIVE,
         })
         .andWhere('subscription.endDate < :now', { now })
-        .andWhere('subscription.isActive = :isActive', { isActive: true })
         .getMany();
 
       this.logger.log(
@@ -53,12 +52,10 @@ export class SubscriptionExpirationService {
         .update(Subscription)
         .set({
           status: SubscriptionStatus.EXPIRED,
-          isActive: false,
           updatedAt: now,
         })
         .where('status = :status', { status: SubscriptionStatus.ACTIVE })
         .andWhere('endDate < :now', { now })
-        .andWhere('isActive = :isActive', { isActive: true })
         .execute();
 
       this.logger.log(
@@ -100,7 +97,6 @@ export class SubscriptionExpirationService {
         .andWhere('subscription.status = :status', {
           status: SubscriptionStatus.ACTIVE,
         })
-        .andWhere('subscription.isActive = :isActive', { isActive: true })
         .andWhere('subscription.endDate BETWEEN :now AND :tomorrow', {
           now,
           tomorrow,
@@ -158,7 +154,6 @@ export class SubscriptionExpirationService {
       })
       .where('status = :status', { status: SubscriptionStatus.ACTIVE })
       .andWhere('endDate < :now', { now })
-      .andWhere('isActive = :isActive', { isActive: true })
       .execute();
 
     this.logger.log(

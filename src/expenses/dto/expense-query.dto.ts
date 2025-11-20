@@ -12,7 +12,6 @@ import {
 import { Type } from 'class-transformer';
 import {
   ExpenseStatus,
-  ExpenseType,
   PaymentMethod,
 } from '../entities/expense.entity';
 
@@ -39,13 +38,6 @@ export class ExpenseQueryDto {
     message: 'El estado debe ser draft, pending, approved, rejected o paid',
   })
   status?: ExpenseStatus;
-
-  @IsOptional()
-  @IsEnum(ExpenseType, {
-    message:
-      'El tipo debe ser operating, administrative, sales, financial o extraordinary',
-  })
-  type?: ExpenseType;
 
   @IsOptional()
   @IsEnum(PaymentMethod, {
@@ -107,7 +99,6 @@ export class ExpenseQueryDto {
       'amount',
       'date',
       'status',
-      'type',
       'vendor',
       'createdAt',
       'updatedAt',
@@ -135,7 +126,6 @@ export class ExpenseQueryDto {
       'amount',
       'date',
       'status',
-      'type',
       'vendor',
       'createdAt',
       'updatedAt',

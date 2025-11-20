@@ -353,7 +353,7 @@ export class SeedService {
 
       // Crear precio para el producto
       const productPrice = this.productPriceRepository.create({
-        productId: savedProduct.id,
+        product: savedProduct,
         type: PriceType.PRICE1,
         amount: price,
       });

@@ -146,7 +146,7 @@ export class InventoryService {
         status: MovementStatus.CONFIRMED,
         productId,
         organizationId,
-        createdById: userId,
+        performedById: userId,
         quantity,
         unitCost,
         totalCost: quantity * unitCost,
@@ -261,7 +261,7 @@ export class InventoryService {
         status: MovementStatus.CONFIRMED,
         productId,
         organizationId,
-        createdById: userId,
+        performedById: userId,
         quantity: -quantity, // Negativo para salidas
         unitCost: fifoResult.averageCost,
         totalCost: fifoResult.totalCost,
@@ -795,7 +795,7 @@ export class InventoryService {
     const queryBuilder = this.movementRepository
       .createQueryBuilder('movement')
       .leftJoinAndSelect('movement.product', 'product')
-      .leftJoinAndSelect('movement.createdBy', 'user')
+      .leftJoinAndSelect('movement.performedBy', 'user')
       .where('movement.productId = :productId', { productId })
       .andWhere('movement.organizationId = :organizationId', { organizationId })
       .orderBy('movement.movementDate', 'ASC');
@@ -839,7 +839,7 @@ export class InventoryService {
       const queryBuilder = this.movementRepository
         .createQueryBuilder('movement')
         .leftJoinAndSelect('movement.product', 'product')
-        .leftJoinAndSelect('movement.createdBy', 'user')
+        .leftJoinAndSelect('movement.performedBy', 'user')
         .where('movement.organizationId = :organizationId', { organizationId });
 
       if (filters?.productId) {
@@ -922,7 +922,7 @@ export class InventoryService {
           productSku: movement.product?.sku || null,
           // Remove the nested product object to avoid confusion
           product: null,
-          createdBy: null, // Also clean up the user relation to reduce payload
+          performedBy: null, // Also clean up the user relation to reduce payload
         };
       });
 
@@ -1031,7 +1031,7 @@ export class InventoryService {
           status: MovementStatus.CONFIRMED,
           productId,
           organizationId,
-          createdById: userId,
+          performedById: userId,
           quantity: adjustmentQuantity,
           unitCost: costPerUnit,
           totalCost: adjustmentQuantity * costPerUnit,
@@ -1090,7 +1090,7 @@ export class InventoryService {
           status: MovementStatus.CONFIRMED,
           productId,
           organizationId,
-          createdById: userId,
+          performedById: userId,
           quantity: adjustmentQuantity, // Negativo
           unitCost: fifoResult.averageCost,
           totalCost: fifoResult.totalCost,
@@ -1435,7 +1435,7 @@ export class InventoryService {
         .innerJoin(
           'inventory_batches',
           'batch',
-          'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.warehouse_id = :warehouseId AND batch.deleted_at IS NULL',
+          'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch."warehouseId" = :warehouseId AND batch.deleted_at IS NULL',
         )
         .select([
           '"product"."id" as productId',
@@ -1490,7 +1490,7 @@ export class InventoryService {
         queryBuilder.andWhere(
           `EXISTS (
             SELECT 1 FROM inventory_batches b2 
-            WHERE b2.product_id = product.id 
+            WHERE b2."productId" = product.id 
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
@@ -1506,7 +1506,7 @@ export class InventoryService {
         queryBuilder.andWhere(
           `EXISTS (
             SELECT 1 FROM inventory_batches b2 
-            WHERE b2.product_id = product.id 
+            WHERE b2."productId" = product.id 
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
@@ -1538,7 +1538,7 @@ export class InventoryService {
         .innerJoin(
           'inventory_batches',
           'batch',
-          'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.warehouse_id = :warehouseId AND batch.deleted_at IS NULL',
+          'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch."warehouseId" = :warehouseId AND batch.deleted_at IS NULL',
         )
         .select('COUNT(DISTINCT "product"."id") as count')
         .where('"product"."organization_id" = :organizationId', {
@@ -1582,7 +1582,7 @@ export class InventoryService {
         countQueryBuilder.andWhere(
           `EXISTS (
             SELECT 1 FROM inventory_batches b2 
-            WHERE b2.product_id = product.id 
+            WHERE b2."productId" = product.id 
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
@@ -1598,7 +1598,7 @@ export class InventoryService {
         countQueryBuilder.andWhere(
           `EXISTS (
             SELECT 1 FROM inventory_batches b2 
-            WHERE b2.product_id = product.id 
+            WHERE b2."productId" = product.id 
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
@@ -1765,7 +1765,7 @@ export class InventoryService {
         status: MovementStatus.CONFIRMED,
         productId,
         organizationId,
-        createdById: userId,
+        performedById: userId,
         movementDate: createdAt || new Date(),
         quantity,
         unitCost,
@@ -1967,7 +1967,7 @@ export class InventoryService {
         .leftJoin(
           'inventory_batches',
           'batch',
-          'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
+          'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
           { organizationId, batchStatus: 'active' },
         )
         .select([
@@ -2058,7 +2058,7 @@ export class InventoryService {
         .leftJoin(
           'inventory_batches',
           'batch',
-          'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
+          'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
           { organizationId, batchStatus: 'active' },
         )
         .select('COUNT(DISTINCT "product"."id") as count')
@@ -2097,7 +2097,7 @@ export class InventoryService {
           .leftJoin(
             'inventory_batches',
             'batch',
-            'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
+            'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
             { organizationId, batchStatus: 'active' },
           )
           .select('product.id')
@@ -2223,12 +2223,12 @@ export class InventoryService {
         .innerJoin(
           'inventory_batches',
           'batch',
-          'batch.product_id = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
+          'batch."productId" = product.id AND batch.organization_id = :organizationId AND batch.status = :batchStatus AND batch.deleted_at IS NULL',
         )
         .innerJoin(
           'purchase_orders',
           'po',
-          'po.id = batch.purchase_order_id AND po."warehouseId" = :warehouseId AND po.deleted_at IS NULL',
+          'po.id = batch."purchaseOrderId" AND po."warehouseId" = :warehouseId AND po.deleted_at IS NULL',
         )
         .select([
           'COUNT(DISTINCT "product"."id") as totalProducts',
@@ -2319,7 +2319,7 @@ export class InventoryService {
         COALESCE(SUM(ib."remainingValue"), 0) as batch_value,
         p.stock * 1000 as estimated_stock_value
       FROM products p
-      LEFT JOIN inventory_batches ib ON ib.product_id = p.id AND ib.status = 'active'
+      LEFT JOIN inventory_batches ib ON ib."productId" = p.id AND ib.status = 'active'
       WHERE p.organization_id = $1 AND p.deleted_at IS NULL
       GROUP BY p.id, p.name, p.sku, p.stock
       ORDER BY p.name
@@ -2402,7 +2402,7 @@ export class InventoryService {
    */
   async fixInventoryInconsistencies(
     organizationId: string,
-    createdById: string,
+    performedById: string,
     options: {
       autoFix: boolean;
       maxDifferenceToFix: number;
@@ -2475,7 +2475,7 @@ export class InventoryService {
               productId,
               difference,
               organizationId,
-              createdById,
+              performedById,
               'Corrección automática de inconsistencia',
               queryRunner,
             );
@@ -2497,7 +2497,7 @@ export class InventoryService {
               productId,
               Math.abs(difference),
               organizationId,
-              createdById,
+              performedById,
               queryRunner,
             );
           }
@@ -2549,7 +2549,7 @@ export class InventoryService {
     productId: string,
     quantity: number,
     organizationId: string,
-    createdById: string,
+    performedById: string,
     reason: string,
     queryRunner: QueryRunner,
   ): Promise<void> {
@@ -2593,7 +2593,7 @@ export class InventoryService {
       status: 'confirmed',
       productId,
       organizationId,
-      createdById,
+      performedById,
       movementDate: new Date(),
       quantity,
       unitCost,
@@ -2614,7 +2614,7 @@ export class InventoryService {
     productId: string,
     excessQuantity: number,
     organizationId: string,
-    createdById: string,
+    performedById: string,
     queryRunner: QueryRunner,
   ): Promise<void> {
     // Obtener lotes activos ordenados por FIFO
@@ -2660,7 +2660,7 @@ export class InventoryService {
       status: 'confirmed',
       productId,
       organizationId,
-      createdById,
+      performedById,
       movementDate: new Date(),
       quantity: -excessQuantity, // Negativo porque es reducción
       unitCost: 1000,
@@ -2739,7 +2739,7 @@ export class InventoryService {
           status: MovementStatus.CONFIRMED,
           productId,
           organizationId,
-          createdById: userId,
+          performedById: userId,
           warehouseId: fromWarehouseId,
           movementDate: new Date(),
           quantity: Math.abs(quantity), // Siempre positivo, el signo se maneja en signedQuantity
@@ -2819,7 +2819,7 @@ export class InventoryService {
         status: MovementStatus.CONFIRMED,
         productId,
         organizationId,
-        createdById: userId,
+        performedById: userId,
         warehouseId: toWarehouseId,
         movementDate: new Date(),
         quantity: Math.abs(quantity), // Siempre positivo

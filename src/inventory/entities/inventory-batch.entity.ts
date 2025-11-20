@@ -84,24 +84,21 @@ export class InventoryBatch extends BaseEntity {
   organization: Organization;
 
   // Relación con producto
-  @Column({ type: 'uuid', name: 'product_id' })
-  @Index()
+  @Column({ type: 'uuid' })
   productId: string;
 
   @ManyToOne(() => Product)
-  @JoinColumn({ name: 'product_id' })
   product: Product;
 
   // Relación con orden de compra (opcional)
-  @Column({ type: 'uuid', nullable: true, name: 'purchase_order_id' })
+  @Column({ type: 'uuid', nullable: true })
   purchaseOrderId?: string;
 
   @ManyToOne(() => PurchaseOrder, { nullable: true })
-  @JoinColumn({ name: 'purchase_order_id' })
   purchaseOrder?: PurchaseOrder;
 
   // Relación con almacén
-  @Column({ type: 'uuid', nullable: true, name: 'warehouse_id' })
+  @Column({ type: 'uuid', nullable: true })
   @Index()
   warehouseId?: string;
 

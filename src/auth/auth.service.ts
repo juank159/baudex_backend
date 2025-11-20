@@ -371,6 +371,41 @@ export class AuthService {
   }
 
   /**
+   * ✅ NUEVO: Validar contraseña del usuario para operaciones sensibles
+   */
+  async validatePassword(userId: string, password: string): Promise<{ valid: boolean; message: string }> {
+    // Validar que se proporcione la contraseña
+    if (!password || password.trim() === '') {
+      throw new BadRequestException('La contraseña es requerida');
+    }
+
+    // Buscar el usuario por ID
+    const user = await this.userRepository.findOne({
+      where: { id: userId, status: UserStatus.ACTIVE },
+      select: ['id', 'email', 'password'] // Incluir password para la validación
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+
+    // Verificar la contraseña usando bcrypt
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      console.log(`🔒 Intento de validación de contraseña fallido para usuario ${user.email}`);
+      throw new UnauthorizedException('Contraseña incorrecta');
+    }
+
+    console.log(`✅ Contraseña validada exitosamente para usuario ${user.email}`);
+    
+    return {
+      valid: true,
+      message: 'Contraseña válida'
+    };
+  }
+
+  /**
    * Genera un ID único para usar en nombres de organizaciones
    */
   private generateUniqueId(): string {

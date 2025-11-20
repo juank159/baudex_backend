@@ -224,7 +224,7 @@ export class KardexReportService {
           ? parseFloat(movement.totalPrice.toString())
           : null,
 
-        createdBy: (movement.createdBy as any)?.name || 'System',
+        createdBy: (movement.performedBy as any)?.name || 'System',
         notes: movement.notes,
       };
 

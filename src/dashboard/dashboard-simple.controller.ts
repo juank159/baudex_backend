@@ -349,9 +349,9 @@ export class DashboardSimpleController {
 
       // Verificar facturas pendientes
       const pendingInvoicesQuery = `
-        SELECT number, total, due_date, id
-        FROM invoices 
-        WHERE organization_id = $1 
+        SELECT number, total, "dueDate", id
+        FROM invoices
+        WHERE organization_id = $1
         AND status = 'pending'
         AND deleted_at IS NULL
         LIMIT 2

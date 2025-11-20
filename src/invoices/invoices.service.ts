@@ -16,6 +16,7 @@ import {
   PaymentMethod,
 } from './entities/invoice.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
+import { Payment } from './entities/payment.entity';
 import {
   PaginatedResponseDto,
   PaginationMetaDto,
@@ -36,6 +37,8 @@ export class InvoicesService {
     private readonly invoiceRepository: Repository<Invoice>,
     @InjectRepository(InvoiceItem)
     private readonly invoiceItemRepository: Repository<InvoiceItem>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
     @InjectRepository(Warehouse)
     private readonly warehouseRepository: Repository<Warehouse>,
     @InjectRepository(Organization)
@@ -168,6 +171,34 @@ export class InvoicesService {
                   `⚠️ No se pudo calcular FIFO para producto ${itemDto.productId}: ${error.message}`,
                 );
                 // Continuar sin FIFO cost (quedará en 0)
+              }
+            } else if (itemDto.temporaryProductId) {
+              // ✅ CALCULAR COSTO ESTIMADO PARA PRODUCTOS TEMPORALES
+              try {
+                const organization = await this.organizationRepository.findOne({
+                  where: { id: tenantId },
+                });
+                
+                // Obtener margen de ganancia configurado (por defecto 20%)
+                const defaultMarginPercent = 20;
+                const marginPercent = organization?.settings?.defaultProfitMarginPercentage || defaultMarginPercent;
+                
+                // Calcular costo estimado: Precio de venta - Margen de ganancia
+                // Si precio = $1800 y margen = 20%, entonces costo = $1800 * (1 - 0.20) = $1440
+                unitCost = itemDto.unitPrice * (1 - marginPercent / 100);
+                totalCost = unitCost * itemDto.quantity;
+                
+                console.log(
+                  `🔸 Costo estimado para producto temporal ${itemDto.description}: Precio=${itemDto.unitPrice}, Margen=${marginPercent}%, Costo unitario=${unitCost.toFixed(4)}, Costo total=${totalCost.toFixed(2)}`,
+                );
+              } catch (error) {
+                console.warn(
+                  `⚠️ No se pudo calcular costo estimado para producto temporal ${itemDto.description}: ${error.message}`,
+                );
+                // Usar margen por defecto si hay error
+                const defaultMargin = 20;
+                unitCost = itemDto.unitPrice * (1 - defaultMargin / 100);
+                totalCost = unitCost * itemDto.quantity;
               }
             }
 
@@ -542,7 +573,7 @@ export class InvoicesService {
 
     const invoice = await this.invoiceRepository.findOne({
       where: { id, organizationId: tenantId },
-      relations: ['items', 'customer', 'createdBy', 'items.product'], // ✅ Incluye product
+      relations: ['items', 'customer', 'createdBy', 'items.product', 'payments'], // ✅ Incluye product y payments
     });
 
     if (!invoice) {
@@ -670,7 +701,64 @@ export class InvoicesService {
     });
   }
 
-  async addPayment(id: string, paymentDto: AddPaymentDto): Promise<Invoice> {
+  async generateMissingPaymentRecord(id: string, createdById: string): Promise<Invoice> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
+    console.log(`🔍 Buscando factura ${id} para organización ${tenantId}`);
+
+    const invoice = await this.invoiceRepository.findOne({
+      where: { id, organizationId: tenantId },
+      relations: ['payments'],
+    });
+
+    if (!invoice) {
+      throw new NotFoundException('Factura no encontrada');
+    }
+
+    console.log(`✅ Factura encontrada: ${invoice.number}`);
+    console.log(`💰 PaidAmount: ${invoice.paidAmount}`);
+    console.log(`📋 Payments existentes: ${invoice.payments?.length || 0}`);
+
+    // Solo procesar facturas que tienen paidAmount > 0 pero no tienen registros de pago
+    if (invoice.paidAmount <= 0) {
+      console.log(`❌ La factura no tiene paidAmount > 0`);
+      throw new BadRequestException('La factura no tiene pagos registrados en paidAmount');
+    }
+
+    if (invoice.payments && invoice.payments.length > 0) {
+      console.log(`❌ La factura ya tiene ${invoice.payments.length} registros de pago`);
+      throw new BadRequestException('La factura ya tiene registros de pago');
+    }
+
+    // Crear registro de pago retroactivo de forma segura
+    return this.dataSource.transaction(async (manager) => {
+      const payment = manager.create(Payment, {
+        amount: invoice.paidAmount,
+        paymentMethod: invoice.paymentMethod || PaymentMethod.CASH, // Usar método de pago de la factura o efectivo por defecto
+        paymentDate: invoice.updatedAt, // Usar fecha de última actualización
+        reference: `Retroactivo-${invoice.number}`,
+        notes: 'Registro de pago generado retroactivamente para mantener trazabilidad',
+        invoiceId: id,
+        createdById,
+        organizationId: tenantId,
+      });
+
+      await manager.save(Payment, payment);
+
+      // NO modificar ningún campo de la factura, solo añadir el registro de pago
+      return this.findOne(id);
+    });
+  }
+
+  async addPayment(id: string, paymentDto: AddPaymentDto, createdById: string): Promise<Invoice> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const invoice = await this.findOne(id);
 
     if (invoice.status === InvoiceStatus.PAID) {
@@ -690,27 +778,48 @@ export class InvoicesService {
       );
     }
 
-    // Actualizar montos
-    invoice.paidAmount += paymentDto.amount;
-    invoice.balanceDue = invoice.total - invoice.paidAmount;
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Crear registro de pago
+      const payment = manager.create(Payment, {
+        amount: paymentDto.amount,
+        paymentMethod: paymentDto.paymentMethod,
+        paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
+        reference: paymentDto.reference,
+        notes: paymentDto.notes,
+        invoiceId: id,
+        createdById,
+        organizationId: tenantId,
+      });
 
-    // Actualizar estado
-    if (invoice.balanceDue <= 0) {
-      invoice.status = InvoiceStatus.PAID;
-    } else {
-      invoice.status = InvoiceStatus.PARTIALLY_PAID;
-    }
+      await manager.save(Payment, payment);
 
-    await this.invoiceRepository.save(invoice);
+      // 2. Actualizar montos de la factura usando UPDATE directo para evitar problemas de relación
+      const newPaidAmount = invoice.paidAmount + paymentDto.amount;
+      const newBalanceDue = invoice.total - newPaidAmount;
+      
+      let newStatus: InvoiceStatus;
+      if (newBalanceDue <= 0) {
+        newStatus = InvoiceStatus.PAID;
+      } else {
+        newStatus = InvoiceStatus.PARTIALLY_PAID;
+      }
 
-    // Actualizar balance del cliente
-    await this.customersService.updateBalance(
-      invoice.customerId,
-      paymentDto.amount,
-      'subtract',
-    );
+      // Usar UPDATE directo para evitar que TypeORM gestione la relación payments
+      await manager.update(Invoice, { id }, {
+        paidAmount: newPaidAmount,
+        balanceDue: newBalanceDue,
+        status: newStatus,
+      });
 
-    return this.findOne(id);
+      // 3. Actualizar balance del cliente
+      await this.customersService.updateBalance(
+        invoice.customerId,
+        paymentDto.amount,
+        'subtract',
+      );
+
+      return this.findOne(id);
+    });
   }
 
   // async cancel(id: string): Promise<Invoice> {

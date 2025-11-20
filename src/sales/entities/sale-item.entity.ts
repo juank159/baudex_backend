@@ -60,22 +60,18 @@ export class SaleItem extends BaseEntity {
 
   // Relación con venta
   @Column({ type: 'uuid' })
-  @Index()
   saleId: string;
 
   @ManyToOne(() => Sale, (sale) => sale.items, {
     onDelete: 'CASCADE',
   })
-  @JoinColumn({ name: 'sale_id' })
   sale: Sale;
 
   // Relación con producto
   @Column({ type: 'uuid' })
-  @Index()
   productId: string;
 
   @ManyToOne(() => Product)
-  @JoinColumn({ name: 'product_id' })
   product: Product;
 
   // Métodos útiles

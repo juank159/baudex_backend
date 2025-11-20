@@ -49,23 +49,19 @@ export class PurchaseOrderItem extends BaseEntity {
   organization: Organization;
 
   // Relación con orden de compra
-  @Column({ type: 'uuid', name: 'purchase_order_id' })
-  @Index()
+  @Column({ type: 'uuid' })
   purchaseOrderId: string;
 
   @ManyToOne(() => PurchaseOrder, (order) => order.items, {
     onDelete: 'CASCADE',
   })
-  @JoinColumn({ name: 'purchase_order_id' })
   purchaseOrder: PurchaseOrder;
 
   // Relación con producto
-  @Column({ type: 'uuid', name: 'product_id' })
-  @Index()
+  @Column({ type: 'uuid' })
   productId: string;
 
   @ManyToOne(() => Product)
-  @JoinColumn({ name: 'product_id' })
   product: Product;
 
   // Métodos útiles

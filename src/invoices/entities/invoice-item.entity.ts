@@ -264,12 +264,11 @@ export class InvoiceItem extends BaseEntity {
   })
   totalCost?: number;
 
-  // ✅ RELACIONES MEJORADAS
-  @Column({ type: 'uuid', nullable: true })
-  invoiceId?: string;
+  // Relaciones
+  @Column({ type: 'uuid' })
+  invoiceId: string;
 
   @ManyToOne(() => Invoice, (invoice) => invoice.items, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'invoiceId' })
   invoice: Invoice;
 
   // Producto registrado
@@ -277,15 +276,13 @@ export class InvoiceItem extends BaseEntity {
   productId?: string;
 
   @ManyToOne(() => Product, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'productId' })
   product?: Product;
 
-  // ✅ NUEVO: Producto temporal
+  // Producto temporal
   @Column({ type: 'uuid', nullable: true })
   temporaryProductId?: string;
 
   @ManyToOne(() => TemporaryProduct, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'temporaryProductId' })
   temporaryProduct?: TemporaryProduct;
 
   // ✅ GETTER PARA OBTENER EL PRODUCTO (REGISTRADO O TEMPORAL)

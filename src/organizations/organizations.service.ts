@@ -307,4 +307,29 @@ export class OrganizationsService {
       .limit(10)
       .getMany();
   }
+
+  // ✅ NUEVO: Método para actualizar margen de ganancia de productos temporales
+  async updateProfitMargin(
+    organizationId: string,
+    marginPercentage: number,
+  ): Promise<{ marginPercentage: number }> {
+    const organization = await this.findById(organizationId);
+
+    // Actualizar settings con el nuevo margen de ganancia
+    const currentSettings = organization.settings || {};
+    const updatedSettings = {
+      ...currentSettings,
+      defaultProfitMarginPercentage: marginPercentage,
+    };
+
+    await this.organizationRepository.update(organizationId, {
+      settings: updatedSettings as Record<string, any>,
+    });
+
+    console.log(
+      `📊 Margen de ganancia actualizado para organización ${organization.name}: ${marginPercentage}%`,
+    );
+
+    return { marginPercentage };
+  }
 }
