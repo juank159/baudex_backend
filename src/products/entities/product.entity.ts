@@ -153,6 +153,16 @@ export enum ProductType {
   SERVICE = 'service',
 }
 
+/**
+ * Métodos de valoración de inventario profesionales
+ * Compatible con estándares IFRS (no incluye LIFO prohibido)
+ */
+export enum InventoryMethod {
+  FIFO = 'FIFO',       // First-In, First-Out (estándar)
+  FEFO = 'FEFO',       // First-Expired, First-Out (perecederos)
+  AVERAGE = 'AVERAGE', // Promedio ponderado
+}
+
 @Entity('products')
 export class Product extends BaseEntity {
   @Column({ type: 'varchar', length: 100 })
@@ -215,6 +225,68 @@ export class Product extends BaseEntity {
   // Campos adicionales
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
+
+  // ========== CAMPOS PARA GESTIÓN AVANZADA DE INVENTARIO (FIFO/FEFO) ==========
+
+  /**
+   * Método de valoración de inventario
+   * - FIFO: First-In, First-Out (por defecto)
+   * - FEFO: First-Expired, First-Out (para perecederos)
+   * - AVERAGE: Promedio ponderado
+   */
+  @Column({
+    type: 'enum',
+    enum: InventoryMethod,
+    default: InventoryMethod.FIFO,
+    comment: 'Método de valoración de inventario',
+  })
+  inventoryMethod: InventoryMethod;
+
+  /**
+   * Indica si el producto es perecedero
+   * Los productos perecederos requieren control estricto de vencimiento
+   */
+  @Column({
+    type: 'boolean',
+    default: false,
+    comment: 'Indica si el producto es perecedero',
+  })
+  isPerishable: boolean;
+
+  /**
+   * Indica si se debe rastrear fecha de vencimiento en lotes
+   * Si es true, se generan alertas de próximos a vencer
+   */
+  @Column({
+    type: 'boolean',
+    default: false,
+    comment: 'Habilita tracking de fechas de vencimiento',
+  })
+  hasExpirationTracking: boolean;
+
+  /**
+   * Vida útil del producto en días
+   * Se usa para calcular fecha de vencimiento automáticamente
+   */
+  @Column({
+    type: 'int',
+    nullable: true,
+    comment: 'Vida útil en días desde producción/compra',
+  })
+  shelfLifeDays?: number;
+
+  /**
+   * Días antes del vencimiento para generar alerta
+   * Por defecto 7 días
+   */
+  @Column({
+    type: 'int',
+    default: 7,
+    comment: 'Días antes de vencimiento para alertar',
+  })
+  alertDaysBeforeExpiry: number;
+
+  // ========== FIN CAMPOS GESTIÓN AVANZADA DE INVENTARIO ==========
 
   // ========== CAMPOS PARA FACTURACIÓN ELECTRÓNICA ==========
 
@@ -339,9 +411,11 @@ export class Product extends BaseEntity {
   createdBy: User;
 
   // Múltiples precios
+  // ⚡ OPTIMIZACIÓN: Cambiado de eager a lazy loading para evitar N+1 queries
+  // Los precios se cargan explícitamente con leftJoinAndSelect cuando se necesitan
   @OneToMany(() => ProductPrice, (price) => price.product, {
     cascade: true,
-    eager: true,
+    eager: false,  // Cambiado de true a false para optimización
   })
   prices: ProductPrice[];
 

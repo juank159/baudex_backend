@@ -90,7 +90,7 @@ export class Supplier extends BaseEntity {
   @Column({ type: 'int', default: 30 })
   paymentTermsDays: number; // Días de plazo de pago
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   creditLimit: number;
 
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 0 })

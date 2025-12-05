@@ -409,12 +409,20 @@ export class CustomersService {
     const customer = await this.findOne(id);
 
     if (operation === 'add') {
-      customer.currentBalance += amount;
+      customer.creditBalance = (customer.creditBalance || 0) + amount;
     } else {
-      customer.currentBalance = Math.max(0, customer.currentBalance - amount);
+      customer.creditBalance = Math.max(0, (customer.creditBalance || 0) - amount);
     }
 
     return this.customerRepository.save(customer);
+  }
+
+  /**
+   * Obtener el saldo de créditos de un cliente
+   */
+  async getCreditBalance(id: string): Promise<number> {
+    const customer = await this.findOne(id);
+    return customer.creditBalance || 0;
   }
 
   async softDelete(id: string): Promise<{ message: string }> {

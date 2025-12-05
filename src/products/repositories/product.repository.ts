@@ -531,7 +531,7 @@ export class ProductRepository extends Repository<Product> {
   //   return products;
   // }
 
-  // En product.repository.ts
+  // ⚡ OPTIMIZACIÓN: Query mejorada que hace la comparación en la base de datos
   async findLowStockProducts(): Promise<Product[]> {
     console.log('🔍 ProductRepository: Buscando productos con stock bajo...');
 
@@ -540,36 +540,25 @@ export class ProductRepository extends Repository<Product> {
       throw new Error('Tenant ID not found');
     }
 
-    const allProducts = await this.find({
-      where: {
+    // ✅ OPTIMIZACIÓN: Hacer la comparación en la BD en lugar de en memoria
+    const lowStockProducts = await this.createQueryBuilder('product')
+      .leftJoinAndSelect('product.category', 'category')
+      .leftJoinAndSelect('product.prices', 'prices')
+      .leftJoinAndSelect('product.createdBy', 'createdBy')
+      .where('product.organizationId = :organizationId', {
         organizationId: tenantId,
-        deletedAt: null,
-      },
-      relations: ['category', 'prices', 'createdBy'],
-    });
-
-    const lowStockProducts = allProducts.filter((product) => {
-      // ✅ CORRECCIÓN: Convertir a números para comparación correcta
-      const stock = Number(product.stock) || 0;
-      const minStock = Number(product.minStock) || 0;
-      const isLowStock = stock <= minStock;
-
-      console.log(
-        `🔍 Filtrando ${product.name}: stock=${stock} (num), minStock=${minStock} (num), isLowStock=${isLowStock}`,
-      );
-      return isLowStock;
-    });
+      })
+      .andWhere('product.deletedAt IS NULL')
+      // ⚡ Comparación en la base de datos (mucho más eficiente)
+      .andWhere('CAST(product.stock AS DECIMAL) <= CAST(product.minStock AS DECIMAL)')
+      .orderBy('CAST(product.stock AS DECIMAL)', 'ASC')
+      .getMany();
 
     console.log(
       `📋 Productos con stock bajo encontrados: ${lowStockProducts.length}`,
     );
 
-    // Orden por stock ascendente
-    return lowStockProducts.sort((a, b) => {
-      const stockA = Number(a.stock) || 0;
-      const stockB = Number(b.stock) || 0;
-      return stockA - stockB;
-    });
+    return lowStockProducts;
   }
 
   async findOutOfStockProducts(): Promise<Product[]> {

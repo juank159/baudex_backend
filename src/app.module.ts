@@ -36,6 +36,10 @@ import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { CreditNotesModule } from './credit-notes/credit-notes.module';
+import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
+import { CustomerCreditsModule } from './customer-credits/customer-credits.module';
 
 @Module({
   imports: [
@@ -80,6 +84,13 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     SalesModule,
     ReportsModule,
     WarehousesModule,
+    NotificationsModule,
+
+    // Módulo de Notas de Crédito
+    CreditNotesModule,
+
+    // Módulo de Cuentas Bancarias
+    BankAccountsModule,
   ],
   controllers: [AppController, TestController, DashboardSimpleController, ProfitabilityProxyController, HealthController],
   providers: [AppService, ProfitabilityService],

@@ -162,6 +162,63 @@ export class WarehousesService {
     });
   }
 
+  /**
+   * Obtener el ID del almacén principal de una organización
+   *
+   * Proceso de búsqueda:
+   * 1. Buscar almacén marcado como isMainWarehouse = true
+   * 2. Buscar el almacén referenciado en organization.mainWarehouseId
+   * 3. Si solo hay un almacén activo, usarlo
+   * 4. Retornar null si no se puede determinar
+   */
+  async getMainWarehouseId(organizationId: string): Promise<string | null> {
+    // 1. Buscar almacén marcado como principal
+    const mainWarehouse = await this.warehouseRepository.findOne({
+      where: {
+        organizationId,
+        isActive: true,
+        isMainWarehouse: true,
+        deletedAt: null,
+      },
+    });
+
+    if (mainWarehouse) {
+      return mainWarehouse.id;
+    }
+
+    // 2. Buscar el referenciado en la organización
+    const organization = await this.organizationRepository.findOne({
+      where: { id: organizationId },
+      select: ['mainWarehouseId'],
+    });
+
+    if (organization?.mainWarehouseId) {
+      const orgMainWarehouse = await this.warehouseRepository.findOne({
+        where: {
+          id: organization.mainWarehouseId,
+          organizationId,
+          isActive: true,
+          deletedAt: null,
+        },
+      });
+      if (orgMainWarehouse) {
+        return orgMainWarehouse.id;
+      }
+    }
+
+    // 3. Si solo hay un almacén activo, usarlo
+    const warehouses = await this.warehouseRepository.find({
+      where: { organizationId, isActive: true, deletedAt: null },
+    });
+
+    if (warehouses.length === 1) {
+      return warehouses[0].id;
+    }
+
+    // 4. No se puede determinar
+    return null;
+  }
+
   async setMainWarehouse(
     organizationId: string,
     warehouseId: string,

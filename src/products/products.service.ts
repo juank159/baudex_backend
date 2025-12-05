@@ -162,6 +162,30 @@ export class ProductService {
             `💰 Usando costo unitario: $${unitCost} para stock inicial`,
           );
 
+          // Obtener el almacén principal de la organización
+          const mainWarehouse = await queryRunner.manager
+            .createQueryBuilder()
+            .select('warehouse')
+            .from('warehouses', 'warehouse')
+            .where('warehouse.organizationId = :orgId', { orgId: tenantId })
+            .andWhere('warehouse.isActive = :isActive', { isActive: true })
+            .andWhere('warehouse.isMainWarehouse = :isMain', { isMain: true })
+            .getRawOne();
+
+          if (!mainWarehouse) {
+            console.warn(
+              `⚠️ No se encontró almacén principal para la organización ${tenantId}. El stock inicial no se creará.`,
+            );
+            throw new Error(
+              'No se puede crear stock inicial sin un almacén principal configurado',
+            );
+          }
+
+          const warehouseId = mainWarehouse.warehouse_id;
+          console.log(
+            `🏪 Usando almacén principal: ${mainWarehouse.warehouse_name} (${warehouseId})`,
+          );
+
           // Crear lote inicial usando el queryRunner existente
           const batchNumber = await this.generateBatchNumber(
             tenantId,
@@ -175,7 +199,12 @@ export class ProductService {
               batchNumber,
               productId: savedProduct.id,
               organizationId: tenantId,
+              warehouseId: warehouseId, // Almacén principal
               purchaseDate: new Date(),
+              // Campos legacy (requeridos por la BD)
+              quantity: createProductDto.stock,
+              remainingQuantity: createProductDto.stock,
+              // Campos nuevos
               originalQuantity: createProductDto.stock,
               currentQuantity: createProductDto.stock,
               reservedQuantity: 0,
@@ -211,7 +240,8 @@ export class ProductService {
               status: 'confirmed',
               productId: savedProduct.id,
               organizationId: tenantId,
-              createdById: createdById,
+              warehouseId: warehouseId, // Almacén principal
+              performedById: createdById, // Usuario que crea el producto
               movementDate: new Date(),
               quantity: createProductDto.stock,
               unitCost,
@@ -241,7 +271,7 @@ export class ProductService {
             {
               type: 'consume',
               batchId: savedBatch.id,
-              inventoryMovementId: savedMovement.id,
+              movementId: savedMovement.id,
               organizationId: tenantId,
               quantity: createProductDto.stock,
               unitCost,

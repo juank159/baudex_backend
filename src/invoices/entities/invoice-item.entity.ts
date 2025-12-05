@@ -264,6 +264,19 @@ export class InvoiceItem extends BaseEntity {
   })
   totalCost?: number;
 
+  // ✅ Porcentaje de IVA del item (para cálculo correcto del subtotal)
+  @Column({
+    name: 'tax_percentage',
+    type: 'float',
+    default: 19,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        typeof value === 'string' ? parseFloat(value) : value,
+    },
+  })
+  taxPercentage: number;
+
   // Relaciones
   @Column({ type: 'uuid' })
   invoiceId: string;
@@ -302,8 +315,20 @@ export class InvoiceItem extends BaseEntity {
     const discountPercentage = Number(this.discountPercentage) || 0;
     let discountAmount = Number(this.discountAmount) || 0;
 
-    // Calcular precio base sin IVA (asumiendo 19% IVA incluido)
-    const priceWithoutTax = unitPrice / 1.19;
+    // ✅ USAR EL IVA DEL ITEM (puede ser 0 para NO_GRAVADO)
+    const taxRate = Number(this.taxPercentage) || 0;
+
+    let priceWithoutTax: number;
+
+    if (taxRate > 0) {
+      // ✅ SI hay IVA, el precio incluye IVA - extraer base
+      const taxDivisor = 1 + (taxRate / 100); // Ej: 5% = 1.05, 19% = 1.19
+      priceWithoutTax = unitPrice / taxDivisor;
+    } else {
+      // ✅ SI NO hay IVA (NO_GRAVADO), el precio ES la base
+      priceWithoutTax = unitPrice;
+    }
+
     const baseAmount = quantity * priceWithoutTax;
 
     // Aplicar descuento
@@ -312,7 +337,7 @@ export class InvoiceItem extends BaseEntity {
       this.discountAmount = Math.round(discountAmount * 100) / 100;
     }
 
-    // Subtotal sin IVA
+    // Subtotal (base para impuestos)
     this.subtotal = Math.round((baseAmount - discountAmount) * 100) / 100;
 
     // Asegurar valores numéricos
@@ -320,6 +345,7 @@ export class InvoiceItem extends BaseEntity {
     this.unitPrice = Number(this.unitPrice) || 0;
     this.discountPercentage = Number(this.discountPercentage) || 0;
     this.discountAmount = Number(this.discountAmount) || 0;
+    this.taxPercentage = Number(this.taxPercentage) || 0;
     this.subtotal = Number(this.subtotal) || 0;
   }
 }

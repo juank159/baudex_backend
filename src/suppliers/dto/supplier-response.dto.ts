@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SupplierStatus } from '../entities/supplier.entity';
+import { PurchaseOrder } from '../../inventory/entities/purchase-order.entity';
+import { ProductPurchaseHistory } from '../../inventory/entities/product-purchase-history.entity';
 
 export class SupplierResponseDto {
   @ApiProperty()
@@ -89,4 +91,11 @@ export class SupplierResponseDto {
 
   @ApiProperty()
   isActive: boolean;
+
+  // Relaciones
+  @ApiPropertyOptional({ type: () => [PurchaseOrder] })
+  purchaseOrders?: PurchaseOrder[];
+
+  @ApiPropertyOptional({ type: () => [ProductPurchaseHistory] })
+  purchaseHistory?: ProductPurchaseHistory[];
 }

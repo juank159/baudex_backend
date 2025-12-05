@@ -469,4 +469,18 @@ export class CreateInvoiceDto {
   @ValidateNested({ each: true })
   @Type(() => CreateInvoiceItemDto)
   items: CreateInvoiceItemDto[];
+
+  // 🏦 ID de la cuenta bancaria donde se recibe el pago (para facturas pagadas)
+  @IsOptional()
+  @IsUUID('4', { message: 'El ID de la cuenta bancaria debe ser un UUID válido' })
+  bankAccountId?: string;
+
+  // 💰 NUEVO: Saldo a favor del cliente aplicado a esta factura
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'El saldo aplicado debe tener máximo 2 decimales' },
+  )
+  @Min(0, { message: 'El saldo aplicado debe ser mayor o igual a 0' })
+  clientBalanceApplied?: number;
 }

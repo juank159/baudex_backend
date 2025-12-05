@@ -27,6 +27,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InvoicesService } from './invoices.service';
 import { InvoicesController } from './invoices.controller';
+import { InvoicePdfService } from './services/invoice-pdf.service';
 import { Invoice } from './entities/invoice.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { Payment } from './entities/payment.entity';
@@ -38,10 +39,14 @@ import { ProductModule } from 'src/products/products.module';
 import { CommonModule } from '../common/common.module';
 import { UsersModule } from '../users/users.module';
 import { InventoryModule } from '../inventory/inventory.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { CustomerCreditsModule } from '../customer-credits/customer-credits.module';
+import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Invoice, InvoiceItem, Payment, Warehouse, Organization]),
+    BankAccountsModule, // 🏦 Módulo de cuentas bancarias
     forwardRef(() => AuthModule),
     forwardRef(() => CustomersModule),
     // ✅ IMPORTANTE: NO usar forwardRef para ProductModule
@@ -50,9 +55,11 @@ import { InventoryModule } from '../inventory/inventory.module';
     CommonModule,
     UsersModule, // Importar UsersModule para UserPreferencesService
     forwardRef(() => InventoryModule), // Para evitar dependencia circular
+    NotificationsModule, // 🔔 Módulo de notificaciones
+    forwardRef(() => CustomerCreditsModule), // 💳 Módulo de créditos de clientes
   ],
   controllers: [InvoicesController],
-  providers: [InvoicesService],
-  exports: [InvoicesService, TypeOrmModule],
+  providers: [InvoicesService, InvoicePdfService],
+  exports: [InvoicesService, InvoicePdfService, TypeOrmModule],
 })
 export class InvoicesModule {}

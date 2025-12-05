@@ -11,7 +11,13 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFiles,
+  Res,
+  NotFoundException,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CreateExpenseDto } from './dto/create-expense.dto';
@@ -23,6 +29,9 @@ import { ExpenseQueryDto } from './dto/expense-query.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { ApproveExpenseDto } from './dto/approve-expense.dto';
 import { RejectExpenseDto } from './dto/reject-expense.dto';
+import { multerConfig } from '../common/config/multer.config';
+import * as path from 'path';
+import * as fs from 'fs';
 
 @Controller('expenses')
 @UseGuards(AuthGuard())
@@ -140,6 +149,57 @@ export class ExpensesController {
   @HttpCode(HttpStatus.OK)
   markAsPaid(@Param('id', ParseUUIDPipe) id: string) {
     return this.expensesService.markAsPaid(id);
+  }
+
+  @Post(':id/upload-attachments')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @UseInterceptors(FilesInterceptor('attachments', 10, multerConfig))
+  @HttpCode(HttpStatus.OK)
+  async uploadAttachments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @GetUser() user: User,
+  ) {
+    return this.expensesService.uploadAttachments(id, files, user);
+  }
+
+  @Get(':id/attachments/:filename')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  async downloadAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+    @GetUser() user: User,
+  ) {
+    // Verify user has access to this expense
+    await this.expensesService.findOne(id);
+
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      'attachments',
+      filename,
+    );
+
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException('Archivo no encontrado');
+    }
+
+    res.sendFile(filePath);
+  }
+
+  @Delete(':id/attachments/:filename')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @HttpCode(HttpStatus.OK)
+  async deleteAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('filename') filename: string,
+    @GetUser() user: User,
+  ) {
+    return this.expensesService.deleteAttachment(id, filename, user);
   }
 
   @Delete(':id')

@@ -28,10 +28,10 @@ export enum PurchaseOrderStatus {
 @Entity('purchase_orders')
 @Index(['organizationId', 'orderDate'])
 export class PurchaseOrder extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50, unique: true, name: 'poNumber' })
   orderNumber: string;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', name: 'date' })
   @Index()
   orderDate: Date;
 
@@ -69,24 +69,6 @@ export class PurchaseOrder extends BaseEntity {
 
   @Column({
     type: 'decimal',
-    precision: 5,
-    scale: 2,
-    default: 0,
-    nullable: true,
-  })
-  discountPercentage: number;
-
-  @Column({
-    type: 'decimal',
-    precision: 12,
-    scale: 2,
-    default: 0,
-    nullable: true,
-  })
-  discountAmount: number;
-
-  @Column({
-    type: 'decimal',
     precision: 12,
     scale: 2,
     default: 0,
@@ -100,12 +82,6 @@ export class PurchaseOrder extends BaseEntity {
   // Información adicional
   @Column({ type: 'text', nullable: true })
   notes?: string;
-
-  @Column({ type: 'text', nullable: true })
-  terms?: string;
-
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  supplierReference?: string; // Referencia del proveedor
 
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
@@ -149,6 +125,16 @@ export class PurchaseOrder extends BaseEntity {
 
   @Column({ type: 'timestamp', nullable: true })
   approvedAt?: Date;
+
+  // Usuario que recibió la orden
+  @Column({ type: 'uuid', nullable: true })
+  receivedById?: string;
+
+  @ManyToOne(() => User, { nullable: true })
+  receivedBy?: User;
+
+  @Column({ type: 'timestamp', nullable: true })
+  receivedAt?: Date;
 
   // Items de la orden
   @OneToMany(() => PurchaseOrderItem, (item) => item.purchaseOrder, {
@@ -286,27 +272,16 @@ export class PurchaseOrder extends BaseEntity {
       return sum + item.quantity * item.unitCost;
     }, 0);
 
-    // Aplicar descuento
-    let discountAmount = this.discountAmount || 0;
-    if (this.discountPercentage > 0) {
-      discountAmount = (this.subtotal * this.discountPercentage) / 100;
-      this.discountAmount = discountAmount;
-    }
-
-    const subtotalAfterDiscount = this.subtotal - discountAmount;
-
     // Calcular impuestos
-    this.taxAmount = (subtotalAfterDiscount * (this.taxPercentage || 0)) / 100;
+    this.taxAmount = (this.subtotal * (this.taxPercentage || 0)) / 100;
 
     // Calcular total
-    this.total =
-      subtotalAfterDiscount + this.taxAmount + (this.shippingCost || 0);
+    this.total = this.subtotal + this.taxAmount + (this.shippingCost || 0);
 
     // Redondear valores
     this.subtotal = Math.round(this.subtotal * 100) / 100;
     this.taxAmount = Math.round(this.taxAmount * 100) / 100;
     this.total = Math.round(this.total * 100) / 100;
-    this.discountAmount = Math.round(this.discountAmount * 100) / 100;
   }
 
   // Actualizar estado basado en recepciones

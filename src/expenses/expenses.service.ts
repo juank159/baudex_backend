@@ -20,6 +20,9 @@ import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { ApproveExpenseDto } from './dto/approve-expense.dto';
 import { RejectExpenseDto } from './dto/reject-expense.dto';
 import { TenantAwareService } from 'src/common/services/tenant-aware.service';
+import { FileUploadService } from 'src/common/services/file-upload.service';
+import { User } from 'src/users/entities/user.entity';
+import * as path from 'path';
 
 @Injectable({ scope: Scope.REQUEST })
 export class ExpensesService {
@@ -28,6 +31,7 @@ export class ExpensesService {
     private readonly expenseRepository: Repository<Expense>,
     private readonly categoriesService: ExpenseCategoriesService,
     private readonly tenantService: TenantAwareService,
+    private readonly fileUploadService: FileUploadService,
   ) {}
 
   async create(
@@ -61,6 +65,7 @@ export class ExpensesService {
       limit = 10,
       search,
       status,
+      type,
       paymentMethod,
       categoryId,
       createdById,
@@ -97,6 +102,9 @@ export class ExpensesService {
       queryBuilder.andWhere('expense.status = :status', { status });
     }
 
+    if (type) {
+      queryBuilder.andWhere('expense.type = :type', { type });
+    }
 
     if (paymentMethod) {
       queryBuilder.andWhere('expense.paymentMethod = :paymentMethod', {
@@ -446,5 +454,66 @@ export class ExpensesService {
       .groupBy("DATE_TRUNC('month', expense.date)")
       .orderBy('month', 'ASC')
       .getRawMany();
+  }
+
+  async uploadAttachments(
+    id: string,
+    files: Express.Multer.File[],
+    user: User,
+  ): Promise<{ attachmentUrls: string[] }> {
+    const expense = await this.findOne(id);
+
+    if (!files || files.length === 0) {
+      throw new BadRequestException('No se enviaron archivos');
+    }
+
+    // Validate each file
+    files.forEach((file) => {
+      this.fileUploadService.validateAttachmentFile(file);
+    });
+
+    // Get existing attachments or initialize empty array
+    const existingAttachments = expense.attachments || [];
+
+    // Add new file names to attachments
+    const newAttachments = files.map((file) => file.filename);
+    const allAttachments = [...existingAttachments, ...newAttachments];
+
+    // Update expense with new attachments
+    expense.attachments = allAttachments;
+    await this.expenseRepository.save(expense);
+
+    // Return URLs for frontend
+    const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+    const attachmentUrls = newAttachments.map(
+      (filename) => `${baseUrl}/expenses/${id}/attachments/${filename}`,
+    );
+
+    return { attachmentUrls };
+  }
+
+  async deleteAttachment(
+    id: string,
+    filename: string,
+    user: User,
+  ): Promise<void> {
+    const expense = await this.findOne(id);
+
+    if (!expense.attachments || !expense.attachments.includes(filename)) {
+      throw new NotFoundException('Adjunto no encontrado');
+    }
+
+    // Remove from expense attachments
+    expense.attachments = expense.attachments.filter((f) => f !== filename);
+    await this.expenseRepository.save(expense);
+
+    // Delete physical file
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      'attachments',
+      filename,
+    );
+    await this.fileUploadService.deleteFile(filePath);
   }
 }

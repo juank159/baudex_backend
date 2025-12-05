@@ -14,6 +14,7 @@ import {
 import {
   PaymentMethod,
   ExpenseStatus,
+  ExpenseType,
 } from '../entities/expense.entity';
 
 export class CreateExpenseDto {
@@ -32,6 +33,13 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsDateString({}, { message: 'La fecha debe ser una fecha válida' })
   date?: string;
+
+  @IsOptional()
+  @IsEnum(ExpenseType, {
+    message:
+      'El tipo debe ser operating, administrative, sales, financial o extraordinary',
+  })
+  type?: ExpenseType = ExpenseType.OPERATING;
 
   @IsOptional()
   @IsEnum(PaymentMethod, {

@@ -9,9 +9,15 @@ import { BaseEntity } from '../../common/entities/base.entity';
 import { Invoice, PaymentMethod } from './invoice.entity';
 import { User } from '../../users/entities/user.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
+import { BankAccount } from '../../bank-accounts/entities/bank-account.entity';
 
 @Entity('payments')
+@Index('IDX_payments_invoice_organization', ['invoiceId', 'organizationId'])
+@Index('IDX_payments_bank_account', ['bankAccountId'])
 export class Payment extends BaseEntity {
+  @Column({ type: 'varchar', length: 50, unique: true })
+  paymentNumber: string;
+
   @Column({
     type: 'float',
     transformer: {
@@ -53,6 +59,14 @@ export class Payment extends BaseEntity {
 
   @ManyToOne(() => Invoice, (invoice) => invoice.payments, { onDelete: 'CASCADE' })
   invoice: Invoice;
+
+  // Relación con cuenta bancaria (opcional - para saber a qué cuenta fue el pago)
+  @Column({ type: 'uuid', name: 'bank_account_id', nullable: true })
+  bankAccountId?: string;
+
+  @ManyToOne(() => BankAccount, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'bank_account_id' })
+  bankAccount?: BankAccount;
 
   // Usuario que creó el pago
   @Column({ type: 'uuid' })

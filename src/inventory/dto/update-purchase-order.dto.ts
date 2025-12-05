@@ -40,19 +40,6 @@ export class UpdatePurchaseOrderDto {
   @Max(100)
   taxPercentage?: number;
 
-  @ApiPropertyOptional({ description: 'Porcentaje de descuento' })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  discountPercentage?: number;
-
-  @ApiPropertyOptional({ description: 'Monto de descuento fijo' })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  discountAmount?: number;
-
   @ApiPropertyOptional({ description: 'Costo de envío' })
   @IsOptional()
   @IsNumber()
@@ -63,16 +50,6 @@ export class UpdatePurchaseOrderDto {
   @IsOptional()
   @IsString()
   notes?: string;
-
-  @ApiPropertyOptional({ description: 'Términos y condiciones' })
-  @IsOptional()
-  @IsString()
-  terms?: string;
-
-  @ApiPropertyOptional({ description: 'Referencia del proveedor' })
-  @IsOptional()
-  @IsString()
-  supplierReference?: string;
 
   @ApiPropertyOptional({ description: 'ID del proveedor' })
   @IsOptional()

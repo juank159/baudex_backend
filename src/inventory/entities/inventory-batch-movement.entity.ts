@@ -63,6 +63,7 @@ export class InventoryBatchMovement extends BaseEntity {
   batchId: string;
 
   @ManyToOne(() => InventoryBatch, (batch) => batch.movements)
+  @JoinColumn({ name: 'batchId' })
   batch: InventoryBatch;
 
   // Relación con movimiento de inventario
@@ -70,6 +71,7 @@ export class InventoryBatchMovement extends BaseEntity {
   movementId: string;
 
   @ManyToOne(() => InventoryMovement)
+  @JoinColumn({ name: 'movementId' })
   inventoryMovement: InventoryMovement;
 
   // Métodos útiles

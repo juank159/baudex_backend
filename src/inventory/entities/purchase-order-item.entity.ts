@@ -16,37 +16,29 @@ export class PurchaseOrderItem extends BaseEntity {
   @Column({ type: 'decimal', precision: 12, scale: 4 })
   unitCost: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
-  totalCost: number;
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  subtotal: number;
+
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true })
+  taxPercentage: number;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, nullable: true })
+  taxAmount: number;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  total: number;
 
   // Cantidades recibidas
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   receivedQuantity: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
-  pendingQuantity: number;
-
-  // Fechas
-  @Column({ type: 'date', nullable: true })
-  expectedDate?: Date;
-
-  @Column({ type: 'date', nullable: true })
-  lastReceivedDate?: Date;
+  // NOTA: pendingQuantity se calcula, no está en DB
+  get pendingQuantity(): number {
+    return this.remainingQuantity;
+  }
 
   @Column({ type: 'text', nullable: true })
   notes?: string;
-
-  @Column({ type: 'json', nullable: true })
-  metadata?: Record<string, any>;
-
-  // Relación con organización (multitenant)
-  @Column({ type: 'uuid', name: 'organization_id', nullable: true })
-  @Index()
-  organizationId: string;
-
-  @ManyToOne(() => Organization)
-  @JoinColumn({ name: 'organization_id' })
-  organization: Organization;
 
   // Relación con orden de compra
   @Column({ type: 'uuid' })
@@ -84,44 +76,18 @@ export class PurchaseOrderItem extends BaseEntity {
 
   // Calcular costo total
   calculateTotalCost(): void {
-    this.totalCost = this.quantity * this.unitCost;
-  }
-
-  // Actualizar cantidades pendientes
-  updatePendingQuantity(): void {
-    this.pendingQuantity = this.remainingQuantity;
+    this.subtotal = this.quantity * this.unitCost;
+    this.taxAmount = (this.subtotal * (this.taxPercentage || 0)) / 100;
+    this.total = this.subtotal + this.taxAmount;
   }
 
   // Recibir cantidad
   receive(receivedQty: number): { received: number; remaining: number } {
-    console.log(
-      `🔢 DEBUG - receive() called with: ${receivedQty} (type: ${typeof receivedQty})`,
-    );
-    console.log(
-      `🔢 DEBUG - Current receivedQuantity: ${this.receivedQuantity} (type: ${typeof this.receivedQuantity})`,
-    );
-    console.log(
-      `🔢 DEBUG - Current quantity: ${this.quantity} (type: ${typeof this.quantity})`,
-    );
-
     const maxReceivable = this.remainingQuantity;
     const actualReceived = Math.min(receivedQty, maxReceivable);
 
-    console.log(`🔢 DEBUG - maxReceivable: ${maxReceivable}`);
-    console.log(`🔢 DEBUG - actualReceived: ${actualReceived}`);
-    console.log(
-      `🔢 DEBUG - Before update - receivedQuantity: ${this.receivedQuantity}`,
-    );
-
     this.receivedQuantity =
       Number(this.receivedQuantity) + Number(actualReceived);
-
-    console.log(
-      `🔢 DEBUG - After update - receivedQuantity: ${this.receivedQuantity} (type: ${typeof this.receivedQuantity})`,
-    );
-
-    this.lastReceivedDate = new Date();
-    this.updatePendingQuantity();
 
     return {
       received: actualReceived,

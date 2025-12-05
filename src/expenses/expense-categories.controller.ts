@@ -41,7 +41,7 @@ export class ExpenseCategoriesController {
 
   @Get('with-stats')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   findAllWithStats() {
     return this.categoriesService.findAllWithStats();
   }

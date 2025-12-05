@@ -339,6 +339,8 @@ export class SuppliersService {
       displayName: supplier.displayName,
       fullAddress: supplier.fullAddress,
       isActive: supplier.isActive,
+      purchaseOrders: supplier.purchaseOrders || [],
+      purchaseHistory: supplier.purchaseHistory || [],
     };
   }
 }

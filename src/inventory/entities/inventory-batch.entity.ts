@@ -31,7 +31,7 @@ export class InventoryBatch extends BaseEntity {
   @Column({ type: 'varchar', length: 50, unique: true })
   batchNumber: string;
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamp', name: 'purchase_date' })
   @Index()
   purchaseDate: Date;
 
@@ -40,12 +40,18 @@ export class InventoryBatch extends BaseEntity {
 
   // Cantidades PEPS
   @Column({ type: 'decimal', precision: 10, scale: 2 })
+  quantity: number; // Cantidad total del lote (legacy, mantener sincronizado con originalQuantity)
+
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  remainingQuantity: number; // Cantidad restante (legacy, mantener sincronizado con currentQuantity)
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   originalQuantity: number; // Cantidad inicial del lote
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   currentQuantity: number; // Cantidad actual disponible
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   reservedQuantity: number; // Cantidad reservada
 
   // Costos PEPS

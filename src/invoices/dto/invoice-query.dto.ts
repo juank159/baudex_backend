@@ -52,6 +52,14 @@ export class InvoiceQueryDto {
   createdById?: string;
 
   @IsOptional()
+  @IsUUID('4', { message: 'El ID de la cuenta bancaria debe ser un UUID válido' })
+  bankAccountId?: string;
+
+  @IsOptional()
+  @IsString({ message: 'El nombre de la cuenta bancaria debe ser una cadena de texto' })
+  bankAccountName?: string;
+
+  @IsOptional()
   @IsDateString({}, { message: 'La fecha de inicio debe ser una fecha válida' })
   startDate?: string;
 

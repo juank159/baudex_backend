@@ -27,6 +27,11 @@ import {
 } from '../entities/inventory-batch-movement.entity';
 import { Product } from '../../products/entities/product.entity';
 import { PurchaseOrder } from '../entities/purchase-order.entity';
+import { NotificationsService } from '../../notifications/notifications.service';
+import {
+  NotificationType,
+  NotificationSeverity,
+} from '../../notifications/entities/notification.entity';
 
 export interface FifoConsumptionResult {
   batches: Array<{
@@ -77,6 +82,7 @@ export class InventoryService {
     @InjectRepository(Product)
     private productRepository: Repository<Product>,
     private dataSource: DataSource,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -116,6 +122,10 @@ export class InventoryService {
         productId,
         organizationId,
         purchaseDate: new Date(),
+        // Columnas legacy (mantener sincronizadas)
+        quantity: quantity,
+        remainingQuantity: quantity,
+        // Columnas nuevas
         originalQuantity: quantity,
         currentQuantity: quantity,
         reservedQuantity: 0,
@@ -170,7 +180,7 @@ export class InventoryService {
       const batchMovement = queryRunner.manager.create(InventoryBatchMovement, {
         type: BatchMovementType.CONSUME, // En este caso es entrada, pero usamos CONSUME por consistencia
         batchId: savedBatch.id,
-        inventoryMovementId: savedMovement.id,
+        movementId: savedMovement.id,
         organizationId,
         quantity,
         unitCost,
@@ -236,8 +246,8 @@ export class InventoryService {
         );
       }
 
-      // Consumir stock usando FIFO
-      const fifoResult = await this.consumeStockFifo(
+      // 🔴 MEJORADO: Consumir stock usando método dinámico (FIFO/FEFO según producto)
+      const fifoResult = await this.consumeStockDynamic(
         productId,
         quantity,
         organizationId,
@@ -288,7 +298,7 @@ export class InventoryService {
           {
             type: BatchMovementType.CONSUME,
             batchId: batchConsumption.batchId,
-            inventoryMovementId: savedMovement.id,
+            movementId: savedMovement.id,
             organizationId,
             quantity: -batchConsumption.quantityConsumed, // Negativo para consumo
             unitCost: batchConsumption.unitCost,
@@ -399,6 +409,200 @@ export class InventoryService {
         : 0;
 
     return result;
+  }
+
+  /**
+   * 🔴 NUEVO: Consumir stock usando lógica FEFO (First-Expired, First-Out)
+   * Para productos perecederos que deben venderse por fecha de vencimiento
+   */
+  private async consumeStockFefo(
+    productId: string,
+    quantityToConsume: number,
+    organizationId: string,
+    queryRunner: QueryRunner,
+  ): Promise<FifoConsumptionResult> {
+    // Obtener información del producto
+    const product = await queryRunner.manager.findOne(Product, {
+      where: { id: productId, organizationId },
+    });
+
+    // Obtener lotes activos ordenados por fecha de vencimiento (FEFO)
+    const activeBatches = await queryRunner.manager
+      .createQueryBuilder(InventoryBatch, 'batch')
+      .where('batch.productId = :productId', { productId })
+      .andWhere('batch.organizationId = :organizationId', { organizationId })
+      .andWhere('batch.status = :status', { status: BatchStatus.ACTIVE })
+      .andWhere('batch.currentQuantity > batch.reservedQuantity')
+      .andWhere('batch.currentQuantity > 0')
+      .andWhere('batch.expirationDate IS NOT NULL') // Solo lotes con fecha de vencimiento
+      .orderBy('batch.expirationDate', 'ASC') // FEFO: vence primero, sale primero
+      .addOrderBy('batch.purchaseDate', 'ASC') // Desempate por FIFO
+      .getMany();
+
+    // Si no hay lotes con vencimiento, buscar lotes sin vencimiento (fallback)
+    if (activeBatches.length === 0) {
+      const fallbackBatches = await queryRunner.manager
+        .createQueryBuilder(InventoryBatch, 'batch')
+        .where('batch.productId = :productId', { productId })
+        .andWhere('batch.organizationId = :organizationId', { organizationId })
+        .andWhere('batch.status = :status', { status: BatchStatus.ACTIVE })
+        .andWhere('batch.currentQuantity > batch.reservedQuantity')
+        .andWhere('batch.currentQuantity > 0')
+        .andWhere('batch.expirationDate IS NULL')
+        .orderBy('batch.purchaseDate', 'ASC') // FIFO para lotes sin vencimiento
+        .getMany();
+
+      activeBatches.push(...fallbackBatches);
+    }
+
+    const result: FifoConsumptionResult = {
+      batches: [],
+      totalQuantityConsumed: 0,
+      totalCost: 0,
+      averageCost: 0,
+    };
+
+    let remainingToConsume = quantityToConsume;
+
+    for (const batch of activeBatches) {
+      if (remainingToConsume <= 0) break;
+
+      const availableInBatch = batch.availableQuantity;
+      if (availableInBatch <= 0) continue;
+
+      const consumeFromBatch = Math.min(remainingToConsume, availableInBatch);
+      const batchConsumption = batch.consume(consumeFromBatch);
+
+      // Actualizar el lote en la base de datos
+      await queryRunner.manager.save(batch);
+
+      result.batches.push({
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        quantityConsumed: batchConsumption.consumed,
+        unitCost: batch.unitCost,
+        totalCost: batchConsumption.cost,
+        purchaseDate: batch.purchaseDate,
+      });
+
+      result.totalQuantityConsumed += batchConsumption.consumed;
+      result.totalCost += batchConsumption.cost;
+      remainingToConsume -= batchConsumption.consumed;
+
+      // 🔔 NUEVO: Notificar si se vendió producto próximo a vencer
+      if (batch.expirationDate && product) {
+        const daysUntilExpiry = Math.ceil(
+          (batch.expirationDate.getTime() - Date.now()) /
+            (1000 * 60 * 60 * 24),
+        );
+
+        // Notificar si vence en los próximos días configurados
+        const alertDays = product.alertDaysBeforeExpiry || 7;
+        if (daysUntilExpiry > 0 && daysUntilExpiry <= alertDays) {
+          try {
+            await this.notificationsService.create({
+              organizationId,
+              userId: product.createdById || organizationId,
+              type: NotificationType.EXPIRING_PRODUCT,
+              severity:
+                daysUntilExpiry <= 2
+                  ? NotificationSeverity.CRITICAL
+                  : NotificationSeverity.WARNING,
+              title: `⚠️ Vendiendo producto próximo a vencer`,
+              message: `Se vendieron ${consumeFromBatch} unidades de "${product.name}" que vencen en ${daysUntilExpiry} día${daysUntilExpiry > 1 ? 's' : ''} (${batch.expirationDate.toLocaleDateString('es-CO')}).`,
+              metadata: {
+                productId: product.id,
+                productName: product.name,
+                batchId: batch.id,
+                batchNumber: batch.batchNumber,
+                quantity: consumeFromBatch,
+                daysUntilExpiry,
+                actionUrl: `/inventory/batches/${batch.id}`,
+              },
+            });
+          } catch (notifError) {
+            // No fallar la venta si falla la notificación
+            console.warn(
+              `⚠️ Error creando notificación FEFO: ${notifError.message}`,
+            );
+          }
+        }
+      }
+    }
+
+    if (remainingToConsume > 0) {
+      throw new BadRequestException(
+        `Stock insuficiente en lotes activos. Faltante: ${remainingToConsume}`,
+      );
+    }
+
+    result.averageCost =
+      result.totalQuantityConsumed > 0
+        ? result.totalCost / result.totalQuantityConsumed
+        : 0;
+
+    return result;
+  }
+
+  /**
+   * 🔴 NUEVO: Consumir stock dinámicamente según configuración del producto
+   * Soporta FIFO, FEFO y AVERAGE de forma profesional
+   */
+  private async consumeStockDynamic(
+    productId: string,
+    quantityToConsume: number,
+    organizationId: string,
+    queryRunner: QueryRunner,
+  ): Promise<FifoConsumptionResult> {
+    // Obtener producto para determinar método de valoración
+    const product = await queryRunner.manager.findOne(Product, {
+      where: { id: productId, organizationId },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Producto con ID ${productId} no encontrado`);
+    }
+
+    // Determinar método basado en configuración del producto
+    const method = product.inventoryMethod || 'FIFO';
+
+    console.log(
+      `📊 Consumiendo stock de producto "${product.name}" usando método: ${method}`,
+    );
+
+    switch (method) {
+      case 'FEFO':
+        // FEFO: Para productos perecederos
+        return await this.consumeStockFefo(
+          productId,
+          quantityToConsume,
+          organizationId,
+          queryRunner,
+        );
+
+      case 'AVERAGE':
+        // AVERAGE: Promedio ponderado
+        // TODO: Implementar en versión futura si se requiere
+        console.warn(
+          '⚠️  Método AVERAGE no implementado aún, usando FIFO como fallback',
+        );
+        return await this.consumeStockFifo(
+          productId,
+          quantityToConsume,
+          organizationId,
+          queryRunner,
+        );
+
+      case 'FIFO':
+      default:
+        // FIFO: Método estándar
+        return await this.consumeStockFifo(
+          productId,
+          quantityToConsume,
+          organizationId,
+          queryRunner,
+        );
+    }
   }
 
   /**
@@ -1008,6 +1212,10 @@ export class InventoryService {
           productId,
           organizationId,
           purchaseDate: new Date(),
+          // Columnas legacy (mantener sincronizadas)
+          quantity: adjustmentQuantity,
+          remainingQuantity: adjustmentQuantity,
+          // Columnas nuevas
           originalQuantity: adjustmentQuantity,
           currentQuantity: adjustmentQuantity,
           reservedQuantity: 0,
@@ -1050,7 +1258,7 @@ export class InventoryService {
           {
             type: BatchMovementType.CONSUME,
             batchId: savedBatch.id,
-            inventoryMovementId: savedMovement.id,
+            movementId: savedMovement.id,
             organizationId,
             quantity: adjustmentQuantity,
             unitCost: costPerUnit,
@@ -1110,7 +1318,7 @@ export class InventoryService {
             {
               type: BatchMovementType.CONSUME,
               batchId: batchConsumption.batchId,
-              inventoryMovementId: savedMovement.id,
+              movementId: savedMovement.id,
               organizationId,
               quantity: -batchConsumption.quantityConsumed,
               unitCost: batchConsumption.unitCost,
@@ -1738,6 +1946,10 @@ export class InventoryService {
         productId,
         organizationId,
         purchaseDate: createdAt || new Date(),
+        // Columnas legacy (mantener sincronizadas)
+        quantity: quantity,
+        remainingQuantity: quantity,
+        // Columnas nuevas
         originalQuantity: quantity,
         currentQuantity: quantity,
         reservedQuantity: 0,
@@ -1787,7 +1999,7 @@ export class InventoryService {
       const batchMovement = queryRunner.manager.create(InventoryBatchMovement, {
         type: 'consume' as any, // Entrada inicial
         batchId: savedBatch.id,
-        inventoryMovementId: savedMovement.id,
+        movementId: savedMovement.id,
         organizationId,
         quantity,
         unitCost,
@@ -2844,6 +3056,10 @@ export class InventoryService {
         productId,
         organizationId,
         purchaseDate: new Date(),
+        // Columnas legacy (mantener sincronizadas)
+        quantity: quantity,
+        remainingQuantity: quantity,
+        // Columnas nuevas
         originalQuantity: quantity,
         currentQuantity: quantity,
         reservedQuantity: 0,
@@ -2874,7 +3090,7 @@ export class InventoryService {
       for (const batchConsumption of fifoResult.batches) {
         await queryRunner.manager.save(
           queryRunner.manager.create(InventoryBatchMovement, {
-            inventoryMovementId: transferOutMovement.id,
+            movementId: transferOutMovement.id,
             batchId: batchConsumption.batchId,
             type: BatchMovementType.OUTGOING,
             quantity: batchConsumption.quantityConsumed,
@@ -2890,7 +3106,7 @@ export class InventoryService {
 
       await queryRunner.manager.save(
         queryRunner.manager.create(InventoryBatchMovement, {
-          inventoryMovementId: transferInMovement.id,
+          movementId: transferInMovement.id,
           batchId: destinationBatch.id,
           type: BatchMovementType.INCOMING,
           quantity: quantity,
@@ -3151,6 +3367,143 @@ export class InventoryService {
           `🚨 ${criticalIssues.length} inconsistencias críticas detectadas!`,
         );
         // Enviar alerta inmediata
+      }
+    }
+  }
+
+  /**
+   * ✅ NUEVO MÉTODO: Registrar devolución de venta (reversa)
+   * Se usa cuando se cancela una factura para restaurar el inventario
+   */
+  async registerSaleReturn(
+    productId: string,
+    quantity: number,
+    unitCost: number,
+    organizationId: string,
+    userId: string,
+    referenceType?: string,
+    referenceId?: string,
+    metadata?: any,
+    warehouseId?: string,
+    externalQueryRunner?: QueryRunner,
+  ): Promise<InventoryMovement> {
+    const queryRunner =
+      externalQueryRunner || this.dataSource.createQueryRunner();
+    const shouldManageTransaction = !externalQueryRunner;
+
+    if (shouldManageTransaction) {
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+    }
+
+    try {
+      // Crear un nuevo lote con la devolución
+      // En un sistema más sofisticado, podrías intentar revertir los lotes originales
+      // Pero para simplificar, creamos un nuevo lote con el costo de la venta original
+      const batchNumber = await this.generateBatchNumber(
+        organizationId,
+        queryRunner,
+      );
+
+      const batch = queryRunner.manager.create(InventoryBatch, {
+        batchNumber,
+        productId,
+        organizationId,
+        purchaseDate: new Date(),
+        // Columnas legacy (mantener sincronizadas)
+        quantity: quantity,
+        remainingQuantity: quantity,
+        // Columnas nuevas
+        originalQuantity: quantity,
+        currentQuantity: quantity,
+        reservedQuantity: 0,
+        unitCost: unitCost || 0,
+        totalCost: quantity * (unitCost || 0),
+        remainingValue: quantity * (unitCost || 0),
+        status: BatchStatus.ACTIVE,
+        warehouseId,
+        metadata: {
+          ...metadata,
+          isReturn: true,
+          returnReason: referenceType || 'sale_cancelled',
+        },
+      });
+
+      const savedBatch = await queryRunner.manager.save(batch);
+
+      // Obtener stock actual
+      const currentStock = await this.getCurrentStock(
+        productId,
+        organizationId,
+        queryRunner,
+      );
+
+      // Crear movimiento de inventario de tipo RETURN_IN (devolución de entrada)
+      const movement = queryRunner.manager.create(InventoryMovement, {
+        movementNumber: await this.generateMovementNumber(
+          organizationId,
+          queryRunner,
+        ),
+        type: MovementType.RETURN_IN, // Tipo devolución entrada
+        status: MovementStatus.CONFIRMED,
+        productId,
+        organizationId,
+        performedById: userId,
+        quantity: quantity, // Positivo para entradas
+        unitCost: unitCost || 0,
+        totalCost: quantity * (unitCost || 0),
+        stockAfter: currentStock,
+        stockValueAfter: await this.calculateStockValue(
+          productId,
+          organizationId,
+          queryRunner,
+        ),
+        referenceType,
+        referenceId,
+        warehouseId,
+        metadata,
+      });
+
+      const savedMovement = await queryRunner.manager.save(movement);
+
+      // Crear movimiento de lote
+      const batchMovement = queryRunner.manager.create(
+        InventoryBatchMovement,
+        {
+          type: BatchMovementType.INCOMING,
+          batchId: savedBatch.id,
+          movementId: savedMovement.id,
+          organizationId,
+          quantity: quantity, // Positivo para recepción
+          unitCost: unitCost || 0,
+          totalCost: quantity * (unitCost || 0),
+          batchQuantityAfter: savedBatch.currentQuantity,
+          batchValueAfter: savedBatch.remainingValue,
+        },
+      );
+
+      await queryRunner.manager.save(batchMovement);
+
+      // Actualizar stock del producto
+      await this.updateProductStock(productId, organizationId, queryRunner);
+
+      if (shouldManageTransaction) {
+        await queryRunner.commitTransaction();
+      }
+
+      console.log(
+        `✅ Devolución registrada: ${quantity} unidades de producto ${productId}`,
+      );
+      return savedMovement;
+    } catch (error) {
+      if (shouldManageTransaction) {
+        await queryRunner.rollbackTransaction();
+      }
+      console.error(`❌ Error registrando devolución de venta:`, error);
+      throw error;
+    } finally {
+      if (shouldManageTransaction) {
+        await queryRunner.release();
       }
     }
   }

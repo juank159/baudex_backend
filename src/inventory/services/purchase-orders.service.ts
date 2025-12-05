@@ -110,13 +110,19 @@ export class PurchaseOrdersService {
       const items = createPurchaseOrderDto.items.map((itemDto, index) => {
         const quantity = Number(itemDto.quantity);
         const unitCost = Number(itemDto.unitCost);
-        const totalCost = quantity * unitCost;
+        const taxPercentage = Number(itemDto.taxPercentage || 0);
+        const subtotal = quantity * unitCost;
+        const taxAmount = (subtotal * taxPercentage) / 100;
+        const total = subtotal + taxAmount;
 
         const itemData = {
           lineNumber: itemDto.lineNumber,
           quantity: quantity,
           unitCost: unitCost,
-          totalCost: totalCost,
+          subtotal: subtotal,
+          taxPercentage: taxPercentage,
+          taxAmount: taxAmount,
+          total: total,
           receivedQuantity: 0,
           pendingQuantity: quantity,
           productId: itemDto.productId,
@@ -157,18 +163,16 @@ export class PurchaseOrdersService {
 
       // Calcular totales directamente de los items creados (no cargar desde BD)
       const itemsSubtotal = items.reduce(
-        (sum, item) => sum + (item.totalCost || 0),
+        (sum, item) => sum + (item.total || 0),
         0,
       );
       savedOrder.subtotal = itemsSubtotal;
       savedOrder.taxAmount = savedOrder.taxPercentage
         ? (itemsSubtotal * savedOrder.taxPercentage) / 100
         : 0;
-      savedOrder.discountAmount = savedOrder.discountAmount || 0;
       savedOrder.total =
         savedOrder.subtotal +
-        savedOrder.taxAmount -
-        savedOrder.discountAmount +
+        savedOrder.taxAmount +
         (savedOrder.shippingCost || 0);
 
       // Actualizar solo los campos calculados sin tocar relaciones
@@ -178,7 +182,6 @@ export class PurchaseOrdersService {
         {
           subtotal: savedOrder.subtotal,
           taxAmount: savedOrder.taxAmount,
-          discountAmount: savedOrder.discountAmount,
           total: savedOrder.total,
         },
       );
@@ -250,7 +253,7 @@ export class PurchaseOrdersService {
 
     if (search) {
       queryBuilder.andWhere(
-        '(po.orderNumber ILIKE :search OR po.supplierReference ILIKE :search)',
+        '(po.orderNumber ILIKE :search OR po.notes ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -337,7 +340,6 @@ export class PurchaseOrdersService {
     const existingItems = await this.purchaseOrderItemRepository.find({
       where: {
         purchaseOrderId,
-        organizationId,
       },
     });
 
@@ -349,29 +351,29 @@ export class PurchaseOrdersService {
           (item) => item.id === itemDto.id,
         );
         if (existingItem) {
-          const updatedMetadata = {
-            ...(existingItem.metadata || {}),
-            discountPercentage: itemDto.discountPercentage || 0,
-            taxPercentage: itemDto.taxPercentage || 0,
-          };
+          // Calcular valores
+          const quantity = Number(itemDto.quantity);
+          const unitCost = Number(itemDto.unitCost);
+          const taxPercentage = Number(itemDto.taxPercentage || 0);
+          const subtotal = quantity * unitCost;
+          const taxAmount = (subtotal * taxPercentage) / 100;
+          const total = subtotal + taxAmount;
 
-          // Actualizar campos básicos sin metadata
+          // Actualizar campos básicos
           await this.purchaseOrderItemRepository.update(
-            { id: itemDto.id, organizationId },
+            { id: itemDto.id },
             {
               productId: itemDto.productId,
-              quantity: itemDto.quantity,
-              unitCost: itemDto.unitCost,
+              quantity: quantity,
+              unitCost: unitCost,
+              subtotal: subtotal,
+              taxPercentage: taxPercentage,
+              taxAmount: taxAmount,
+              total: total,
               receivedQuantity: itemDto.receivedQuantity || 0,
               notes: itemDto.notes,
               updatedAt: new Date(),
             },
-          );
-
-          // Actualizar metadata por separado con query raw
-          await this.purchaseOrderItemRepository.query(
-            'UPDATE purchase_order_items SET metadata = $1 WHERE id = $2 AND organization_id = $3',
-            [JSON.stringify(updatedMetadata), itemDto.id, organizationId],
           );
         }
       } else {
@@ -381,19 +383,25 @@ export class PurchaseOrdersService {
             ? Math.max(...existingItems.map((item) => item.lineNumber))
             : 0;
 
+        const quantity = Number(itemDto.quantity);
+        const unitCost = Number(itemDto.unitCost);
+        const taxPercentage = Number(itemDto.taxPercentage || 0);
+        const subtotal = quantity * unitCost;
+        const taxAmount = (subtotal * taxPercentage) / 100;
+        const total = subtotal + taxAmount;
+
         const newItem = this.purchaseOrderItemRepository.create({
           purchaseOrderId,
-          organizationId,
           productId: itemDto.productId,
           lineNumber: maxLineNumber + 1,
-          quantity: itemDto.quantity,
-          unitCost: itemDto.unitCost,
+          quantity: quantity,
+          unitCost: unitCost,
+          subtotal: subtotal,
+          taxPercentage: taxPercentage,
+          taxAmount: taxAmount,
+          total: total,
           receivedQuantity: itemDto.receivedQuantity || 0,
           notes: itemDto.notes,
-          metadata: {
-            discountPercentage: itemDto.discountPercentage || 0,
-            taxPercentage: itemDto.taxPercentage || 0,
-          },
         });
 
         await this.purchaseOrderItemRepository.save(newItem);
@@ -412,7 +420,6 @@ export class PurchaseOrdersService {
     const items = await this.purchaseOrderItemRepository.find({
       where: {
         purchaseOrderId,
-        organizationId,
       },
     });
 
@@ -428,13 +435,10 @@ export class PurchaseOrdersService {
 
     if (purchaseOrder) {
       const taxPercentage = purchaseOrder.taxPercentage || 0;
-      const discountPercentage = purchaseOrder.discountPercentage || 0;
       const shippingCost = purchaseOrder.shippingCost || 0;
 
-      const discountAmount = (subtotal * discountPercentage) / 100;
-      const taxableAmount = subtotal - discountAmount;
-      const taxAmount = (taxableAmount * taxPercentage) / 100;
-      const total = taxableAmount + taxAmount + shippingCost;
+      const taxAmount = (subtotal * taxPercentage) / 100;
+      const total = subtotal + taxAmount + shippingCost;
 
       // Actualizar los totales
       await this.purchaseOrderRepository.update(
@@ -442,7 +446,6 @@ export class PurchaseOrdersService {
         {
           subtotal: subtotal,
           taxAmount: taxAmount,
-          discountAmount: discountAmount,
           total: total,
           updatedAt: new Date(),
         },
@@ -592,7 +595,7 @@ export class PurchaseOrdersService {
       // Procesar cada item recibido
       for (const receivedItem of receiveDto.receivedItems) {
         const orderItem = await queryRunner.manager.findOne(PurchaseOrderItem, {
-          where: { id: receivedItem.purchaseOrderItemId, organizationId },
+          where: { id: receivedItem.purchaseOrderItemId },
           relations: ['product'],
         });
 
@@ -712,16 +715,9 @@ export class PurchaseOrdersService {
 
         const updateResult = orderItem.receive(receivedQty);
 
-        // Actualizar pendingQuantity considerando todo lo procesado
-        orderItem.pendingQuantity = Math.max(
-          0,
-          Number(orderItem.quantity) -
-            Number(orderItem.receivedQuantity) -
-            currentDamaged -
-            currentMissing,
-        );
+        // pendingQuantity ahora es un getter calculado automáticamente (remainingQuantity)
         console.log(
-          `📦 DEBUG - Updated pendingQuantity: ${orderItem.pendingQuantity}`,
+          `📦 DEBUG - Current pendingQuantity (getter): ${orderItem.pendingQuantity}`,
         );
 
         const savedItem = await queryRunner.manager.save(orderItem);

@@ -13,6 +13,7 @@ import { PurchaseOrdersController } from './controllers/purchase-orders.controll
 import { InventoryController } from './controllers/inventory.controller';
 import { PurchaseOrdersService } from './services/purchase-orders.service';
 import { KardexReportService } from '../reports/services/kardex-report.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { KardexReportService } from '../reports/services/kardex-report.service';
       Product,
       Supplier,
     ]),
+    NotificationsModule, // Importar módulo de notificaciones
   ],
   controllers: [PurchaseOrdersController, InventoryController],
   providers: [InventoryService, PurchaseOrdersService, KardexReportService],

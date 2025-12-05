@@ -297,6 +297,13 @@ export class Customer extends BaseEntity {
   @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
   currentBalance: number;
 
+  /**
+   * Saldo de créditos pendientes del cliente (deudas)
+   */
+  @Column({ name: 'credit_balance', type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
+  creditBalance: number;
+
   @Column({ type: 'integer', default: 30 })
   paymentTerms: number;
 
