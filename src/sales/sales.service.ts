@@ -110,6 +110,7 @@ export class SalesService {
             customerReference: savedSale.customerReference,
           },
           undefined, // warehouseId - por ahora undefined, se puede agregar después
+          undefined, // invoiceItemId - solo aplica para facturas, no ventas directas
           queryRunner,
         );
 

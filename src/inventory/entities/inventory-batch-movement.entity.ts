@@ -74,6 +74,11 @@ export class InventoryBatchMovement extends BaseEntity {
   @JoinColumn({ name: 'movementId' })
   inventoryMovement: InventoryMovement;
 
+  // Relación con item de factura (para trazabilidad FIFO completa)
+  @Column({ type: 'uuid', nullable: true, name: 'invoice_item_id' })
+  @Index()
+  invoiceItemId?: string;
+
   // Métodos útiles
   get isConsumption(): boolean {
     return this.type === BatchMovementType.CONSUME;

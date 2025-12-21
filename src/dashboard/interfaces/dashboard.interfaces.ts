@@ -16,6 +16,12 @@ export interface DashboardSummary {
   totalProducts: number;
   lowStockProducts: number;
   outOfStockProducts: number;
+  paymentMethodsBreakdown: PaymentMethodStats[];
+  incomeTypeBreakdown: {
+    invoices: number;
+    credits: number;
+    total: number;
+  };
   period: {
     startDate: Date;
     endDate: Date;

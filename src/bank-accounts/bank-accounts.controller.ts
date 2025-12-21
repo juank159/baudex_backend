@@ -22,6 +22,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
 import { GetUser } from '../auth/decorators/get-user.decorator';
+import { TenantId } from '../common/decorators/current-tenant.decorator';
 
 @Controller('bank-accounts')
 @UseGuards(AuthGuard())
@@ -66,6 +67,24 @@ export class BankAccountsController {
   }
 
   /**
+   * Obtener resumen de cuentas bancarias con totales de pagos
+   * GET /bank-accounts/summary
+   */
+  @Get('summary')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  getSummary(
+    @TenantId() organizationId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    console.log('📊 Bank Accounts Summary - Organization ID:', organizationId);
+    const start = startDate ? new Date(startDate) : undefined;
+    const end = endDate ? new Date(endDate) : undefined;
+    return this.bankAccountsService.getSummary(organizationId, start, end);
+  }
+
+  /**
    * Obtener la cuenta predeterminada
    * GET /bank-accounts/default
    */
@@ -74,6 +93,21 @@ export class BankAccountsController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
   getDefault() {
     return this.bankAccountsService.getDefault();
+  }
+
+  /**
+   * Obtener transacciones de una cuenta bancaria
+   * GET /bank-accounts/:id/transactions
+   */
+  @Get(':id/transactions')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  getTransactions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: any,
+  ) {
+    console.log(`💳 Obteniendo transacciones de cuenta ${id}`);
+    return this.bankAccountsService.getTransactions(id, query);
   }
 
   /**

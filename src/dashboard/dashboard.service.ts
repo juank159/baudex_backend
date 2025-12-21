@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Invoice } from 'src/invoices/entities/invoice.entity';
+import { Payment } from 'src/invoices/entities/payment.entity';
 import { Expense } from 'src/expenses/entities/expense.entity';
 import { Customer } from 'src/customers/entities/customer.entity';
 import { Product } from 'src/products/entities/product.entity';
@@ -32,6 +33,8 @@ export class DashboardService {
   constructor(
     @InjectRepository(Invoice)
     private readonly invoiceRepository: Repository<Invoice>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
     @InjectRepository(Expense)
     private readonly expenseRepository: Repository<Expense>,
     @InjectRepository(Customer)
@@ -52,13 +55,15 @@ export class DashboardService {
     );
 
     // Consultas en paralelo para mejor rendimiento
-    const [salesData, expensesData, invoiceStats, customerStats, productStats] =
+    const [salesData, expensesData, invoiceStats, customerStats, productStats, paymentMethodStats, incomeTypeBreakdown] =
       await Promise.all([
         this.getSalesData(startDate, endDate),
         this.getExpensesData(startDate, endDate),
         this.getInvoiceStats(startDate, endDate),
         this.getCustomerStats(startDate, endDate),
         this.getProductStats(),
+        this.getPaymentMethodStats(query),
+        this.getIncomeTypeBreakdown(startDate, endDate),
       ]);
 
     const netProfit = salesData.totalSales - expensesData.totalExpenses;
@@ -80,6 +85,8 @@ export class DashboardService {
       totalProducts: productStats.total,
       lowStockProducts: productStats.lowStock,
       outOfStockProducts: productStats.outOfStock,
+      paymentMethodsBreakdown: paymentMethodStats,
+      incomeTypeBreakdown: incomeTypeBreakdown,
       period: {
         startDate,
         endDate,
@@ -488,39 +495,117 @@ export class DashboardService {
       query.endDate,
     );
 
-    const paymentStats = await this.invoiceRepository
-      .createQueryBuilder('invoice')
+    // 🔍 DEBUG: Ver todos los pagos primero
+    const samplePayments = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.bankAccount', 'bankAccount')
+      .where('payment.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('payment.paymentDate >= :startDate', { startDate })
+      .andWhere('payment.paymentDate <= :endDate', { endDate })
+      .limit(5)
+      .getMany();
+
+    console.log('🔍 DEBUG - Pagos en rango de fechas:', {
+      count: samplePayments.length,
+      startDate,
+      endDate,
+      sample: samplePayments.map(p => ({
+        paymentNumber: p.paymentNumber,
+        amount: p.amount,
+        paymentMethod: p.paymentMethod,
+        bankAccountId: p.bankAccountId,
+        bankAccountName: p.bankAccount?.name || 'Sin cuenta',
+        date: p.paymentDate
+      }))
+    });
+
+    // Consulta principal: agrupar pagos por cuenta bancaria
+    const paymentStats = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoin('payment.bankAccount', 'bankAccount')
       .select([
-        'invoice.paymentMethod as method',
-        'COUNT(invoice.id) as count',
-        'SUM(invoice.total) as total_amount',
+        'COALESCE(bankAccount.name, payment.paymentMethod) as method',
+        'COUNT(payment.id) as count',
+        'SUM(payment.amount) as total_amount',
       ])
-      .where('invoice.organizationId = :organizationId', {
+      .where('payment.organizationId = :organizationId', {
         organizationId: tenantId,
       })
-      .andWhere('invoice.date >= :startDate', { startDate })
-      .andWhere('invoice.date <= :endDate', { endDate })
-      .andWhere('invoice.status IN (:...statuses)', {
-        statuses: ['paid', 'partially_paid'],
-      })
-      .groupBy('invoice.paymentMethod')
+      .andWhere('payment.paymentDate >= :startDate', { startDate })
+      .andWhere('payment.paymentDate <= :endDate', { endDate })
+      .groupBy('bankAccount.name, payment.paymentMethod')
       .orderBy('total_amount', 'DESC')
       .getRawMany();
 
+    console.log('💰 DEBUG - Payment stats result:', paymentStats);
+
     const totalAmount = paymentStats.reduce(
-      (sum, item) => sum + parseFloat(item.total_amount),
+      (sum, item) => sum + parseFloat(item.total_amount || 0),
       0,
     );
 
     return paymentStats.map((item) => ({
-      method: item.method,
-      count: parseInt(item.count),
-      totalAmount: parseFloat(item.total_amount),
+      method: item.method || 'Sin especificar',
+      count: parseInt(item.count || 0),
+      totalAmount: parseFloat(item.total_amount || 0),
       percentage:
         totalAmount > 0
-          ? (parseFloat(item.total_amount) / totalAmount) * 100
+          ? (parseFloat(item.total_amount || 0) / totalAmount) * 100
           : 0,
     }));
+  }
+
+  /**
+   * Obtener desglose de ingresos por tipo (Créditos vs Facturas)
+   */
+  private async getIncomeTypeBreakdown(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<{ invoices: number; credits: number; total: number }> {
+    const tenantId = '12345678-1234-1234-1234-123456789012'; // Hardcoded for testing
+    if (!tenantId) {
+      throw new Error('No se pudo determinar el tenant actual');
+    }
+
+    // Ingresos por FACTURAS PAGADAS (paidAmount de facturas paid o partially_paid)
+    const invoicesIncome = await this.invoiceRepository
+      .createQueryBuilder('invoice')
+      .select('COALESCE(SUM(invoice.paidAmount), 0)', 'total')
+      .where('invoice.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('invoice.date >= :startDate', { startDate })
+      .andWhere('invoice.date <= :endDate', { endDate })
+      .andWhere('invoice.status IN (:...statuses)', { statuses: ['paid', 'partially_paid'] })
+      .getRawOne();
+
+    // Ingresos por CRÉDITOS (clientBalanceApplied en facturas)
+    const creditsIncome = await this.invoiceRepository
+      .createQueryBuilder('invoice')
+      .select('COALESCE(SUM(invoice.clientBalanceApplied), 0)', 'total')
+      .where('invoice.organizationId = :organizationId', { organizationId: tenantId })
+      .andWhere('invoice.date >= :startDate', { startDate })
+      .andWhere('invoice.date <= :endDate', { endDate })
+      .andWhere('invoice.clientBalanceApplied > 0')
+      .getRawOne();
+
+    const invoicesTotal = parseFloat(invoicesIncome?.total || '0');
+    const creditsTotal = parseFloat(creditsIncome?.total || '0');
+    const total = invoicesTotal + creditsTotal;
+
+    console.log('📊 DEBUG - Income Type Breakdown:', {
+      invoicesTotal,
+      creditsTotal,
+      total,
+      invoicesQuery: invoicesIncome,
+      creditsQuery: creditsIncome,
+      startDate,
+      endDate
+    });
+
+    return {
+      invoices: invoicesTotal,
+      credits: creditsTotal,
+      total: total,
+    };
   }
 
   // Métodos auxiliares privados

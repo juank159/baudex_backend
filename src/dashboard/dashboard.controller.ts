@@ -42,7 +42,11 @@ import { UserRole } from 'src/users/entities/user.entity';
 @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
 @Controller('api/dashboard')
 export class DashboardController {
-  constructor() {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly kpiService: KpiService,
+    private readonly reportsService: ReportsService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -53,10 +57,17 @@ export class DashboardController {
     status: 200,
     description: 'Resumen del dashboard obtenido exitosamente',
   })
-  async getDashboardSummary(@Query() query: ChartQueryDto): Promise<any> {
+  async getDashboardSummary(@Query() query: any): Promise<DashboardSummary> {
     try {
-      return { message: 'Dashboard summary endpoint working' };
+      console.log('📊 Dashboard endpoint called with query:', query);
+      const result = await this.dashboardService.getDashboardSummary(query);
+      console.log('📊 Dashboard result:', {
+        paymentMethodsCount: result.paymentMethodsBreakdown?.length || 0,
+        incomeTypeTotal: result.incomeTypeBreakdown?.total || 0,
+      });
+      return result;
     } catch (error) {
+      console.error('❌ Error in dashboard endpoint:', error);
       throw new HttpException(
         'Error al obtener el resumen del dashboard',
         HttpStatus.INTERNAL_SERVER_ERROR,

@@ -5,18 +5,42 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { BankAccount } from './entities/bank-account.entity';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto';
 import { BankAccountQueryDto } from './dto/bank-account-query.dto';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
+import { Payment } from '../invoices/entities/payment.entity';
+import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
+
+export interface BankAccountSummary {
+  id: string;
+  name: string;
+  bankName?: string;
+  accountNumber?: string;
+  type: string;
+  icon?: string;
+  currentBalance: number;
+  totalReceived: number;
+  totalReceivedPeriod: number;
+  paymentCount: number;
+  paymentCountPeriod: number;
+  creditPaymentCount: number;
+  creditPaymentTotal: number;
+  isDefault: boolean;
+  isActive: boolean;
+}
 
 @Injectable()
 export class BankAccountsService {
   constructor(
     @InjectRepository(BankAccount)
     private readonly bankAccountRepository: Repository<BankAccount>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
+    @InjectRepository(CreditPayment)
+    private readonly creditPaymentRepository: Repository<CreditPayment>,
     private readonly tenantAwareService: TenantAwareService,
   ) {}
 
@@ -353,5 +377,291 @@ export class BankAccountsService {
         `Ya existe una cuenta "${bankName}" con el número "${accountNumber}" en tu organización`,
       );
     }
+  }
+
+  /**
+   * Obtener resumen de cuentas bancarias con totales de pagos recibidos
+   * @param organizationId - ID de la organización (requerido)
+   * @param startDate - Fecha de inicio para el período (opcional)
+   * @param endDate - Fecha de fin para el período (opcional)
+   */
+  async getSummary(
+    organizationId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<BankAccountSummary[]> {
+    if (!organizationId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
+    console.log(`💰 Obteniendo resumen de cuentas para organización: ${organizationId}`);
+
+    // Obtener todas las cuentas activas
+    const accounts = await this.bankAccountRepository.find({
+      where: { organizationId, isActive: true },
+      order: { isDefault: 'DESC', sortOrder: 'ASC', name: 'ASC' },
+    });
+
+    console.log(`💰 Cuentas encontradas: ${accounts.length}`);
+
+    // Construir resumen para cada cuenta
+    const summaries: BankAccountSummary[] = [];
+
+    for (const account of accounts) {
+      // Total de pagos de facturas (histórico)
+      const totalPaymentsQuery = this.paymentRepository
+        .createQueryBuilder('p')
+        .select('COALESCE(SUM(p.amount), 0)', 'total')
+        .addSelect('COUNT(p.id)', 'count')
+        .where('p.bankAccountId = :accountId', { accountId: account.id })
+        .andWhere('p.organizationId = :organizationId', { organizationId });
+
+      const totalPaymentsResult = await totalPaymentsQuery.getRawOne();
+
+      // Pagos de facturas en el período
+      let periodPaymentsResult: { total: string; count: string } | null = null;
+      if (startDate && endDate) {
+        const periodPaymentsQuery = this.paymentRepository
+          .createQueryBuilder('p')
+          .select('COALESCE(SUM(p.amount), 0)', 'total')
+          .addSelect('COUNT(p.id)', 'count')
+          .where('p.bankAccountId = :accountId', { accountId: account.id })
+          .andWhere('p.organizationId = :organizationId', { organizationId })
+          .andWhere('p.paymentDate >= :startDate', { startDate })
+          .andWhere('p.paymentDate <= :endDate', { endDate });
+
+        periodPaymentsResult = await periodPaymentsQuery.getRawOne();
+      }
+
+      // Total de pagos de créditos (histórico)
+      let creditPaymentsResult: { total: string; count: string } | null = null;
+      try {
+        const creditPaymentsQuery = this.creditPaymentRepository
+          .createQueryBuilder('cp')
+          .select('COALESCE(SUM(cp.amount), 0)', 'total')
+          .addSelect('COUNT(cp.id)', 'count')
+          .where('cp.bankAccountId = :accountId', { accountId: account.id })
+          .andWhere('cp.organizationId = :organizationId', { organizationId });
+
+        creditPaymentsResult = await creditPaymentsQuery.getRawOne();
+      } catch (e) {
+        // Si la tabla de créditos no existe o hay error, continuar
+        console.log('Credit payments query error (ignored):', e.message);
+      }
+
+      summaries.push({
+        id: account.id,
+        name: account.name,
+        bankName: account.bankName,
+        accountNumber: account.accountNumber,
+        type: account.type,
+        icon: account.icon,
+        currentBalance: Number(account.currentBalance) || 0,
+        totalReceived: parseFloat(totalPaymentsResult?.total || '0'),
+        totalReceivedPeriod: parseFloat(periodPaymentsResult?.total || '0'),
+        paymentCount: parseInt(totalPaymentsResult?.count || '0', 10),
+        paymentCountPeriod: parseInt(periodPaymentsResult?.count || '0', 10),
+        creditPaymentCount: parseInt(creditPaymentsResult?.count || '0', 10),
+        creditPaymentTotal: parseFloat(creditPaymentsResult?.total || '0'),
+        isDefault: account.isDefault,
+        isActive: account.isActive,
+      });
+    }
+
+    console.log(`💰 Resumen generado para ${summaries.length} cuentas`);
+    return summaries;
+  }
+
+  /**
+   * Obtener todas las transacciones de una cuenta bancaria con paginación y filtros
+   * @param accountId - ID de la cuenta bancaria
+   * @param query - Filtros de búsqueda, fecha y paginación
+   */
+  async getTransactions(
+    accountId: string,
+    query: any,
+  ): Promise<any> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
+    // Verificar que la cuenta existe y pertenece al tenant
+    const account = await this.findOne(accountId);
+
+    const page = parseInt(query.page, 10) || 1;
+    const limit = Math.min(parseInt(query.limit, 10) || 50, 100);
+    const skip = (page - 1) * limit;
+
+    // Filtros de fecha
+    const startDate = query.startDate ? new Date(query.startDate) : null;
+    const endDate = query.endDate ? new Date(query.endDate) : null;
+
+    // Query para obtener pagos de facturas
+    const paymentsQuery = this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.invoice', 'invoice')
+      .leftJoinAndSelect('invoice.customer', 'customer')
+      .where('payment.bankAccountId = :accountId', { accountId })
+      .andWhere('payment.organizationId = :organizationId', {
+        organizationId: tenantId,
+      });
+
+    // Aplicar filtros de fecha si existen
+    if (startDate) {
+      paymentsQuery.andWhere('payment.paymentDate >= :startDate', {
+        startDate,
+      });
+    }
+    if (endDate) {
+      paymentsQuery.andWhere('payment.paymentDate <= :endDate', { endDate });
+    }
+
+    // Aplicar búsqueda por cliente o número de factura
+    if (query.search && query.search.trim()) {
+      paymentsQuery.andWhere(
+        '(LOWER(customer.name) LIKE LOWER(:search) OR LOWER(invoice.invoiceNumber) LIKE LOWER(:search))',
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+
+    // Contar total de transacciones
+    const totalPayments = await paymentsQuery.getCount();
+
+    // Query para obtener pagos de créditos
+    let totalCredits = 0;
+    let creditPayments: any[] = [];
+    try {
+      const creditsQuery = this.creditPaymentRepository
+        .createQueryBuilder('cp')
+        .leftJoinAndSelect('cp.customer', 'customer')
+        .where('cp.bankAccountId = :accountId', { accountId })
+        .andWhere('cp.organizationId = :organizationId', {
+          organizationId: tenantId,
+        });
+
+      if (startDate) {
+        creditsQuery.andWhere('cp.paymentDate >= :startDate', { startDate });
+      }
+      if (endDate) {
+        creditsQuery.andWhere('cp.paymentDate <= :endDate', { endDate });
+      }
+
+      if (query.search && query.search.trim()) {
+        creditsQuery.andWhere('LOWER(customer.name) LIKE LOWER(:search)', {
+          search: `%${query.search.trim()}%`,
+        });
+      }
+
+      totalCredits = await creditsQuery.getCount();
+      creditPayments = await creditsQuery
+        .orderBy('cp.paymentDate', 'DESC')
+        .limit(limit)
+        .skip(skip)
+        .getMany();
+    } catch (e) {
+      console.log('Credit payments query error (ignored):', e.message);
+    }
+
+    // Obtener pagos de facturas con paginación
+    const payments = await paymentsQuery
+      .orderBy('payment.paymentDate', 'DESC')
+      .addOrderBy('payment.createdAt', 'DESC')
+      .limit(limit)
+      .skip(skip)
+      .getMany();
+
+    // Combinar y formatear transacciones
+    const transactions: any[] = [];
+
+    // Agregar pagos de facturas
+    for (const payment of payments) {
+      transactions.push({
+        id: payment.id,
+        date: payment.paymentDate,
+        type: 'invoice_payment',
+        amount: Number(payment.amount),
+        customer: payment.invoice?.customer
+          ? {
+              id: payment.invoice.customer.id,
+              name: `${payment.invoice.customer.firstName} ${payment.invoice.customer.lastName}`.trim(),
+              email: payment.invoice.customer.email,
+              phone: payment.invoice.customer.phone,
+            }
+          : null,
+        invoice: payment.invoice
+          ? {
+              id: payment.invoice.id,
+              invoiceNumber: payment.invoice.number,
+              total: Number(payment.invoice.total),
+            }
+          : null,
+        paymentMethod: payment.paymentMethod,
+        description: `Pago de factura ${payment.invoice?.number || ''}`,
+        notes: payment.notes,
+      });
+    }
+
+    // Agregar pagos de créditos
+    for (const creditPayment of creditPayments) {
+      transactions.push({
+        id: creditPayment.id,
+        date: creditPayment.paymentDate,
+        type: 'credit_payment',
+        amount: Number(creditPayment.amount),
+        customer: creditPayment.customer
+          ? {
+              id: creditPayment.customer.id,
+              name: `${creditPayment.customer.firstName} ${creditPayment.customer.lastName}`.trim(),
+              email: creditPayment.customer.email,
+              phone: creditPayment.customer.phone,
+            }
+          : null,
+        invoice: null,
+        paymentMethod: creditPayment.paymentMethod || 'credit',
+        description: `Pago de crédito`,
+        notes: creditPayment.notes,
+      });
+    }
+
+    // Ordenar por fecha descendente
+    transactions.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
+
+    // Calcular totales para el resumen
+    const totalTransactions = totalPayments + totalCredits;
+    const totalIncome = transactions.reduce(
+      (sum, t) => sum + Number(t.amount),
+      0,
+    );
+    const averageTransaction =
+      transactions.length > 0 ? totalIncome / transactions.length : 0;
+
+    // Construir respuesta
+    return {
+      account: {
+        id: account.id,
+        name: account.name,
+        type: account.type,
+        currentBalance: Number(account.currentBalance) || 0,
+        bankName: account.bankName,
+        accountNumber: account.accountNumber,
+      },
+      transactions,
+      pagination: {
+        page,
+        limit,
+        total: totalTransactions,
+        totalPages: Math.ceil(totalTransactions / limit),
+      },
+      summary: {
+        totalIncome,
+        transactionCount: totalTransactions,
+        periodStart: startDate,
+        periodEnd: endDate,
+        averageTransaction,
+      },
+    };
   }
 }

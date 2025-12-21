@@ -79,9 +79,10 @@ export class PurchaseOrdersService {
         }
       }
 
-      // Crear la orden de compra
+      // Crear la orden de compra (excluir items para evitar cascada con valores nulos)
+      const { items: itemsDto, ...orderData } = createPurchaseOrderDto;
       const purchaseOrder = queryRunner.manager.create(PurchaseOrder, {
-        ...createPurchaseOrderDto,
+        ...orderData,
         supplierId: createPurchaseOrderDto.supplierId,
         organizationId,
         createdById: userId,
@@ -102,12 +103,16 @@ export class PurchaseOrdersService {
       console.log('🔧 DEBUG: Iniciando creación de items');
       console.log(
         '🔧 DEBUG: Items en DTO:',
-        createPurchaseOrderDto.items.length,
+        itemsDto.length,
       );
       console.log('🔧 DEBUG: savedOrder.id:', savedOrder.id);
       console.log('🔧 DEBUG: organizationId:', organizationId);
 
-      const items = createPurchaseOrderDto.items.map((itemDto, index) => {
+      // Crear items usando SQL raw para garantizar que los valores se inserten correctamente
+      const items: PurchaseOrderItem[] = [];
+
+      for (let index = 0; index < itemsDto.length; index++) {
+        const itemDto = itemsDto[index];
         const quantity = Number(itemDto.quantity);
         const unitCost = Number(itemDto.unitCost);
         const taxPercentage = Number(itemDto.taxPercentage || 0);
@@ -115,65 +120,56 @@ export class PurchaseOrdersService {
         const taxAmount = (subtotal * taxPercentage) / 100;
         const total = subtotal + taxAmount;
 
-        const itemData = {
-          lineNumber: itemDto.lineNumber,
-          quantity: quantity,
-          unitCost: unitCost,
-          subtotal: subtotal,
-          taxPercentage: taxPercentage,
-          taxAmount: taxAmount,
-          total: total,
-          receivedQuantity: 0,
-          pendingQuantity: quantity,
-          productId: itemDto.productId,
-          purchaseOrderId: savedOrder.id,
-          organizationId: organizationId,
-          expectedDate: itemDto.expectedDate
-            ? new Date(itemDto.expectedDate)
-            : null,
-          notes: itemDto.notes || null,
-          metadata: itemDto.metadata || null,
-        };
+        console.log(`🔧 DEBUG: Item ${index} - quantity: ${quantity}, unitCost: ${unitCost}, subtotal: ${subtotal}, total: ${total}`);
 
-        console.log(
-          `🔧 DEBUG: Item ${index} data:`,
-          JSON.stringify(itemData, null, 2),
+        // Usar SQL raw para insertar el item
+        const result = await queryRunner.query(
+          `INSERT INTO "purchase_order_items"
+           ("lineNumber", "quantity", "unitCost", "subtotal", "taxPercentage", "taxAmount", "total", "receivedQuantity", "notes", "purchaseOrderId", "productId")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING *`,
+          [
+            itemDto.lineNumber,
+            quantity,
+            unitCost,
+            subtotal,
+            taxPercentage,
+            taxAmount,
+            total,
+            0,
+            itemDto.notes || null,
+            savedOrder.id,
+            itemDto.productId,
+          ]
         );
 
-        return queryRunner.manager.create(PurchaseOrderItem, itemData);
-      });
+        console.log(`✅ Item ${index} insertado:`, result[0]?.id);
 
-      console.log('🔧 DEBUG: Total items to save:', items.length);
-
-      // Verificar que no existan items previos para esta orden
-      const existingItems = await queryRunner.manager.find(PurchaseOrderItem, {
-        where: { purchaseOrderId: savedOrder.id },
-      });
-      console.log('🔧 DEBUG: Existing items found:', existingItems.length);
-
-      if (existingItems.length > 0) {
-        console.log(
-          '⚠️ WARNING: Found existing items for this order, removing them first',
-        );
-        await queryRunner.manager.remove(existingItems);
+        // Cargar el item insertado
+        const insertedItem = await queryRunner.manager.findOne(PurchaseOrderItem, {
+          where: { id: result[0].id },
+        });
+        if (insertedItem) {
+          items.push(insertedItem);
+        }
       }
 
-      await queryRunner.manager.save(items);
+      console.log('🔧 DEBUG: Total items inserted:', items.length);
       console.log('✅ DEBUG: Items saved successfully');
 
-      // Calcular totales directamente de los items creados (no cargar desde BD)
+      // Calcular totales directamente de los items creados (convertir a números)
       const itemsSubtotal = items.reduce(
-        (sum, item) => sum + (item.total || 0),
+        (sum, item) => sum + Number(item.total || 0),
         0,
       );
-      savedOrder.subtotal = itemsSubtotal;
+      savedOrder.subtotal = Number(itemsSubtotal);
       savedOrder.taxAmount = savedOrder.taxPercentage
-        ? (itemsSubtotal * savedOrder.taxPercentage) / 100
+        ? (Number(itemsSubtotal) * Number(savedOrder.taxPercentage)) / 100
         : 0;
       savedOrder.total =
-        savedOrder.subtotal +
-        savedOrder.taxAmount +
-        (savedOrder.shippingCost || 0);
+        Number(savedOrder.subtotal) +
+        Number(savedOrder.taxAmount) +
+        Number(savedOrder.shippingCost || 0);
 
       // Actualizar solo los campos calculados sin tocar relaciones
       await queryRunner.manager.update(

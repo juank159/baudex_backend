@@ -585,6 +585,8 @@ export class InvoicesService {
                 customerName: invoice.customer?.firstName || 'N/A',
               },
               mainWarehouseId,
+              item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
+              manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
             );
             console.log(`   ✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`);
           } catch (error) {
@@ -949,6 +951,8 @@ export class InvoicesService {
                     customerName: invoice.customer?.firstName || 'N/A',
                   },
                   mainWarehouseId, // 🏪 Usar almacén principal
+                  item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
+                  manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
                 );
                 console.log(
                   `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,
@@ -999,6 +1003,8 @@ export class InvoicesService {
                     customerName: invoice.customer?.firstName || 'N/A',
                   },
                   mainWarehouseId, // 🏪 Usar almacén principal
+                  item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
+                  manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
                 );
                 console.log(
                   `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,

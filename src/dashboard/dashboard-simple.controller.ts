@@ -1,19 +1,24 @@
-import { Controller, Get, Query, Request } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { InjectEntityManager } from '@nestjs/typeorm';
 import { EntityManager } from 'typeorm';
 import { ProfitabilityService } from '../common/services/profitability.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantId } from '../common/decorators/current-tenant.decorator';
 
 @Controller('dashboard')
+@UseGuards(JwtAuthGuard)
 export class DashboardSimpleController {
-  
+
   @Get('summary')
-  async getDashboardSummary(@Query() query: any, @Request() req: any) {
+  async getDashboardSummary(
+    @Query() query: any,
+    @TenantId() organizationId: string,
+  ) {
     console.log('📊 Dashboard Summary Request:', query);
-    console.log('📊 Request organization:', req.user?.organizationId);
-    
+    console.log('📊 Organization from TenantId:', organizationId);
+
     try {
-      // TEMPORAL: Usar organizationId real mientras se arregla la autenticación
-      const organizationId = req.user?.organizationId || '20d665c8-25a3-454a-a564-2e8a0c81f025';
+      // ✅ Ahora usa el organizationId del usuario autenticado via TenantId decorator
       
       console.log(`🏢 Usando organizationId: ${organizationId}`);
       
@@ -56,14 +61,14 @@ export class DashboardSimpleController {
       
       // Obtener datos reales de gastos CON FILTROS DE FECHA
       const expensesQuery = `
-        SELECT 
+        SELECT
           COUNT(*) as total_expenses_count,
           SUM(CAST(amount AS DECIMAL)) as total_expenses_amount
-        FROM expenses 
-        WHERE organization_id = $1 
-        AND status = 'approved' 
+        FROM expenses
+        WHERE organization_id = $1
+        AND status = 'approved'
         AND deleted_at IS NULL
-        ${dateFilter.replace('date', 'date')}
+        ${dateFilter}
       `;
 
       // Obtener datos reales de productos
@@ -113,6 +118,139 @@ export class DashboardSimpleController {
       console.log(`   📦 Productos totales: ${totalProducts}`);
       console.log(`   👥 Clientes totales: ${totalCustomers}`);
 
+      // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
+      // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
+      const paymentMethodsQuery = `
+        SELECT
+          COALESCE(ba.name, p."paymentMethod") as method,
+          COUNT(p.id) as count,
+          SUM(p.amount) as total_amount
+        FROM payments p
+        LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
+        WHERE p.organization_id = $1
+        AND p.deleted_at IS NULL
+        ${dateFilter.replace(/date/g, 'p."paymentDate"')}
+        GROUP BY COALESCE(ba.name, p."paymentMethod")
+        ORDER BY total_amount DESC
+      `;
+
+      console.log('💳 Consultando métodos de pago...');
+      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, queryParams);
+      console.log(`💳 Métodos de pago encontrados: ${paymentMethods.length}`);
+
+      const totalPayments = paymentMethods.reduce((sum, pm) => sum + parseFloat(pm.total_amount || 0), 0);
+      const paymentMethodsBreakdown = paymentMethods.map(pm => ({
+        method: pm.method || 'Sin especificar',
+        count: parseInt(pm.count || 0),
+        totalAmount: parseFloat(pm.total_amount || 0),
+        percentage: totalPayments > 0 ? (parseFloat(pm.total_amount || 0) / totalPayments * 100) : 0,
+      }));
+
+      console.log(`💳 Total de pagos: $${totalPayments}`);
+      paymentMethodsBreakdown.forEach(pm => {
+        console.log(`   ${pm.method}: $${pm.totalAmount} (${pm.percentage.toFixed(1)}%)`);
+      });
+
+      // 📊 OBTENER DESGLOSE POR TIPO DE INGRESO (Facturas vs Créditos)
+      const invoicesIncomeQuery = `
+        SELECT COALESCE(SUM("paidAmount"), 0) as total
+        FROM invoices
+        WHERE organization_id = $1
+        AND status IN ('paid', 'partially_paid')
+        AND deleted_at IS NULL
+        ${dateFilter}
+      `;
+
+      const creditsIncomeQuery = `
+        SELECT COALESCE(SUM(client_balance_applied), 0) as total
+        FROM invoices
+        WHERE organization_id = $1
+        AND client_balance_applied > 0
+        AND deleted_at IS NULL
+        ${dateFilter}
+      `;
+
+      console.log('📊 Consultando desglose de ingresos...');
+      const [invoicesIncomeResult] = await this.entityManager.query(invoicesIncomeQuery, queryParams);
+      const [creditsIncomeResult] = await this.entityManager.query(creditsIncomeQuery, queryParams);
+
+      const invoicesIncome = parseFloat(invoicesIncomeResult?.total || '0');
+      const creditsIncome = parseFloat(creditsIncomeResult?.total || '0');
+      const totalIncome = invoicesIncome + creditsIncome;
+
+      const incomeTypeBreakdown = {
+        invoices: invoicesIncome,
+        credits: creditsIncome,
+        total: totalIncome,
+      };
+
+      console.log(`📊 Facturas pagadas: $${invoicesIncome}`);
+      console.log(`📊 Créditos aplicados: $${creditsIncome}`);
+      console.log(`📊 Total ingresos: $${totalIncome}`);
+
+      // 📊 CALCULAR DATOS REALES DEL PERÍODO ANTERIOR (mismo rango de días, pero desplazado hacia atrás)
+      let previousPeriodRevenue = 0;
+      let previousPeriodExpenses = 0;
+      let previousPeriodInvoicesCount = 0;
+
+      if (query.startDate && query.endDate) {
+        const start = new Date(query.startDate);
+        const end = new Date(query.endDate);
+        const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Calcular fechas del período anterior
+        const prevEnd = new Date(start);
+        prevEnd.setDate(prevEnd.getDate() - 1);
+        const prevStart = new Date(prevEnd);
+        prevStart.setDate(prevStart.getDate() - diffDays);
+
+        console.log(`📅 Calculando período anterior: ${prevStart.toISOString().split('T')[0]} - ${prevEnd.toISOString().split('T')[0]}`);
+
+        const previousInvoicesQuery = `
+          SELECT
+            COUNT(*) as total_invoices,
+            COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total_revenue
+          FROM invoices
+          WHERE organization_id = $1
+          AND deleted_at IS NULL
+          AND date >= $2 AND date <= $3
+        `;
+
+        const previousExpensesQuery = `
+          SELECT COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total_expenses
+          FROM expenses
+          WHERE organization_id = $1
+          AND status = 'approved'
+          AND deleted_at IS NULL
+          AND date >= $2 AND date <= $3
+        `;
+
+        const [prevInvResult] = await this.entityManager.query(previousInvoicesQuery, [
+          organizationId,
+          prevStart.toISOString().split('T')[0],
+          prevEnd.toISOString().split('T')[0]
+        ]);
+
+        const [prevExpResult] = await this.entityManager.query(previousExpensesQuery, [
+          organizationId,
+          prevStart.toISOString().split('T')[0],
+          prevEnd.toISOString().split('T')[0]
+        ]);
+
+        previousPeriodRevenue = parseFloat(prevInvResult?.total_revenue || '0');
+        previousPeriodExpenses = parseFloat(prevExpResult?.total_expenses || '0');
+        previousPeriodInvoicesCount = parseInt(prevInvResult?.total_invoices || '0');
+
+        console.log(`📊 Período anterior - Ingresos: $${previousPeriodRevenue}, Gastos: $${previousPeriodExpenses}, Facturas: ${previousPeriodInvoicesCount}`);
+      }
+
+      const previousPeriodProfit = previousPeriodRevenue - previousPeriodExpenses;
+      const revenueGrowth = previousPeriodRevenue > 0
+        ? ((totalRevenue - previousPeriodRevenue) / previousPeriodRevenue * 100)
+        : 0;
+
+      console.log(`📈 Crecimiento de ingresos: ${revenueGrowth.toFixed(1)}%`);
+
       return {
         totalRevenue,
         totalExpenses,
@@ -123,7 +261,9 @@ export class DashboardSimpleController {
         totalCustomers,
         totalProducts,
         profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : '0',
-        revenueGrowth: 0,
+        revenueGrowth: revenueGrowth.toFixed(1),
+        paymentMethodsBreakdown,
+        incomeTypeBreakdown,
         monthlyStats: {
           currentMonth: {
             revenue: totalRevenue,
@@ -132,19 +272,29 @@ export class DashboardSimpleController {
             invoicesCount: totalInvoices
           },
           previousMonth: {
-            revenue: totalRevenue * 0.85, // Simular mes anterior (15% menos)
-            expenses: totalExpenses * 0.9, // Simular mes anterior (10% menos)
-            profit: (totalRevenue * 0.85) - (totalExpenses * 0.9),
-            invoicesCount: Math.max(0, totalInvoices - 1)
+            revenue: previousPeriodRevenue,
+            expenses: previousPeriodExpenses,
+            profit: previousPeriodProfit,
+            invoicesCount: previousPeriodInvoicesCount
           }
         },
         chartData: {
-          revenue: [totalRevenue * 0.6, totalRevenue * 0.75, totalRevenue * 0.85, totalRevenue],
-          expenses: [totalExpenses * 0.5, totalExpenses * 0.7, totalExpenses * 0.9, totalExpenses],
+          revenue: [
+            previousPeriodRevenue > 0 ? previousPeriodRevenue : totalRevenue * 0.6,
+            previousPeriodRevenue > 0 ? (previousPeriodRevenue + totalRevenue) / 2 : totalRevenue * 0.75,
+            previousPeriodRevenue > 0 ? totalRevenue * 0.95 : totalRevenue * 0.85,
+            totalRevenue
+          ],
+          expenses: [
+            previousPeriodExpenses > 0 ? previousPeriodExpenses : totalExpenses * 0.5,
+            previousPeriodExpenses > 0 ? (previousPeriodExpenses + totalExpenses) / 2 : totalExpenses * 0.7,
+            previousPeriodExpenses > 0 ? totalExpenses * 0.95 : totalExpenses * 0.9,
+            totalExpenses
+          ],
           profit: [
-            (totalRevenue * 0.6) - (totalExpenses * 0.5),
-            (totalRevenue * 0.75) - (totalExpenses * 0.7),
-            (totalRevenue * 0.85) - (totalExpenses * 0.9),
+            previousPeriodProfit,
+            (previousPeriodProfit + totalProfit) / 2,
+            totalProfit * 0.95,
             totalProfit
           ]
         }
@@ -188,15 +338,15 @@ export class DashboardSimpleController {
   }
 
   @Get('activities/recent')
-  async getRecentActivities(@Query() query: any, @Request() req: any) {
+  async getRecentActivities(
+    @Query() query: any,
+    @TenantId() organizationId: string,
+  ) {
     console.log('🔄 Recent Activities Request:', query);
-    
+    console.log('📊 Organization from TenantId:', organizationId);
+
     try {
-      // TEMPORAL: Usar organizationId real mientras se arregla la autenticación
-      const organizationId = req.user?.organizationId || '20d665c8-25a3-454a-a564-2e8a0c81f025';
-      
-      console.log(`🏢 Usando organizationId para actividades: ${organizationId}`);
-      
+      // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
       if (!organizationId) {
         throw new Error('Organization ID not found');
       }
@@ -304,15 +454,15 @@ export class DashboardSimpleController {
   }
 
   @Get('notifications')
-  async getDashboardNotifications(@Query() query: any, @Request() req: any) {
+  async getDashboardNotifications(
+    @Query() query: any,
+    @TenantId() organizationId: string,
+  ) {
     console.log('🔔 Dashboard Notifications Request:', query);
-    
+    console.log('📊 Organization from TenantId:', organizationId);
+
     try {
-      // TEMPORAL: Usar organizationId real mientras se arregla la autenticación
-      const organizationId = req.user?.organizationId || '20d665c8-25a3-454a-a564-2e8a0c81f025';
-      
-      console.log(`🏢 Usando organizationId para notificaciones: ${organizationId}`);
-      
+      // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
       if (!organizationId) {
         throw new Error('Organization ID not found');
       }
@@ -448,16 +598,16 @@ export class DashboardSimpleController {
   ) {}
 
   @Get('profitability')
-  async getProfitabilityStats(@Query() query: any, @Request() req: any) {
+  async getProfitabilityStats(
+    @Query() query: any,
+    @TenantId() organizationId: string,
+  ) {
     console.log('🎯 CALCULANDO RENTABILIDAD FIFO CON FILTROS DE FECHA');
     console.log(`📅 Query parameters:`, query);
-    
+    console.log('📊 Organization from TenantId:', organizationId);
+
     try {
-      // TEMPORAL: Usar organizationId real mientras se arregla la autenticación
-      const organizationId = req.user?.organizationId || '20d665c8-25a3-454a-a564-2e8a0c81f025';
-      
-      console.log(`🏢 Usando organizationId: ${organizationId}`);
-      
+      // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
       if (!organizationId) {
         throw new Error('Organization ID not found');
       }

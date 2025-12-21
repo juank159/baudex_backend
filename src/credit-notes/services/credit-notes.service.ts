@@ -872,26 +872,81 @@ export class CreditNotesService {
   ) {
     const { type, items: itemsDto } = createCreditNoteDto;
 
-    // Para tipo FULL, usar todos los items de la factura
+    // Para tipo FULL, usar todos los items de la factura QUE NO HAN SIDO ACREDITADOS
     if (type === CreditNoteType.FULL) {
-      const items = invoice.items.map((invoiceItem) => ({
-        invoiceItemId: invoiceItem.id,
-        productId: invoiceItem.productId,
-        description: invoiceItem.description,
-        quantity: invoiceItem.quantity,
-        unitPrice: invoiceItem.unitPrice,
-        subtotal: invoiceItem.subtotal,
-        unit: invoiceItem.unit,
-        unitCost: invoiceItem.unitCost,
-        discountPercentage: invoiceItem.discountPercentage,
-        discountAmount: invoiceItem.discountAmount,
-      }));
+      // 1. Buscar todas las notas de crédito confirmadas previas para esta factura
+      const previousCreditNotes = await manager.find(CreditNote, {
+        where: {
+          invoiceId: invoice.id,
+          status: CreditNoteStatus.CONFIRMED
+        },
+        relations: ['items'],
+      });
+
+      // 2. Obtener los IDs de los invoice items que YA fueron acreditados
+      const creditedInvoiceItemIds = new Set<string>();
+      for (const creditNote of previousCreditNotes) {
+        for (const item of creditNote.items) {
+          if (item.invoiceItemId) {
+            creditedInvoiceItemIds.add(item.invoiceItemId);
+          }
+        }
+      }
+
+      console.log(`🔍 Items ya acreditados: ${Array.from(creditedInvoiceItemIds).join(', ')}`);
+
+      // 3. Filtrar solo los items que NO han sido acreditados
+      const availableItems = invoice.items.filter(
+        invoiceItem => !creditedInvoiceItemIds.has(invoiceItem.id)
+      );
+
+      if (availableItems.length === 0) {
+        throw new BadRequestException(
+          'No hay items disponibles para acreditar. Todos los items de esta factura ya fueron acreditados.'
+        );
+      }
+
+      // 4. Calcular el total solo con los items disponibles
+      const taxRate = invoice.taxPercentage / 100;
+      let total = 0;
+      let subtotal = 0;
+
+      const items = availableItems.map((invoiceItem) => {
+        const itemTotal = invoiceItem.quantity * invoiceItem.unitPrice - (invoiceItem.discountAmount || 0);
+        total += itemTotal;
+
+        // Calcular subtotal sin IVA
+        const itemSubtotal = itemTotal / (1 + taxRate);
+        subtotal += itemSubtotal;
+
+        return {
+          invoiceItemId: invoiceItem.id,
+          productId: invoiceItem.productId,
+          description: invoiceItem.description,
+          quantity: invoiceItem.quantity,
+          unitPrice: invoiceItem.unitPrice,
+          subtotal: Number(itemSubtotal.toFixed(2)),
+          unit: invoiceItem.unit,
+          unitCost: invoiceItem.unitCost,
+          discountPercentage: invoiceItem.discountPercentage,
+          discountAmount: invoiceItem.discountAmount,
+        };
+      });
+
+      const taxAmount = total - subtotal;
+
+      console.log(`📊 Cálculo nota de crédito FULL (items restantes):
+      - Items disponibles: ${items.length} de ${invoice.items.length} totales
+      - Total con IVA incluido: $${total.toFixed(2)}
+      - Subtotal (sin IVA): $${subtotal.toFixed(2)}
+      - IVA incluido: $${taxAmount.toFixed(2)}
+      - Tasa IVA: ${invoice.taxPercentage}%`);
 
       return {
         items,
-        subtotal: invoice.subtotal,
-        taxAmount: invoice.taxAmount,
-        total: invoice.total,
+        subtotal: Number(subtotal.toFixed(2)),
+        taxAmount: Number(taxAmount.toFixed(2)),
+        total: Number(total.toFixed(2)),
       };
     }
 
@@ -964,26 +1019,50 @@ export class CreditNotesService {
     for (const item of creditNote.items) {
       if (item.productId) {
         try {
-          await this.inventoryService.registerSaleReturn(
-            item.productId,
-            item.quantity,
-            item.unitCost || 0,
-            creditNote.organizationId,
-            userId,
-            'credit_note',
-            creditNote.id,
-            {
-              creditNoteNumber: creditNote.number,
-              invoiceId: creditNote.invoiceId,
-              reason: creditNote.reason,
-              description: item.description,
-            },
-            mainWarehouseId,
-          );
+          // NUEVA LÓGICA: Restaurar al lote original si hay invoiceItemId
+          if (item.invoiceItemId) {
+            console.log(
+              `🔄 Restaurando a lotes originales para item ${item.id} (invoice_item_id: ${item.invoiceItemId})`,
+            );
+            await this.inventoryService.restoreToBatchesIntelligent(
+              item,
+              creditNote.organizationId,
+              userId,
+              'credit_note',
+              creditNote.id,
+              manager,
+              mainWarehouseId, // ✅ Pasar warehouse para fallback
+            );
+            console.log(
+              `✅ Inventario restaurado a lotes originales: ${item.quantity} ${item.unit || 'unidades'} de ${item.description}`,
+            );
+          } else {
+            // FALLBACK: Si no hay invoiceItemId (créditos antiguos), usar método legacy
+            console.log(
+              `⚠️ No hay invoice_item_id para item ${item.id}, usando método legacy`,
+            );
+            await this.inventoryService.registerSaleReturn(
+              item.productId,
+              item.quantity,
+              item.unitCost || 0,
+              creditNote.organizationId,
+              userId,
+              'credit_note',
+              creditNote.id,
+              {
+                creditNoteNumber: creditNote.number,
+                invoiceId: creditNote.invoiceId,
+                reason: creditNote.reason,
+                description: item.description,
+              },
+              mainWarehouseId,
+              manager,
+            );
 
-          console.log(
-            `✅ Inventario restaurado: ${item.quantity} ${item.unit || 'unidades'} de ${item.description}`,
-          );
+            console.log(
+              `✅ Inventario restaurado (legacy): ${item.quantity} ${item.unit || 'unidades'} de ${item.description}`,
+            );
+          }
         } catch (error) {
           console.error(
             `❌ Error restaurando inventario para item ${item.id}:`,

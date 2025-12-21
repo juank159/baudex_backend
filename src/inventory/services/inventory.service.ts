@@ -121,6 +121,7 @@ export class InventoryService {
         ),
         productId,
         organizationId,
+        warehouseId, // ✅ Incluir warehouseId
         purchaseDate: new Date(),
         // Columnas legacy (mantener sincronizadas)
         quantity: quantity,
@@ -218,6 +219,7 @@ export class InventoryService {
     referenceId?: string,
     metadata?: any,
     warehouseId?: string,
+    invoiceItemId?: string, // NUEVO: ID del item de factura para trazabilidad FIFO
     externalQueryRunner?: QueryRunner,
   ): Promise<{
     movement: InventoryMovement;
@@ -300,6 +302,7 @@ export class InventoryService {
             batchId: batchConsumption.batchId,
             movementId: savedMovement.id,
             organizationId,
+            invoiceItemId, // NUEVO: Vincular con item de factura para trazabilidad
             quantity: -batchConsumption.quantityConsumed, // Negativo para consumo
             unitCost: batchConsumption.unitCost,
             totalCost: batchConsumption.totalCost,
@@ -3505,6 +3508,243 @@ export class InventoryService {
       if (shouldManageTransaction) {
         await queryRunner.release();
       }
+    }
+  }
+
+  /**
+   * Restaura inventario al lote original del que fue consumido (FIFO inverso)
+   * Este método es crítico para notas de crédito - devuelve productos al mismo lote
+   *
+   * @param creditNoteItem - Item de la nota de crédito
+   * @param organizationId - ID de la organización
+   * @param userId - ID del usuario que ejecuta la operación
+   * @param referenceType - Tipo de referencia ('credit_note')
+   * @param referenceId - ID de la nota de crédito
+   * @param manager - EntityManager de TypeORM (para transacciones)
+   * @returns Promise<void>
+   */
+  async restoreToBatchesIntelligent(
+    creditNoteItem: any, // CreditNoteItem type
+    organizationId: string,
+    userId: string,
+    referenceType: string,
+    referenceId: string,
+    manager: any, // EntityManager
+    warehouseId?: string, // ✅ NUEVO: Warehouse para fallback
+  ): Promise<void> {
+    try {
+      // PASO 1: Obtener el InvoiceItem original
+      const invoiceItem = await manager.findOne('InvoiceItem', {
+        where: { id: creditNoteItem.invoiceItemId },
+      });
+
+      if (!invoiceItem) {
+        throw new NotFoundException(
+          `InvoiceItem ${creditNoteItem.invoiceItemId} no encontrado`,
+        );
+      }
+
+      // PASO 2: Buscar los InventoryBatchMovement originales
+      // Estos registros contienen qué lotes fueron consumidos
+      const originalBatchMovements = await manager
+        .createQueryBuilder(InventoryBatchMovement, 'bm')
+        .innerJoin('bm.inventoryMovement', 'im')
+        .where('im.referenceType IN (:...refTypes)', { refTypes: ['invoice', 'invoice_paid'] })
+        .andWhere('im.referenceId = :refId', { refId: invoiceItem.invoiceId })
+        .andWhere('bm.invoiceItemId = :itemId', { itemId: invoiceItem.id })
+        .andWhere('bm.type = :type', { type: BatchMovementType.CONSUME })
+        .orderBy('bm.movementDate', 'DESC') // LIFO: último consumido, primero devuelto
+        .getMany();
+
+      if (originalBatchMovements.length === 0) {
+        console.warn(
+          `⚠️ No se encontraron movimientos de lote para invoice_item_id: ${invoiceItem.id}. Usando método legacy.`,
+        );
+        // Fallback al método legacy si no hay movimientos rastreables
+        await this.registerSaleReturn(
+          creditNoteItem.productId,
+          creditNoteItem.quantity,
+          creditNoteItem.unitCost || 0,
+          organizationId,
+          userId,
+          referenceType,
+          referenceId,
+          {
+            creditNoteItemId: creditNoteItem.id,
+            invoiceItemId: invoiceItem.id,
+            fallbackReason: 'no_batch_movements_found',
+          },
+          warehouseId, // ✅ CORREGIDO: Usar warehouseId pasado como parámetro
+          manager.queryRunner, // ✅ CORREGIDO: Pasar queryRunner en lugar de manager
+        );
+        return; // Salir del método después del fallback
+      }
+
+      // PASO 3: Validar que hay suficientes movimientos
+      const totalConsumed = originalBatchMovements.reduce(
+        (sum, bm) => sum + Math.abs(bm.quantity),
+        0,
+      );
+
+      if (totalConsumed < creditNoteItem.quantity) {
+        throw new BadRequestException(
+          `Cantidad a devolver (${creditNoteItem.quantity}) excede lo consumido originalmente (${totalConsumed})`,
+        );
+      }
+
+      // PASO 4: Crear movimiento de inventario general PRIMERO (para obtener su ID)
+      const movement = manager.create(InventoryMovement, {
+        movementNumber: await this.generateMovementNumber(
+          organizationId,
+          manager,
+        ),
+        type: MovementType.RETURN_IN,
+        status: MovementStatus.CONFIRMED,
+        productId: creditNoteItem.productId,
+        organizationId,
+        performedById: userId,
+        warehouseId: warehouseId, // REQUERIDO - campo NOT NULL
+        quantity: creditNoteItem.quantity,
+        unitCost: creditNoteItem.unitCost || 0,
+        totalCost:
+          creditNoteItem.quantity * (creditNoteItem.unitCost || 0),
+        stockAfter: 0, // Se actualizará después de restaurar lotes
+        stockValueAfter: 0, // Se actualizará después de restaurar lotes
+        referenceType,
+        referenceId,
+        metadata: {
+          creditNoteItemId: creditNoteItem.id,
+          invoiceItemId: invoiceItem.id,
+          restoredToOriginalBatches: true,
+        },
+        notes: `Devolución por nota de crédito - Restaurado a lotes originales`,
+      });
+
+      await manager.save(movement);
+
+      // Validar que el movement tiene ID antes de continuar
+      if (!movement.id) {
+        throw new Error(
+          'Error crítico: InventoryMovement no tiene ID después de guardar',
+        );
+      }
+
+      console.log(
+        `✅ InventoryMovement creado con ID: ${movement.id} (${movement.movementNumber})`,
+      );
+
+      // PASO 5: Restaurar en orden LIFO (inverso a como se consumió)
+      let remainingToRestore = creditNoteItem.quantity;
+      const batchesRestored: Array<{
+        batchId: string;
+        quantityRestored: number;
+      }> = [];
+
+      for (const batchMovement of originalBatchMovements) {
+        if (remainingToRestore <= 0) break;
+
+        const quantityConsumedFromBatch = Math.abs(batchMovement.quantity);
+        const quantityToRestore = Math.min(
+          remainingToRestore,
+          quantityConsumedFromBatch,
+        );
+
+        // Obtener el lote original
+        const batch = await manager.findOne(InventoryBatch, {
+          where: { id: batchMovement.batchId },
+        });
+
+        if (!batch) {
+          console.warn(
+            `⚠️ Lote ${batchMovement.batchId} no encontrado, omitiendo...`,
+          );
+          continue;
+        }
+
+        // RESTAURAR AL LOTE ORIGINAL - Convertir a number explícitamente
+        const currentQty = parseFloat(batch.currentQuantity.toString());
+        const currentValue = parseFloat(batch.remainingValue.toString());
+        const unitCostNum = parseFloat(batch.unitCost.toString());
+
+        batch.currentQuantity = currentQty + quantityToRestore;
+        batch.remainingValue = currentValue + (quantityToRestore * unitCostNum);
+
+        console.log(
+          `📊 Restaurando ${quantityToRestore} unidades al lote ${batch.batchNumber}: ${currentQty} → ${batch.currentQuantity}`,
+        );
+
+        // Si estaba DEPLETED, reactivar
+        if (
+          batch.status === BatchStatus.DEPLETED &&
+          batch.currentQuantity > 0
+        ) {
+          batch.status = BatchStatus.ACTIVE;
+          console.log(
+            `✅ Lote ${batch.batchNumber} reactivado (DEPLETED → ACTIVE)`,
+          );
+        }
+
+        await manager.save(batch);
+
+        // Crear movimiento de devolución al lote CON movementId correcto
+        const returnMovement = manager.create(InventoryBatchMovement, {
+          type: BatchMovementType.INCOMING,
+          batchId: batch.id,
+          movementId: movement.id, // ← AHORA SÍ TIENE ID
+          quantity: quantityToRestore,
+          unitCost: batch.unitCost,
+          totalCost: quantityToRestore * batch.unitCost,
+          batchQuantityAfter: batch.currentQuantity,
+          batchValueAfter: batch.remainingValue,
+          organizationId,
+          invoiceItemId: invoiceItem.id, // Vincular al item original
+          notes: `Devolución por nota de crédito ${referenceId} - Restaurado a lote original`,
+        });
+
+        await manager.save(returnMovement);
+
+        batchesRestored.push({
+          batchId: batch.id,
+          quantityRestored: quantityToRestore,
+        });
+
+        remainingToRestore -= quantityToRestore;
+      }
+
+      // PASO 6: Actualizar stockAfter y stockValueAfter del movement con valores correctos
+      movement.stockAfter = await this.getCurrentStock(
+        creditNoteItem.productId,
+        organizationId,
+        manager,
+      );
+      movement.stockValueAfter = await this.calculateStockValue(
+        creditNoteItem.productId,
+        organizationId,
+        manager,
+      );
+      movement.metadata = {
+        ...movement.metadata,
+        batchesRestored,
+      };
+
+      await manager.save(movement);
+
+      // Actualizar stock del producto
+      await this.updateProductStock(
+        creditNoteItem.productId,
+        organizationId,
+        manager.queryRunner,
+      );
+
+      console.log(
+        `✅ Inventario restaurado inteligentemente: ${creditNoteItem.quantity} unidades devueltas a ${batchesRestored.length} lote(s) original(es)`,
+      );
+    } catch (error) {
+      console.error(
+        `❌ Error restaurando inventario a lotes originales:`,
+        error,
+      );
+      throw error;
     }
   }
 }
