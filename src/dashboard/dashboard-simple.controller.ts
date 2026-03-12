@@ -48,13 +48,13 @@ export class DashboardSimpleController {
 
       // Obtener datos reales de facturas CON FILTROS DE FECHA
       const invoicesQuery = `
-        SELECT 
+        SELECT
           COUNT(*) as total_invoices,
-          SUM(CAST(total AS DECIMAL)) as total_revenue,
+          COALESCE(SUM(CASE WHEN status IN ('paid', 'partially_paid') THEN CAST("paidAmount" AS DECIMAL) ELSE 0 END), 0) as total_revenue,
           COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_invoices,
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_invoices
-        FROM invoices 
-        WHERE organization_id = $1 
+        FROM invoices
+        WHERE organization_id = $1
         AND deleted_at IS NULL
         ${dateFilter}
       `;
@@ -209,7 +209,7 @@ export class DashboardSimpleController {
         const previousInvoicesQuery = `
           SELECT
             COUNT(*) as total_invoices,
-            COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total_revenue
+            COALESCE(SUM(CASE WHEN status IN ('paid', 'partially_paid') THEN CAST("paidAmount" AS DECIMAL) ELSE 0 END), 0) as total_revenue
           FROM invoices
           WHERE organization_id = $1
           AND deleted_at IS NULL

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, QueryRunner } from 'typeorm';
@@ -26,6 +27,8 @@ import { InventoryService } from './inventory.service';
 
 @Injectable()
 export class PurchaseOrdersService {
+  private readonly logger = new Logger(PurchaseOrdersService.name);
+
   constructor(
     @InjectRepository(PurchaseOrder)
     private purchaseOrderRepository: Repository<PurchaseOrder>,
@@ -50,8 +53,8 @@ export class PurchaseOrdersService {
     organizationId: string,
     userId: string,
   ): Promise<PurchaseOrder> {
-    console.log('DEBUG SERVICE - organizationId:', organizationId);
-    console.log('DEBUG SERVICE - userId:', userId);
+    this.logger.log('DEBUG SERVICE - organizationId:', organizationId);
+    this.logger.log('DEBUG SERVICE - userId:', userId);
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -97,16 +100,16 @@ export class PurchaseOrdersService {
       purchaseOrder.orderNumber = orderNumber;
 
       const savedOrder = await queryRunner.manager.save(purchaseOrder);
-      console.log('DEBUG: savedOrder.id:', savedOrder.id);
+      this.logger.log('DEBUG: savedOrder.id:', savedOrder.id);
 
       // Crear los items con debugging mejorado
-      console.log('🔧 DEBUG: Iniciando creación de items');
-      console.log(
+      this.logger.log('🔧 DEBUG: Iniciando creación de items');
+      this.logger.log(
         '🔧 DEBUG: Items en DTO:',
         itemsDto.length,
       );
-      console.log('🔧 DEBUG: savedOrder.id:', savedOrder.id);
-      console.log('🔧 DEBUG: organizationId:', organizationId);
+      this.logger.log('🔧 DEBUG: savedOrder.id:', savedOrder.id);
+      this.logger.log('🔧 DEBUG: organizationId:', organizationId);
 
       // Crear items usando SQL raw para garantizar que los valores se inserten correctamente
       const items: PurchaseOrderItem[] = [];
@@ -120,7 +123,7 @@ export class PurchaseOrdersService {
         const taxAmount = (subtotal * taxPercentage) / 100;
         const total = subtotal + taxAmount;
 
-        console.log(`🔧 DEBUG: Item ${index} - quantity: ${quantity}, unitCost: ${unitCost}, subtotal: ${subtotal}, total: ${total}`);
+        this.logger.log(`🔧 DEBUG: Item ${index} - quantity: ${quantity}, unitCost: ${unitCost}, subtotal: ${subtotal}, total: ${total}`);
 
         // Usar SQL raw para insertar el item
         const result = await queryRunner.query(
@@ -143,7 +146,7 @@ export class PurchaseOrdersService {
           ]
         );
 
-        console.log(`✅ Item ${index} insertado:`, result[0]?.id);
+        this.logger.log(`✅ Item ${index} insertado:`, result[0]?.id);
 
         // Cargar el item insertado
         const insertedItem = await queryRunner.manager.findOne(PurchaseOrderItem, {
@@ -154,8 +157,8 @@ export class PurchaseOrdersService {
         }
       }
 
-      console.log('🔧 DEBUG: Total items inserted:', items.length);
-      console.log('✅ DEBUG: Items saved successfully');
+      this.logger.log('🔧 DEBUG: Total items inserted:', items.length);
+      this.logger.log('✅ DEBUG: Items saved successfully');
 
       // Calcular totales directamente de los items creados (convertir a números)
       const itemsSubtotal = items.reduce(
@@ -185,9 +188,9 @@ export class PurchaseOrdersService {
       await queryRunner.commitTransaction();
 
       // Buscar la orden creada con todas las relaciones cargadas
-      console.log('🔍 DEBUG: Cargando orden creada con relaciones...');
+      this.logger.log('🔍 DEBUG: Cargando orden creada con relaciones...');
       const finalOrder = await this.findOne(savedOrder.id, organizationId);
-      console.log('🔍 DEBUG: Orden cargada:', {
+      this.logger.log('🔍 DEBUG: Orden cargada:', {
         id: finalOrder.id,
         orderNumber: finalOrder.orderNumber,
         supplierId: finalOrder.supplierId,
@@ -282,14 +285,14 @@ export class PurchaseOrdersService {
       throw new NotFoundException('Purchase order not found');
     }
 
-    console.log(
+    this.logger.log(
       `🔍 DEBUG purchaseOrder.items length: ${purchaseOrder.items.length}`,
     );
     purchaseOrder.items.forEach((item, index) => {
-      console.log(`🔍 DEBUG Item ${index}:`);
-      console.log(`   - id: ${item.id}`);
-      console.log(`   - productId: ${item.productId}`);
-      console.log(
+      this.logger.log(`🔍 DEBUG Item ${index}:`);
+      this.logger.log(`   - id: ${item.id}`);
+      this.logger.log(`   - productId: ${item.productId}`);
+      this.logger.log(
         `   - product: ${item.product ? JSON.stringify({ id: item.product.id, name: item.product.name }) : 'NULL'}`,
       );
     });
@@ -456,8 +459,13 @@ export class PurchaseOrdersService {
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOne(id, organizationId);
 
-    if (purchaseOrder.status !== PurchaseOrderStatus.PENDING) {
-      throw new BadRequestException('Only pending orders can be approved');
+    if (
+      purchaseOrder.status !== PurchaseOrderStatus.PENDING &&
+      purchaseOrder.status !== PurchaseOrderStatus.DRAFT
+    ) {
+      throw new BadRequestException(
+        'Only draft or pending orders can be approved',
+      );
     }
 
     await this.purchaseOrderRepository.update(
@@ -554,7 +562,7 @@ export class PurchaseOrdersService {
         if (warehouses.length === 1) {
           // Solo hay un almacén - auto-seleccionar
           targetWarehouseId = warehouses[0].id;
-          console.log(
+          this.logger.log(
             `🏪 AUTO-SELECCIÓN: Usando único almacén disponible: ${warehouses[0].name}`,
           );
         } else {
@@ -562,7 +570,7 @@ export class PurchaseOrdersService {
           const mainWarehouse = warehouses.find((w) => w.isMainWarehouse);
           if (mainWarehouse) {
             targetWarehouseId = mainWarehouse.id;
-            console.log(
+            this.logger.log(
               `🏪 AUTO-SELECCIÓN: Usando almacén principal: ${mainWarehouse.name}`,
             );
           } else {
@@ -584,7 +592,7 @@ export class PurchaseOrdersService {
         );
       }
 
-      console.log(
+      this.logger.log(
         `📦 Recibiendo mercancía en almacén: ${selectedWarehouse.name}`,
       );
 
@@ -602,14 +610,14 @@ export class PurchaseOrdersService {
         }
 
         // Debug del estado actual del item
-        console.log(`🚨 DEBUG VALIDATION - Item ${orderItem.id}:`);
-        console.log(
+        this.logger.log(`🚨 DEBUG VALIDATION - Item ${orderItem.id}:`);
+        this.logger.log(
           `   - orderItem.quantity: ${orderItem.quantity} (type: ${typeof orderItem.quantity})`,
         );
-        console.log(
+        this.logger.log(
           `   - orderItem.receivedQuantity: ${orderItem.receivedQuantity} (type: ${typeof orderItem.receivedQuantity})`,
         );
-        console.log(
+        this.logger.log(
           `   - receivedItem.receivedQuantity: ${receivedItem.receivedQuantity} (type: ${typeof receivedItem.receivedQuantity})`,
         );
 
@@ -623,9 +631,9 @@ export class PurchaseOrdersService {
         const maxAllowed =
           Number(orderItem.quantity) - Number(orderItem.receivedQuantity);
 
-        console.log(`   - totalNewlyProcessed: ${totalNewlyProcessed}`);
-        console.log(`   - totalProcessedSoFar: ${totalProcessedSoFar}`);
-        console.log(`   - maxAllowed: ${maxAllowed}`);
+        this.logger.log(`   - totalNewlyProcessed: ${totalNewlyProcessed}`);
+        this.logger.log(`   - totalProcessedSoFar: ${totalProcessedSoFar}`);
+        this.logger.log(`   - maxAllowed: ${maxAllowed}`);
 
         // Verificar que no se procese más de lo ordenado
         if (totalProcessedSoFar > Number(orderItem.quantity)) {
@@ -696,23 +704,23 @@ export class PurchaseOrdersService {
         // Actualizar cantidades del item
         // Solo actualizar receivedQuantity con la cantidad realmente recibida en buen estado
         const receivedQty = Number(receivedItem.receivedQuantity);
-        console.log(
+        this.logger.log(
           `📦 DEBUG - Item ${orderItem.id}: receivedQuantity from DTO: ${receivedItem.receivedQuantity} (type: ${typeof receivedItem.receivedQuantity})`,
         );
-        console.log(
+        this.logger.log(
           `📦 DEBUG - Item ${orderItem.id}: converted receivedQty: ${receivedQty} (type: ${typeof receivedQty})`,
         );
 
         // Registrar en el item la cantidad total procesada (para status update)
         const totalProcessed = receivedQty + currentDamaged + currentMissing;
-        console.log(
+        this.logger.log(
           `📦 DEBUG - Total processed: ${totalProcessed} (received: ${receivedQty}, damaged: ${currentDamaged}, missing: ${currentMissing})`,
         );
 
         const updateResult = orderItem.receive(receivedQty);
 
         // pendingQuantity ahora es un getter calculado automáticamente (remainingQuantity)
-        console.log(
+        this.logger.log(
           `📦 DEBUG - Current pendingQuantity (getter): ${orderItem.pendingQuantity}`,
         );
 
@@ -724,7 +732,7 @@ export class PurchaseOrdersService {
         );
         if (itemIndex >= 0) {
           purchaseOrder.items[itemIndex] = savedItem;
-          console.log(
+          this.logger.log(
             `✅ Updated item in purchase order: receivedQuantity = ${savedItem.receivedQuantity}`,
           );
         }
@@ -781,13 +789,13 @@ export class PurchaseOrdersService {
         reloadedOrder.actualDeliveryDate = new Date(receiveDto.receivedDate);
       }
 
-      console.log(`📦 Purchase Order Status Update - ID: ${reloadedOrder.id}`);
-      console.log(`   - Total Ordered: ${reloadedOrder.totalQuantityOrdered}`);
-      console.log(
+      this.logger.log(`📦 Purchase Order Status Update - ID: ${reloadedOrder.id}`);
+      this.logger.log(`   - Total Ordered: ${reloadedOrder.totalQuantityOrdered}`);
+      this.logger.log(
         `   - Total Received: ${reloadedOrder.totalQuantityReceived}`,
       );
-      console.log(`   - Is Fully Received: ${reloadedOrder.isFullyReceived}`);
-      console.log(`   - New Status: ${reloadedOrder.status}`);
+      this.logger.log(`   - Is Fully Received: ${reloadedOrder.isFullyReceived}`);
+      this.logger.log(`   - New Status: ${reloadedOrder.status}`);
 
       await queryRunner.manager.save(reloadedOrder);
 

@@ -4,6 +4,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { NotificationJobsService } from './jobs/notification-jobs.service';
 import { Notification } from './entities/notification.entity';
+import { DynamicNotificationState } from './entities/dynamic-notification-state.entity';
 
 // Importar entidades necesarias para los jobs
 import { Organization } from '../organizations/entities/organization.entity';
@@ -15,6 +16,7 @@ import { Invoice } from '../invoices/entities/invoice.entity';
   imports: [
     TypeOrmModule.forFeature([
       Notification,
+      DynamicNotificationState,
       Organization,
       Product,
       InventoryBatch,

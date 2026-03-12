@@ -227,6 +227,7 @@ import { Category, CategoryStatus } from './entities/category.entity';
 import { PaginatedResponseDto } from './../common/dto/pagination-response.dto';
 import { SlugService } from '../common/services/slug.service';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
+import { DataSource } from 'typeorm';
 
 @Injectable()
 export class CategoryService {
@@ -236,6 +237,7 @@ export class CategoryService {
     private readonly categoryRepository: CategoryRepository,
     private readonly slugService: SlugService,
     private readonly tenantAwareService: TenantAwareService,
+    private readonly dataSource: DataSource,
   ) {}
 
   // async create(createCategoryDto: CreateCategoryDto): Promise<Category> {
@@ -289,6 +291,12 @@ export class CategoryService {
   async create(createCategoryDto: CreateCategoryDto): Promise<Category> {
     this.logger.log(`Creating category with name: ${createCategoryDto.name}`);
 
+    // ✅ Obtener tenant ID al inicio del método
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new Error('No se pudo determinar el tenant actual');
+    }
+
     // Verificar si hay una categoría eliminada con el mismo slug
     const deletedCategory = await this.categoryRepository
       .createQueryBuilder('category')
@@ -304,11 +312,6 @@ export class CategoryService {
       );
 
       // Verificar que la categoría eliminada pertenece al mismo tenant
-      const tenantId = this.tenantAwareService.getTenantId();
-      if (!tenantId) {
-        throw new Error('No se pudo determinar el tenant actual');
-      }
-
       if (deletedCategory.organizationId !== tenantId) {
         // Si no pertenece al mismo tenant, continuar con creación normal
         this.logger.log(
@@ -341,6 +344,19 @@ export class CategoryService {
       );
     }
 
+    // ✅ VALIDACIÓN: Verificar si el nombre ya existe en la organización actual
+    const repository = this.dataSource.getRepository(Category);
+    const existingName = await this.tenantAwareService.findOneWithTenant(
+      repository,
+      { where: { name: createCategoryDto.name } },
+    );
+
+    if (existingName) {
+      throw new ConflictException(
+        `Ya existe una categoría con el nombre '${createCategoryDto.name}' en esta organización`,
+      );
+    }
+
     // Verificar si la categoría padre existe
     if (createCategoryDto.parentId) {
       const parentCategory = await this.categoryRepository.findOne({
@@ -369,12 +385,7 @@ export class CategoryService {
       createCategoryDto.sortOrder = maxOrder + 1;
     }
 
-    // Agregar organization_id del tenant actual
-    const tenantId = this.tenantAwareService.getTenantId();
-    if (!tenantId) {
-      throw new Error('No se pudo determinar el tenant actual');
-    }
-
+    // Agregar organization_id del tenant actual (ya obtenido al inicio)
     const category = this.categoryRepository.create({
       ...createCategoryDto,
       organizationId: tenantId,
@@ -448,6 +459,20 @@ export class CategoryService {
       );
       if (existingCategory) {
         throw new ConflictException('El slug ya está en uso');
+      }
+    }
+
+    // ✅ VALIDACIÓN: Verificar nombre único si se está actualizando
+    if (updateCategoryDto.name && updateCategoryDto.name !== category.name) {
+      const repository = this.dataSource.getRepository(Category);
+      const existingName = await this.tenantAwareService.findOneWithTenant(
+        repository,
+        { where: { name: updateCategoryDto.name } },
+      );
+      if (existingName && existingName.id !== category.id) {
+        throw new ConflictException(
+          `Ya existe una categoría con el nombre '${updateCategoryDto.name}' en esta organización`,
+        );
       }
     }
 

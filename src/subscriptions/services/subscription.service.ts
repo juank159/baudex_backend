@@ -3,9 +3,10 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThan } from 'typeorm';
+import { Repository, MoreThan, LessThan, IsNull, Between } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import {
   Subscription,
@@ -14,6 +15,27 @@ import {
   SubscriptionType,
 } from '../entities/subscription.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
+import {
+  PlanLimits,
+  PlanFeatures,
+  getPlanLimits,
+  isUnlimited,
+  getUsagePercentage,
+  isNearLimit,
+  hasReachedLimit,
+  PLAN_DISPLAY_NAMES,
+  GRACE_PERIOD_DAYS,
+} from '../config/plan-limits.config';
+import {
+  SubscriptionCurrentDto,
+  SubscriptionUsageDto,
+  SubscriptionLimitsResponseDto,
+  ResourceUsageDto,
+  UsageWarningDto,
+  PlanLimitsDto,
+  PlanFeaturesDto,
+  ActionValidationDto,
+} from '../dto/subscription-response.dto';
 
 @Injectable()
 export class SubscriptionService {
@@ -549,5 +571,386 @@ export class SubscriptionService {
       );
       // No lanzar error para no fallar la creación de suscripción
     }
+  }
+
+  // ==================== MÉTODOS PARA ENDPOINTS DE LÍMITES Y USO ====================
+
+  /**
+   * Obtener suscripción actual con todos los detalles para el frontend
+   */
+  async getCurrentSubscriptionDto(
+    organizationId: string,
+  ): Promise<SubscriptionCurrentDto> {
+    const subscription = await this.getActiveSubscription(organizationId);
+
+    if (!subscription) {
+      // Si no hay suscripción activa, crear trial automáticamente
+      const newTrial = await this.createTrialSubscription(organizationId);
+      return this.mapToCurrentDto(newTrial);
+    }
+
+    return this.mapToCurrentDto(subscription);
+  }
+
+  /**
+   * Obtener límites del plan actual de la organización
+   */
+  async getSubscriptionLimits(
+    organizationId: string,
+  ): Promise<SubscriptionLimitsResponseDto> {
+    const subscription = await this.getActiveSubscription(organizationId);
+    const plan = subscription?.plan || SubscriptionPlan.TRIAL;
+    const limits = getPlanLimits(plan);
+
+    return {
+      plan,
+      planDisplayName: PLAN_DISPLAY_NAMES[plan],
+      limits: this.mapToPlanLimitsDto(limits),
+      isUnlimited: this.isPlanUnlimited(plan),
+      allowedActions: this.getAllowedActions(limits),
+      restrictedActions: this.getRestrictedActions(limits),
+    };
+  }
+
+  /**
+   * Obtener uso actual de recursos de la organización
+   */
+  async getSubscriptionUsage(
+    organizationId: string,
+    usageCounts: {
+      products: number;
+      customers: number;
+      users: number;
+      invoicesThisMonth: number;
+      expensesThisMonth: number;
+      storageMB: number;
+    },
+  ): Promise<SubscriptionUsageDto> {
+    const subscription = await this.getActiveSubscription(organizationId);
+    const plan = subscription?.plan || SubscriptionPlan.TRIAL;
+    const limits = getPlanLimits(plan);
+    const warnings: UsageWarningDto[] = [];
+
+    // Helper para crear ResourceUsageDto
+    const createResourceUsage = (
+      current: number,
+      limit: number,
+      resourceName: string,
+    ): ResourceUsageDto => {
+      const unlimited = isUnlimited(limit);
+      const percentage = getUsagePercentage(current, limit);
+      const nearLimit = isNearLimit(current, limit);
+      const reachedLimit = hasReachedLimit(current, limit);
+
+      // Generar advertencias
+      if (reachedLimit && !unlimited) {
+        warnings.push({
+          resource: resourceName,
+          type: 'at_limit',
+          message: `Has alcanzado el límite de ${resourceName}`,
+          percentage: 100,
+        });
+      } else if (nearLimit && !unlimited) {
+        warnings.push({
+          resource: resourceName,
+          type: 'near_limit',
+          message: `Estás cerca del límite de ${resourceName} (${percentage}%)`,
+          percentage,
+        });
+      }
+
+      return {
+        current,
+        limit,
+        isUnlimited: unlimited,
+        percentage,
+        isNearLimit: nearLimit,
+        hasReachedLimit: reachedLimit,
+      };
+    };
+
+    return {
+      plan,
+      planDisplayName: PLAN_DISPLAY_NAMES[plan],
+      hasUnlimitedResources: this.isPlanUnlimited(plan),
+      products: createResourceUsage(
+        usageCounts.products,
+        limits.maxProducts,
+        'productos',
+      ),
+      customers: createResourceUsage(
+        usageCounts.customers,
+        limits.maxCustomers,
+        'clientes',
+      ),
+      users: createResourceUsage(usageCounts.users, limits.maxUsers, 'usuarios'),
+      invoicesThisMonth: createResourceUsage(
+        usageCounts.invoicesThisMonth,
+        limits.maxInvoicesPerMonth,
+        'facturas mensuales',
+      ),
+      expensesThisMonth: createResourceUsage(
+        usageCounts.expensesThisMonth,
+        limits.maxExpensesPerMonth,
+        'gastos mensuales',
+      ),
+      storage: createResourceUsage(
+        usageCounts.storageMB,
+        limits.maxStorageMB,
+        'almacenamiento',
+      ),
+      warnings,
+      daysUntilExpiration: subscription?.daysUntilExpiration ?? 0,
+      nextRenewalDate: subscription?.nextBillingDate,
+    };
+  }
+
+  /**
+   * Validar si una acción puede ser realizada según el plan
+   */
+  async validateActionForPlan(
+    organizationId: string,
+    action: string,
+    currentUsage?: number,
+  ): Promise<ActionValidationDto> {
+    const subscription = await this.getActiveSubscription(organizationId);
+
+    if (!subscription) {
+      return {
+        allowed: false,
+        reason: 'No hay suscripción activa',
+        requiredPlan: SubscriptionPlan.TRIAL,
+      };
+    }
+
+    if (!subscription.isActive) {
+      return {
+        allowed: false,
+        reason: 'La suscripción ha expirado',
+        requiredPlan: subscription.plan,
+      };
+    }
+
+    const limits = getPlanLimits(subscription.plan);
+    const features = limits.features;
+
+    // Mapeo de acciones a características
+    const actionFeatureMap: Record<string, keyof PlanFeatures> = {
+      export_reports: 'canExportReports',
+      export_pdf: 'canExportPdf',
+      export_excel: 'canExportExcel',
+      thermal_printer: 'canUseThermalPrinter',
+      advanced_reports: 'canAccessAdvancedReports',
+      multiple_warehouses: 'canUseMultipleWarehouses',
+      api_integrations: 'canUseApiIntegrations',
+      bulk_operations: 'canUseBulkOperations',
+      custom_branding: 'canUseCustomBranding',
+      audit_logs: 'canAccessAuditLogs',
+      advanced_inventory: 'canUseAdvancedInventory',
+      credit_notes: 'canUseCreditNotes',
+      customer_credits: 'canUseCustomerCredits',
+      purchase_orders: 'canUsePurchaseOrders',
+      multiple_currencies: 'canUseMultipleCurrencies',
+      advanced_pricing: 'canUseAdvancedPricing',
+      schedule_reports: 'canScheduleReports',
+      email_notifications: 'canUseEmailNotifications',
+    };
+
+    // Mapeo de acciones a límites
+    const actionLimitMap: Record<string, keyof PlanLimits> = {
+      create_product: 'maxProducts',
+      create_customer: 'maxCustomers',
+      create_invoice: 'maxInvoicesPerMonth',
+      create_user: 'maxUsers',
+      create_expense: 'maxExpensesPerMonth',
+      upload_file: 'maxStorageMB',
+    };
+
+    // Verificar característica
+    if (actionFeatureMap[action]) {
+      const featureKey = actionFeatureMap[action];
+      const isAllowed = features[featureKey];
+
+      if (!isAllowed) {
+        return {
+          allowed: false,
+          reason: `Esta función no está disponible en tu plan ${PLAN_DISPLAY_NAMES[subscription.plan]}`,
+          requiredPlan: this.getMinimumPlanForFeature(featureKey),
+        };
+      }
+    }
+
+    // Verificar límite
+    if (actionLimitMap[action] && currentUsage !== undefined) {
+      const limitKey = actionLimitMap[action];
+      const limit = limits[limitKey] as number;
+
+      if (!isUnlimited(limit) && currentUsage >= limit) {
+        return {
+          allowed: false,
+          reason: `Has alcanzado el límite de ${limit} para tu plan`,
+          requiredPlan: this.getNextPlan(subscription.plan),
+          currentLimit: limit,
+          currentUsage,
+        };
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  // ==================== MÉTODOS AUXILIARES PARA DTOs ====================
+
+  private mapToCurrentDto(subscription: Subscription): SubscriptionCurrentDto {
+    const limits = getPlanLimits(subscription.plan);
+
+    return {
+      id: subscription.id,
+      organizationId: subscription.organizationId,
+      plan: subscription.plan,
+      planDisplayName: PLAN_DISPLAY_NAMES[subscription.plan],
+      status: subscription.status,
+      type: subscription.type,
+      startDate: subscription.startDate,
+      endDate: subscription.endDate,
+      isActive: subscription.isActive,
+      isExpired: subscription.isExpired,
+      isTrial: subscription.isTrial,
+      daysUntilExpiration: subscription.daysUntilExpiration,
+      subscriptionProgress: subscription.subscriptionProgress,
+      remainingDays: subscription.remainingDays,
+      maxUsers: subscription.maxUsers,
+      autoRenew: subscription.autoRenew,
+      price: subscription.price,
+      currency: subscription.currency,
+      paymentMethod: subscription.paymentMethod,
+      nextBillingDate: subscription.nextBillingDate,
+      trialEndsAt: subscription.trialEndsAt,
+      billingCycle: subscription.billingCycle,
+      limits: this.mapToPlanLimitsDto(limits),
+    };
+  }
+
+  private mapToPlanLimitsDto(limits: PlanLimits): PlanLimitsDto {
+    return {
+      maxProducts: limits.maxProducts,
+      maxCustomers: limits.maxCustomers,
+      maxInvoicesPerMonth: limits.maxInvoicesPerMonth,
+      maxUsers: limits.maxUsers,
+      maxStorageMB: limits.maxStorageMB,
+      maxExpensesPerMonth: limits.maxExpensesPerMonth,
+      maxCategoriesPerLevel: limits.maxCategoriesPerLevel,
+      features: {
+        canExportReports: limits.features.canExportReports,
+        canExportPdf: limits.features.canExportPdf,
+        canExportExcel: limits.features.canExportExcel,
+        canUseThermalPrinter: limits.features.canUseThermalPrinter,
+        canAccessAdvancedReports: limits.features.canAccessAdvancedReports,
+        canUseMultipleWarehouses: limits.features.canUseMultipleWarehouses,
+        canUseApiIntegrations: limits.features.canUseApiIntegrations,
+        canUseBulkOperations: limits.features.canUseBulkOperations,
+        canUseCustomBranding: limits.features.canUseCustomBranding,
+        canAccessAuditLogs: limits.features.canAccessAuditLogs,
+        canUseAdvancedInventory: limits.features.canUseAdvancedInventory,
+        canUseCreditNotes: limits.features.canUseCreditNotes,
+        canUseCustomerCredits: limits.features.canUseCustomerCredits,
+        canUsePurchaseOrders: limits.features.canUsePurchaseOrders,
+        canUseMultipleCurrencies: limits.features.canUseMultipleCurrencies,
+        canUseAdvancedPricing: limits.features.canUseAdvancedPricing,
+        canScheduleReports: limits.features.canScheduleReports,
+        canUseEmailNotifications: limits.features.canUseEmailNotifications,
+        prioritySupport: limits.features.prioritySupport,
+      },
+    };
+  }
+
+  private isPlanUnlimited(plan: SubscriptionPlan): boolean {
+    return plan === SubscriptionPlan.ENTERPRISE;
+  }
+
+  private getAllowedActions(limits: PlanLimits): string[] {
+    const actions: string[] = [];
+    const features = limits.features;
+
+    if (features.canExportReports) actions.push('export_reports');
+    if (features.canExportPdf) actions.push('export_pdf');
+    if (features.canExportExcel) actions.push('export_excel');
+    if (features.canUseThermalPrinter) actions.push('thermal_printer');
+    if (features.canAccessAdvancedReports) actions.push('advanced_reports');
+    if (features.canUseMultipleWarehouses) actions.push('multiple_warehouses');
+    if (features.canUseApiIntegrations) actions.push('api_integrations');
+    if (features.canUseBulkOperations) actions.push('bulk_operations');
+    if (features.canUseCustomBranding) actions.push('custom_branding');
+    if (features.canAccessAuditLogs) actions.push('audit_logs');
+    if (features.canUseAdvancedInventory) actions.push('advanced_inventory');
+    if (features.canUseCreditNotes) actions.push('credit_notes');
+    if (features.canUseCustomerCredits) actions.push('customer_credits');
+    if (features.canUsePurchaseOrders) actions.push('purchase_orders');
+    if (features.canUseMultipleCurrencies) actions.push('multiple_currencies');
+    if (features.canUseAdvancedPricing) actions.push('advanced_pricing');
+    if (features.canScheduleReports) actions.push('schedule_reports');
+    if (features.canUseEmailNotifications) actions.push('email_notifications');
+
+    return actions;
+  }
+
+  private getRestrictedActions(limits: PlanLimits): string[] {
+    const allActions = [
+      'export_reports',
+      'export_pdf',
+      'export_excel',
+      'thermal_printer',
+      'advanced_reports',
+      'multiple_warehouses',
+      'api_integrations',
+      'bulk_operations',
+      'custom_branding',
+      'audit_logs',
+      'advanced_inventory',
+      'credit_notes',
+      'customer_credits',
+      'purchase_orders',
+      'multiple_currencies',
+      'advanced_pricing',
+      'schedule_reports',
+      'email_notifications',
+    ];
+
+    const allowedActions = this.getAllowedActions(limits);
+    return allActions.filter((action) => !allowedActions.includes(action));
+  }
+
+  private getMinimumPlanForFeature(feature: keyof PlanFeatures): SubscriptionPlan {
+    const planOrder = [
+      SubscriptionPlan.TRIAL,
+      SubscriptionPlan.BASIC,
+      SubscriptionPlan.PREMIUM,
+      SubscriptionPlan.ENTERPRISE,
+    ];
+
+    for (const plan of planOrder) {
+      const limits = getPlanLimits(plan);
+      if (limits.features[feature]) {
+        return plan;
+      }
+    }
+
+    return SubscriptionPlan.ENTERPRISE;
+  }
+
+  private getNextPlan(currentPlan: SubscriptionPlan): SubscriptionPlan {
+    const planOrder = [
+      SubscriptionPlan.TRIAL,
+      SubscriptionPlan.BASIC,
+      SubscriptionPlan.PREMIUM,
+      SubscriptionPlan.ENTERPRISE,
+    ];
+
+    const currentIndex = planOrder.indexOf(currentPlan);
+    if (currentIndex < planOrder.length - 1) {
+      return planOrder[currentIndex + 1];
+    }
+
+    return SubscriptionPlan.ENTERPRISE;
   }
 }

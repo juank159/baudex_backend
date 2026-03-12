@@ -42,6 +42,7 @@ import { CreditPayment } from '../customer-credits/entities/credit-payment.entit
 import { CreditTransaction, CreditTransactionType } from '../customer-credits/entities/credit-transaction.entity';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
 import { ClientBalanceService } from '../customer-credits/client-balance.service';
+import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
 // Prefijos para identificar pagos sincronizados y evitar loops
 const SYNC_FROM_CREDIT_PREFIX = 'SYNC-CRD-';
@@ -73,6 +74,7 @@ export class InvoicesService {
     private readonly bankAccountsService: BankAccountsService, // 🏦 Servicio de cuentas bancarias
     @Inject(forwardRef(() => ClientBalanceService))
     private readonly clientBalanceService: ClientBalanceService, // 💰 Servicio de saldo a favor
+    private readonly subscriptionService: SubscriptionService, // 📋 Servicio de suscripciones
   ) {}
 
   async create(
@@ -86,6 +88,10 @@ export class InvoicesService {
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
+
+    // 🔒 VALIDACIÓN DE SUSCRIPCIÓN ACTIVA
+    // No permitir crear facturas si la suscripción está vencida
+    await this.validateActiveSubscription(tenantId);
 
     // Verificar que el cliente existe
     const customer = await this.customersService.findOne(
@@ -2403,6 +2409,47 @@ export class InvoicesService {
 
     // 4. Si no se puede determinar, retornar null (se manejará en la lógica superior)
     return null;
+  }
+
+  // ========== MÉTODOS DE VALIDACIÓN DE SUSCRIPCIÓN ==========
+
+  /**
+   * 🔒 VALIDACIÓN DE SUSCRIPCIÓN ACTIVA
+   * No permite crear facturas si la suscripción está vencida, cancelada o suspendida
+   */
+  private async validateActiveSubscription(organizationId: string): Promise<void> {
+    console.log(`🔒 Validando suscripción activa para organización: ${organizationId}`);
+
+    const canCreateInvoice = await this.subscriptionService.canPerformAction(
+      organizationId,
+      'create_invoice',
+    );
+
+    if (!canCreateInvoice) {
+      // Obtener información de la suscripción para un mensaje más detallado
+      const subscriptionInfo = await this.subscriptionService.getSubscriptionInfo(organizationId);
+
+      let errorMessage = '❌ No es posible crear facturas. ';
+
+      if (!subscriptionInfo || subscriptionInfo.isExpired) {
+        errorMessage += 'Tu suscripción ha expirado. ';
+        errorMessage += 'Por favor, renueva tu suscripción para continuar realizando ventas.';
+      } else if (subscriptionInfo.status === 'suspended') {
+        errorMessage += 'Tu suscripción está suspendida. ';
+        errorMessage += 'Por favor, contacta a soporte para reactivar tu cuenta.';
+      } else if (subscriptionInfo.status === 'cancelled') {
+        errorMessage += 'Tu suscripción ha sido cancelada. ';
+        errorMessage += 'Por favor, adquiere una nueva suscripción para continuar.';
+      } else {
+        errorMessage += 'Tu suscripción no está activa. ';
+        errorMessage += 'Por favor, verifica el estado de tu cuenta.';
+      }
+
+      console.log(`🚫 Suscripción no válida: ${errorMessage}`);
+      throw new BadRequestException(errorMessage);
+    }
+
+    console.log('✅ Suscripción activa - Permitido crear factura');
   }
 
   // ========== MÉTODOS DE VALIDACIÓN DE CRÉDITO PROFESIONALES ==========

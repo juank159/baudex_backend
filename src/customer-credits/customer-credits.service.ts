@@ -889,7 +889,8 @@ export class CustomerCreditsService {
   }
 
   /**
-   * Obtener estadísticas de créditos
+   * Obtener estadísticas de créditos con desglose por tipo (directo vs factura)
+   * Usa una sola query SQL aggregada para máximo rendimiento
    */
   async getStats(): Promise<{
     totalPending: number;
@@ -897,29 +898,61 @@ export class CustomerCreditsService {
     countPending: number;
     countOverdue: number;
     totalPaid: number;
+    directPending: number;
+    invoicePending: number;
+    directOverdue: number;
+    invoiceOverdue: number;
+    directPaid: number;
+    invoicePaid: number;
+    directCountPending: number;
+    invoiceCountPending: number;
+    directCountOverdue: number;
+    invoiceCountOverdue: number;
   }> {
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    const credits = await this.creditRepository.find({
-      where: { organizationId: tenantId, deletedAt: IsNull() },
-    });
-
-    const pending = credits.filter(
-      (c) => c.status === CreditStatus.PENDING || c.status === CreditStatus.PARTIALLY_PAID,
-    );
-    const overdue = credits.filter((c) => c.status === CreditStatus.OVERDUE);
+    const result = await this.creditRepository
+      .createQueryBuilder('c')
+      .select([
+        `COALESCE(SUM(CASE WHEN c.status IN ('pending','partially_paid') THEN c.balance_due ELSE 0 END), 0) AS "totalPending"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'overdue' THEN c.balance_due ELSE 0 END), 0) AS "totalOverdue"`,
+        `COUNT(CASE WHEN c.status IN ('pending','partially_paid') THEN 1 END) AS "countPending"`,
+        `COUNT(CASE WHEN c.status = 'overdue' THEN 1 END) AS "countOverdue"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'paid' THEN c.original_amount ELSE 0 END), 0) AS "totalPaid"`,
+        `COALESCE(SUM(CASE WHEN c.status IN ('pending','partially_paid') AND c.invoice_id IS NULL THEN c.balance_due ELSE 0 END), 0) AS "directPending"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'overdue' AND c.invoice_id IS NULL THEN c.balance_due ELSE 0 END), 0) AS "directOverdue"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'paid' AND c.invoice_id IS NULL THEN c.original_amount ELSE 0 END), 0) AS "directPaid"`,
+        `COUNT(CASE WHEN c.status IN ('pending','partially_paid') AND c.invoice_id IS NULL THEN 1 END) AS "directCountPending"`,
+        `COUNT(CASE WHEN c.status = 'overdue' AND c.invoice_id IS NULL THEN 1 END) AS "directCountOverdue"`,
+        `COALESCE(SUM(CASE WHEN c.status IN ('pending','partially_paid') AND c.invoice_id IS NOT NULL THEN c.balance_due ELSE 0 END), 0) AS "invoicePending"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'overdue' AND c.invoice_id IS NOT NULL THEN c.balance_due ELSE 0 END), 0) AS "invoiceOverdue"`,
+        `COALESCE(SUM(CASE WHEN c.status = 'paid' AND c.invoice_id IS NOT NULL THEN c.original_amount ELSE 0 END), 0) AS "invoicePaid"`,
+        `COUNT(CASE WHEN c.status IN ('pending','partially_paid') AND c.invoice_id IS NOT NULL THEN 1 END) AS "invoiceCountPending"`,
+        `COUNT(CASE WHEN c.status = 'overdue' AND c.invoice_id IS NOT NULL THEN 1 END) AS "invoiceCountOverdue"`,
+      ])
+      .where('c.organization_id = :tenantId', { tenantId })
+      .andWhere('c.deleted_at IS NULL')
+      .getRawOne();
 
     return {
-      totalPending: pending.reduce((sum, c) => sum + c.balanceDue, 0),
-      totalOverdue: overdue.reduce((sum, c) => sum + c.balanceDue, 0),
-      countPending: pending.length,
-      countOverdue: overdue.length,
-      totalPaid: credits
-        .filter((c) => c.status === CreditStatus.PAID)
-        .reduce((sum, c) => sum + c.originalAmount, 0),
+      totalPending: parseFloat(result.totalPending) || 0,
+      totalOverdue: parseFloat(result.totalOverdue) || 0,
+      countPending: parseInt(result.countPending) || 0,
+      countOverdue: parseInt(result.countOverdue) || 0,
+      totalPaid: parseFloat(result.totalPaid) || 0,
+      directPending: parseFloat(result.directPending) || 0,
+      invoicePending: parseFloat(result.invoicePending) || 0,
+      directOverdue: parseFloat(result.directOverdue) || 0,
+      invoiceOverdue: parseFloat(result.invoiceOverdue) || 0,
+      directPaid: parseFloat(result.directPaid) || 0,
+      invoicePaid: parseFloat(result.invoicePaid) || 0,
+      directCountPending: parseInt(result.directCountPending) || 0,
+      invoiceCountPending: parseInt(result.invoiceCountPending) || 0,
+      directCountOverdue: parseInt(result.directCountOverdue) || 0,
+      invoiceCountOverdue: parseInt(result.invoiceCountOverdue) || 0,
     };
   }
 

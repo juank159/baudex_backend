@@ -54,6 +54,32 @@ export class ProductService {
       throw new ConflictException('El SKU ya existe en esta organización');
     }
 
+    // ✅ VALIDACIÓN: Verificar si el nombre ya existe en la organización actual
+    const existingName = await this.tenantAwareService.findOneWithTenant(
+      repository,
+      { where: { name: createProductDto.name } },
+    );
+
+    if (existingName) {
+      throw new ConflictException(
+        `Ya existe un producto con el nombre '${createProductDto.name}' en esta organización`,
+      );
+    }
+
+    // ✅ VALIDACIÓN: Verificar si el código de barras ya existe (si se proporcionó)
+    if (createProductDto.barcode) {
+      const existingBarcode = await this.tenantAwareService.findOneWithTenant(
+        repository,
+        { where: { barcode: createProductDto.barcode } },
+      );
+
+      if (existingBarcode) {
+        throw new ConflictException(
+          `Ya existe un producto con el código de barras '${createProductDto.barcode}' en esta organización`,
+        );
+      }
+    }
+
     // Verificar que la categoría existe, está activa y pertenece a la organización actual
     const category = await this.categoryService.findOne(
       createProductDto.categoryId,
@@ -482,16 +508,48 @@ export class ProductService {
       }
     }
 
-    // Verificar código de barras único si se está actualizando
+    // ✅ VALIDACIÓN: Verificar nombre único si se está actualizando
+    if (updateProductDto.name && updateProductDto.name !== product.name) {
+      const repository = this.dataSource.getRepository(Product);
+      const existingName = await this.tenantAwareService.findOneWithTenant(
+        repository,
+        { where: { name: updateProductDto.name } },
+      );
+      if (existingName && existingName.id !== product.id) {
+        throw new ConflictException(
+          `Ya existe un producto con el nombre '${updateProductDto.name}' en esta organización`,
+        );
+      }
+    }
+
+    // ✅ VALIDACIÓN: Verificar SKU único si se está actualizando
+    if (updateProductDto.sku && updateProductDto.sku !== product.sku) {
+      const repository = this.dataSource.getRepository(Product);
+      const existingSku = await this.tenantAwareService.findOneWithTenant(
+        repository,
+        { where: { sku: updateProductDto.sku } },
+      );
+      if (existingSku && existingSku.id !== product.id) {
+        throw new ConflictException(
+          `Ya existe un producto con el SKU '${updateProductDto.sku}' en esta organización`,
+        );
+      }
+    }
+
+    // ✅ VALIDACIÓN: Verificar código de barras único si se está actualizando
     if (
       updateProductDto.barcode &&
       updateProductDto.barcode !== product.barcode
     ) {
-      const existingBarcode = await this.productRepository.findByBarcode(
-        updateProductDto.barcode,
+      const repository = this.dataSource.getRepository(Product);
+      const existingBarcode = await this.tenantAwareService.findOneWithTenant(
+        repository,
+        { where: { barcode: updateProductDto.barcode } },
       );
-      if (existingBarcode) {
-        throw new ConflictException('El código de barras ya está en uso');
+      if (existingBarcode && existingBarcode.id !== product.id) {
+        throw new ConflictException(
+          `Ya existe un producto con el código de barras '${updateProductDto.barcode}' en esta organización`,
+        );
       }
     }
 

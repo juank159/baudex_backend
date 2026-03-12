@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -110,7 +110,7 @@ async function bootstrap() {
           }
           return 'Error de validación';
         });
-        return new Error(messages.join('; '));
+        return new BadRequestException(messages.join('; '));
       },
     }),
   );

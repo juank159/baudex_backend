@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -72,6 +73,8 @@ export interface InventoryValuation {
 
 @Injectable()
 export class InventoryService {
+  private readonly logger = new Logger(InventoryService.name);
+
   constructor(
     @InjectRepository(InventoryMovement)
     private movementRepository: Repository<InventoryMovement>,
@@ -525,7 +528,7 @@ export class InventoryService {
             });
           } catch (notifError) {
             // No fallar la venta si falla la notificación
-            console.warn(
+            this.logger.warn(
               `⚠️ Error creando notificación FEFO: ${notifError.message}`,
             );
           }
@@ -543,6 +546,135 @@ export class InventoryService {
       result.totalQuantityConsumed > 0
         ? result.totalCost / result.totalQuantityConsumed
         : 0;
+
+    return result;
+  }
+
+  /**
+   * 🔴 NUEVO: Consumir stock usando método AVERAGE (Promedio Ponderado)
+   * Calcula el costo promedio de todos los lotes disponibles y lo aplica uniformemente
+   */
+  private async consumeStockAverage(
+    productId: string,
+    quantityToConsume: number,
+    organizationId: string,
+    queryRunner: QueryRunner,
+  ): Promise<FifoConsumptionResult> {
+    // PASO 1: Obtener todos los lotes activos con stock disponible
+    const activeBatches = await queryRunner.manager
+      .createQueryBuilder(InventoryBatch, 'batch')
+      .where('batch.productId = :productId', { productId })
+      .andWhere('batch.organizationId = :organizationId', { organizationId })
+      .andWhere('batch.status = :status', { status: BatchStatus.ACTIVE })
+      .andWhere('batch.currentQuantity > batch.reservedQuantity')
+      .andWhere('batch.currentQuantity > 0')
+      .orderBy('batch.purchaseDate', 'ASC') // Consumir en orden FIFO para trazabilidad
+      .addOrderBy('batch.createdAt', 'ASC')
+      .getMany();
+
+    if (activeBatches.length === 0) {
+      throw new BadRequestException(
+        `No hay lotes activos disponibles para el producto ${productId}`,
+      );
+    }
+
+    // PASO 2: Calcular el costo promedio ponderado de todos los lotes
+    let totalValue = 0;
+    let totalQuantityAvailable = 0;
+
+    for (const batch of activeBatches) {
+      const availableQuantity = batch.availableQuantity;
+      if (availableQuantity > 0) {
+        totalValue += availableQuantity * batch.unitCost;
+        totalQuantityAvailable += availableQuantity;
+      }
+    }
+
+    // Verificar que hay suficiente stock disponible
+    if (totalQuantityAvailable < quantityToConsume) {
+      throw new BadRequestException(
+        `Stock insuficiente. Disponible: ${totalQuantityAvailable}, Requerido: ${quantityToConsume}`,
+      );
+    }
+
+    // Calcular costo promedio ponderado
+    const averageCost =
+      totalQuantityAvailable > 0 ? totalValue / totalQuantityAvailable : 0;
+
+    this.logger.log(
+      `📊 AVERAGE: Costo promedio calculado: ${averageCost.toFixed(2)} (Total: ${totalValue.toFixed(2)} / Qty: ${totalQuantityAvailable})`,
+    );
+
+    // PASO 3: Consumir stock de los lotes usando FIFO para trazabilidad,
+    // pero aplicando el costo promedio calculado
+    const result: FifoConsumptionResult = {
+      batches: [],
+      totalQuantityConsumed: 0,
+      totalCost: 0,
+      averageCost: averageCost,
+    };
+
+    let remainingToConsume = quantityToConsume;
+
+    for (const batch of activeBatches) {
+      if (remainingToConsume <= 0) break;
+
+      const availableInBatch = batch.availableQuantity;
+      if (availableInBatch <= 0) continue;
+
+      const consumeFromBatch = Math.min(remainingToConsume, availableInBatch);
+
+      // Consumir físicamente del lote
+      const batchConsumption = batch.consume(consumeFromBatch);
+
+      // Actualizar el lote en la base de datos
+      await queryRunner.manager.save(batch);
+
+      // Registrar el consumo con el costo promedio (no el costo del lote individual)
+      const costWithAverage = consumeFromBatch * averageCost;
+
+      result.batches.push({
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        quantityConsumed: batchConsumption.consumed,
+        unitCost: averageCost, // ⭐ Usar costo promedio, no batch.unitCost
+        totalCost: costWithAverage,
+        purchaseDate: batch.purchaseDate,
+      });
+
+      result.totalQuantityConsumed += batchConsumption.consumed;
+      result.totalCost += costWithAverage;
+      remainingToConsume -= batchConsumption.consumed;
+
+      this.logger.log(
+        `   📦 Consumido de lote ${batch.batchNumber}: ${batchConsumption.consumed} unidades @ ${averageCost.toFixed(2)} c/u`,
+      );
+    }
+
+    // Verificación de consistencia
+    if (remainingToConsume > 0) {
+      throw new BadRequestException(
+        `No se pudo consumir la cantidad completa. Faltante: ${remainingToConsume}`,
+      );
+    }
+
+    // Verificar que el costo promedio se mantenga consistente
+    const calculatedAverage =
+      result.totalQuantityConsumed > 0
+        ? result.totalCost / result.totalQuantityConsumed
+        : 0;
+
+    // Pequeña diferencia puede ocurrir por redondeo
+    const difference = Math.abs(calculatedAverage - averageCost);
+    if (difference > 0.01) {
+      this.logger.warn(
+        `⚠️  Diferencia en costo promedio detectada: Calculado=${calculatedAverage.toFixed(2)}, Esperado=${averageCost.toFixed(2)}`,
+      );
+    }
+
+    this.logger.log(
+      `✅ AVERAGE completado: ${result.totalQuantityConsumed} unidades @ ${result.averageCost.toFixed(2)} c/u = ${result.totalCost.toFixed(2)} total`,
+    );
 
     return result;
   }
@@ -569,7 +701,7 @@ export class InventoryService {
     // Determinar método basado en configuración del producto
     const method = product.inventoryMethod || 'FIFO';
 
-    console.log(
+    this.logger.log(
       `📊 Consumiendo stock de producto "${product.name}" usando método: ${method}`,
     );
 
@@ -585,11 +717,7 @@ export class InventoryService {
 
       case 'AVERAGE':
         // AVERAGE: Promedio ponderado
-        // TODO: Implementar en versión futura si se requiere
-        console.warn(
-          '⚠️  Método AVERAGE no implementado aún, usando FIFO como fallback',
-        );
-        return await this.consumeStockFifo(
+        return await this.consumeStockAverage(
           productId,
           quantityToConsume,
           organizationId,
@@ -647,7 +775,7 @@ export class InventoryService {
     }
 
     if (remainingToCalculate > 0) {
-      console.warn(
+      this.logger.warn(
         `⚠️  Insuficiente stock para calcular FIFO completo. Faltante: ${remainingToCalculate} de producto ${productId}`,
       );
       // En lugar de fallar, retornar costo parcial
@@ -869,7 +997,7 @@ export class InventoryService {
           setTimeout(resolve, Math.random() * 10 + 5),
         );
       } catch (error) {
-        console.error(
+        this.logger.error(
           `Error generating movement number (attempt ${attempts + 1}):`,
           error,
         );
@@ -881,7 +1009,7 @@ export class InventoryService {
             .toString()
             .padStart(3, '0');
           const fallbackNumber = `${prefix}${timestamp}${randomSuffix}`;
-          console.warn(`Using fallback movement number: ${fallbackNumber}`);
+          this.logger.warn(`Using fallback movement number: ${fallbackNumber}`);
           return fallbackNumber;
         }
       }
@@ -893,7 +1021,7 @@ export class InventoryService {
       .toString()
       .padStart(3, '0');
     const finalFallback = `${prefix}${timestamp}${randomSuffix}`;
-    console.warn(`Using final fallback movement number: ${finalFallback}`);
+    this.logger.warn(`Using final fallback movement number: ${finalFallback}`);
     return finalFallback;
   }
 
@@ -962,7 +1090,7 @@ export class InventoryService {
           setTimeout(resolve, Math.random() * 10 + 5),
         );
       } catch (error) {
-        console.error(
+        this.logger.error(
           `Error generating batch number (attempt ${attempts + 1}):`,
           error,
         );
@@ -974,7 +1102,7 @@ export class InventoryService {
             .toString()
             .padStart(3, '0');
           const fallbackNumber = `${prefix}${timestamp}${randomSuffix}`;
-          console.warn(`Using fallback batch number: ${fallbackNumber}`);
+          this.logger.warn(`Using fallback batch number: ${fallbackNumber}`);
           return fallbackNumber;
         }
       }
@@ -986,7 +1114,7 @@ export class InventoryService {
       .toString()
       .padStart(3, '0');
     const finalFallback = `${prefix}${timestamp}${randomSuffix}`;
-    console.warn(`Using final fallback batch number: ${finalFallback}`);
+    this.logger.warn(`Using final fallback batch number: ${finalFallback}`);
     return finalFallback;
   }
 
@@ -1109,17 +1237,17 @@ export class InventoryService {
       const totalPages = Math.ceil(total / limit);
 
       // Debug: Check if products are loaded
-      console.log(
+      this.logger.log(
         '🔍 DEBUG: First movement:',
         JSON.stringify(movements[0], null, 2),
       );
-      console.log('🔍 DEBUG: Product info:', movements[0]?.product);
-      console.log('🔍 DEBUG: Total movements found:', movements.length);
-      console.log('🔍 DEBUG: About to transform movements...');
+      this.logger.log('🔍 DEBUG: Product info:', movements[0]?.product);
+      this.logger.log('🔍 DEBUG: Total movements found:', movements.length);
+      this.logger.log('🔍 DEBUG: About to transform movements...');
 
       // Transform movements to include productName and productSku in flat structure
       const transformedMovements = movements.map((movement) => {
-        console.log(
+        this.logger.log(
           `🔍 DEBUG: Processing movement ${movement.id}, product:`,
           movement.product,
         );
@@ -1133,7 +1261,7 @@ export class InventoryService {
         };
       });
 
-      console.log(
+      this.logger.log(
         '🔍 DEBUG: First transformed movement:',
         JSON.stringify(transformedMovements[0], null, 2),
       );
@@ -1412,6 +1540,37 @@ export class InventoryService {
   }
 
   /**
+   * Obtener todos los batches de la organización con paginación.
+   * Usado para sincronización offline del frontend.
+   */
+  async getAllBatches(
+    organizationId: string,
+    options: { status?: BatchStatus; page: number; limit: number },
+  ): Promise<InventoryBatch[]> {
+    try {
+      const queryBuilder = this.batchRepository
+        .createQueryBuilder('batch')
+        .leftJoinAndSelect('batch.product', 'product')
+        .where('batch.organizationId = :organizationId', { organizationId });
+
+      if (options.status) {
+        queryBuilder.andWhere('batch.status = :status', { status: options.status });
+      }
+
+      queryBuilder
+        .orderBy('batch.purchaseDate', 'ASC')
+        .skip((options.page - 1) * options.limit)
+        .take(options.limit);
+
+      return await queryBuilder.getMany();
+    } catch (error) {
+      throw new BadRequestException(
+        `Error retrieving all batches: ${error.message}`,
+      );
+    }
+  }
+
+  /**
    * Obtener resumen general del inventario de la organización
    */
   async getInventorySummary(
@@ -1627,7 +1786,7 @@ export class InventoryService {
     sortOrder: string = 'asc',
   ) {
     try {
-      console.log(`🏢 Filtrando inventario por almacén: ${warehouseId}`);
+      this.logger.log(`🏢 Filtrando inventario por almacén: ${warehouseId}`);
 
       // Si el almacén no existe o es inválido, retornar resultado vacío
       if (!warehouseId || warehouseId.trim() === '') {
@@ -1827,7 +1986,7 @@ export class InventoryService {
         countQueryBuilder.getRawOne(),
       ]);
 
-      console.log(
+      this.logger.log(
         '🔍 RAW BALANCES FROM QUERY:',
         JSON.stringify(balances, null, 2),
       );
@@ -1835,7 +1994,7 @@ export class InventoryService {
       const total = parseInt(countResult?.count || '0', 10);
       const totalPages = Math.ceil(total / limit);
 
-      console.log(
+      this.logger.log(
         `📊 Encontrados ${total} productos con lotes en almacén ${warehouseId}`,
       );
 
@@ -1860,7 +2019,7 @@ export class InventoryService {
         totalPages,
       };
     } catch (error) {
-      console.error(
+      this.logger.error(
         `❌ Error filtrando inventario por almacén ${warehouseId}:`,
         error,
       );
@@ -1876,7 +2035,7 @@ export class InventoryService {
    */
   private getInitialStockCost(product: any): number {
     if (!product.prices || product.prices.length === 0) {
-      console.log(
+      this.logger.log(
         `⚠️ Producto ${product.name} sin precios, usando costo por defecto: $1000`,
       );
       return 1000; // Valor por defecto
@@ -1887,7 +2046,7 @@ export class InventoryService {
       (p) => p.type === 'cost' && p.status === 'active',
     );
     if (costPrice) {
-      console.log(`💰 Usando precio de costo: $${costPrice.amount}`);
+      this.logger.log(`💰 Usando precio de costo: $${costPrice.amount}`);
       return parseFloat(costPrice.amount.toString());
     }
 
@@ -1898,7 +2057,7 @@ export class InventoryService {
     );
     if (salePrice) {
       const estimatedCost = parseFloat(salePrice.amount.toString()) * 0.7; // 70% del precio de venta
-      console.log(
+      this.logger.log(
         `🏷️ Usando 70% del precio de venta como costo estimado: $${estimatedCost}`,
       );
       return estimatedCost;
@@ -1908,13 +2067,13 @@ export class InventoryService {
     const firstPrice = product.prices.find((p) => p.status === 'active');
     if (firstPrice) {
       const estimatedCost = parseFloat(firstPrice.amount.toString()) * 0.7;
-      console.log(
+      this.logger.log(
         `📊 Usando 70% del primer precio como costo estimado: $${estimatedCost}`,
       );
       return estimatedCost;
     }
 
-    console.log(
+    this.logger.log(
       `⚠️ Producto ${product.name} con precios inválidos, usando costo por defecto: $1000`,
     );
     return 1000;
@@ -1936,7 +2095,7 @@ export class InventoryService {
     await queryRunner.startTransaction();
 
     try {
-      console.log(
+      this.logger.log(
         `🏗️ Creando lote inicial - Producto: ${productId}, Cantidad: ${quantity}, Costo: $${unitCost}`,
       );
 
@@ -1968,7 +2127,7 @@ export class InventoryService {
       });
 
       const savedBatch = await queryRunner.manager.save(batch);
-      console.log(`✅ Lote creado: ${savedBatch.batchNumber}`);
+      this.logger.log(`✅ Lote creado: ${savedBatch.batchNumber}`);
 
       // Crear movimiento de inventario
       const movement = queryRunner.manager.create(InventoryMovement, {
@@ -1996,7 +2155,7 @@ export class InventoryService {
       });
 
       const savedMovement = await queryRunner.manager.save(movement);
-      console.log(`✅ Movimiento creado: ${savedMovement.movementNumber}`);
+      this.logger.log(`✅ Movimiento creado: ${savedMovement.movementNumber}`);
 
       // Crear movimiento del lote
       const batchMovement = queryRunner.manager.create(InventoryBatchMovement, {
@@ -2014,12 +2173,12 @@ export class InventoryService {
       await queryRunner.manager.save(batchMovement);
 
       await queryRunner.commitTransaction();
-      console.log(`🎉 Stock inicial creado exitosamente`);
+      this.logger.log(`🎉 Stock inicial creado exitosamente`);
 
       return { movement: savedMovement, batch: savedBatch };
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      console.error(`❌ Error creando stock inicial:`, error);
+      this.logger.error(`❌ Error creando stock inicial:`, error);
       throw error;
     } finally {
       await queryRunner.release();
@@ -2039,7 +2198,7 @@ export class InventoryService {
     skipped: number;
     errors: Array<{ productId: string; productName: string; error: string }>;
   }> {
-    console.log(
+    this.logger.log(
       `🚀 INICIANDO MIGRACIÓN DE STOCK INICIAL - Organización: ${organizationId}`,
     );
 
@@ -2065,13 +2224,13 @@ export class InventoryService {
         order: { createdAt: 'ASC' },
       });
 
-      console.log(
+      this.logger.log(
         `📊 Encontrados ${productsWithStock.length} productos con stock > 0`,
       );
 
       for (const product of productsWithStock) {
         results.processed++;
-        console.log(
+        this.logger.log(
           `\n🔍 Procesando: ${product.name} (${product.sku}) - Stock: ${product.stock}`,
         );
 
@@ -2086,7 +2245,7 @@ export class InventoryService {
           });
 
           if (existingBatches > 0) {
-            console.log(
+            this.logger.log(
               `   ⏭️ Producto ya tiene ${existingBatches} lotes, omitiendo...`,
             );
             results.skipped++;
@@ -2107,12 +2266,12 @@ export class InventoryService {
             product.createdAt,
           );
 
-          console.log(
+          this.logger.log(
             `   ✅ Migrado exitosamente - ${quantity} unidades a $${unitCost} c/u`,
           );
           results.migrated++;
         } catch (error) {
-          console.error(
+          this.logger.error(
             `   ❌ Error migrando producto ${product.name}:`,
             error,
           );
@@ -2124,22 +2283,22 @@ export class InventoryService {
         }
       }
 
-      console.log(`\n🎉 MIGRACIÓN COMPLETADA:`);
-      console.log(`   📊 Procesados: ${results.processed}`);
-      console.log(`   ✅ Migrados: ${results.migrated}`);
-      console.log(`   ⏭️ Omitidos: ${results.skipped}`);
-      console.log(`   ❌ Errores: ${results.errors.length}`);
+      this.logger.log(`\n🎉 MIGRACIÓN COMPLETADA:`);
+      this.logger.log(`   📊 Procesados: ${results.processed}`);
+      this.logger.log(`   ✅ Migrados: ${results.migrated}`);
+      this.logger.log(`   ⏭️ Omitidos: ${results.skipped}`);
+      this.logger.log(`   ❌ Errores: ${results.errors.length}`);
 
       if (results.errors.length > 0) {
-        console.log(`\n📋 ERRORES DETALLADOS:`);
+        this.logger.log(`\n📋 ERRORES DETALLADOS:`);
         results.errors.forEach((error, index) => {
-          console.log(`   ${index + 1}. ${error.productName}: ${error.error}`);
+          this.logger.log(`   ${index + 1}. ${error.productName}: ${error.error}`);
         });
       }
 
       return results;
     } catch (error) {
-      console.error(`❌ Error general en migración:`, error);
+      this.logger.error(`❌ Error general en migración:`, error);
       throw error;
     }
   }
@@ -2429,7 +2588,7 @@ export class InventoryService {
     outOfStockProducts: number;
   }> {
     try {
-      console.log(`📊 Obteniendo estadísticas para almacén: ${warehouseId}`);
+      this.logger.log(`📊 Obteniendo estadísticas para almacén: ${warehouseId}`);
 
       // Consulta optimizada para obtener estadísticas resumidas
       const statsQuery = this.productRepository
@@ -2469,14 +2628,14 @@ export class InventoryService {
         outOfStockProducts: parseInt(result.outofstockproducts) || 0,
       };
 
-      console.log(
+      this.logger.log(
         `✅ Estadísticas calculadas para almacén ${warehouseId}:`,
         stats,
       );
 
       return stats;
     } catch (error) {
-      console.error(
+      this.logger.error(
         `❌ Error obteniendo estadísticas de almacén ${warehouseId}:`,
         error,
       );
@@ -2513,7 +2672,7 @@ export class InventoryService {
       totalBatchValue: number;
     };
   }> {
-    console.log(
+    this.logger.log(
       `🔍 Iniciando validación de integridad para organización: ${organizationId}`,
     );
 
@@ -2595,7 +2754,7 @@ export class InventoryService {
 
     const isValid = inconsistencies.length === 0;
 
-    console.log(
+    this.logger.log(
       `✅ Validación completada: ${consistentProducts}/${totalProducts} productos consistentes`,
     );
 
@@ -2635,7 +2794,7 @@ export class InventoryService {
       reason: string;
     }>;
   }> {
-    console.log(
+    this.logger.log(
       `🛠️ Iniciando corrección de inconsistencias - Dry run: ${options.dryRun}`,
     );
 
@@ -2728,7 +2887,7 @@ export class InventoryService {
         }
 
         errors.push(`Error corrigiendo ${productName}: ${error.message}`);
-        console.error(`❌ Error corrigiendo ${productName}:`, error);
+        this.logger.error(`❌ Error corrigiendo ${productName}:`, error);
 
         // Convertir a skip
         actions[actions.length - 1] = {
@@ -2745,7 +2904,7 @@ export class InventoryService {
 
     await queryRunner.release();
 
-    console.log(
+    this.logger.log(
       `🎉 Corrección completada: ${fixed} corregidos, ${skipped} omitidos`,
     );
 
@@ -2972,7 +3131,7 @@ export class InventoryService {
       );
 
       // PASO 1: Simular el consumo FIFO para validación (sin modificar lotes)
-      console.log(
+      this.logger.log(
         `🧪 SIMULANDO consumo FIFO para transferencia: ${quantity} unidades del producto ${productId}`,
       );
       const simulationResult = await this.simulateStockFifoConsumption(
@@ -2982,12 +3141,12 @@ export class InventoryService {
         fromWarehouseId,
         queryRunner,
       );
-      console.log(
+      this.logger.log(
         `✅ SIMULACIÓN exitosa: ${simulationResult.totalQuantityConsumed} unidades, costo promedio: ${simulationResult.averageCost}`,
       );
 
       // PASO 2: Crear y guardar el movimiento TRANSFER_OUT primero (triggers de validación pasarán)
-      console.log(
+      this.logger.log(
         `📝 Creando movimiento TRANSFER_OUT antes de modificar lotes`,
       );
 
@@ -3007,12 +3166,12 @@ export class InventoryService {
 
       // Guardar el movimiento ANTES de modificar los lotes
       await queryRunner.manager.save(transferOutMovement);
-      console.log(
+      this.logger.log(
         `✅ Movimiento TRANSFER_OUT guardado exitosamente: ${transferOutMovement.movementNumber}`,
       );
 
       // PASO 3: Ahora sí procesar FIFO real para el almacén origen (modificar lotes)
-      console.log(`🔄 Ejecutando consumo FIFO real para transferencia`);
+      this.logger.log(`🔄 Ejecutando consumo FIFO real para transferencia`);
       const fifoResult = await this.consumeStockFifoByWarehouse(
         productId,
         quantity,
@@ -3020,7 +3179,7 @@ export class InventoryService {
         fromWarehouseId,
         queryRunner,
       );
-      console.log(
+      this.logger.log(
         `✅ Consumo FIFO real completado: ${fifoResult.totalQuantityConsumed} unidades procesadas`,
       );
 
@@ -3124,7 +3283,7 @@ export class InventoryService {
 
       await queryRunner.commitTransaction();
 
-      console.log(
+      this.logger.log(
         `✅ Transfer completed: ${quantity} units from warehouse ${fromWarehouseId} to ${toWarehouseId}`,
       );
 
@@ -3134,7 +3293,7 @@ export class InventoryService {
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      console.error('❌ Transfer failed:', error);
+      this.logger.error('❌ Transfer failed:', error);
       throw error;
     } finally {
       await queryRunner.release();
@@ -3349,7 +3508,7 @@ export class InventoryService {
    * Monitoreo continuo de integridad
    */
   async scheduleIntegrityCheck(organizationId: string): Promise<void> {
-    console.log(
+    this.logger.log(
       `📊 Programando chequeo de integridad para organización: ${organizationId}`,
     );
 
@@ -3357,7 +3516,7 @@ export class InventoryService {
     const validation = await this.validateInventoryIntegrity(organizationId);
 
     if (!validation.isValid) {
-      console.warn(
+      this.logger.warn(
         `⚠️ Se detectaron ${validation.inconsistencies.length} inconsistencias en la organización ${organizationId}`,
       );
 
@@ -3366,7 +3525,7 @@ export class InventoryService {
         (i) => i.severity === 'critical',
       );
       if (criticalIssues.length > 0) {
-        console.error(
+        this.logger.error(
           `🚨 ${criticalIssues.length} inconsistencias críticas detectadas!`,
         );
         // Enviar alerta inmediata
@@ -3494,7 +3653,7 @@ export class InventoryService {
         await queryRunner.commitTransaction();
       }
 
-      console.log(
+      this.logger.log(
         `✅ Devolución registrada: ${quantity} unidades de producto ${productId}`,
       );
       return savedMovement;
@@ -3502,7 +3661,7 @@ export class InventoryService {
       if (shouldManageTransaction) {
         await queryRunner.rollbackTransaction();
       }
-      console.error(`❌ Error registrando devolución de venta:`, error);
+      this.logger.error(`❌ Error registrando devolución de venta:`, error);
       throw error;
     } finally {
       if (shouldManageTransaction) {
@@ -3557,7 +3716,7 @@ export class InventoryService {
         .getMany();
 
       if (originalBatchMovements.length === 0) {
-        console.warn(
+        this.logger.warn(
           `⚠️ No se encontraron movimientos de lote para invoice_item_id: ${invoiceItem.id}. Usando método legacy.`,
         );
         // Fallback al método legacy si no hay movimientos rastreables
@@ -3629,7 +3788,7 @@ export class InventoryService {
         );
       }
 
-      console.log(
+      this.logger.log(
         `✅ InventoryMovement creado con ID: ${movement.id} (${movement.movementNumber})`,
       );
 
@@ -3655,7 +3814,7 @@ export class InventoryService {
         });
 
         if (!batch) {
-          console.warn(
+          this.logger.warn(
             `⚠️ Lote ${batchMovement.batchId} no encontrado, omitiendo...`,
           );
           continue;
@@ -3669,7 +3828,7 @@ export class InventoryService {
         batch.currentQuantity = currentQty + quantityToRestore;
         batch.remainingValue = currentValue + (quantityToRestore * unitCostNum);
 
-        console.log(
+        this.logger.log(
           `📊 Restaurando ${quantityToRestore} unidades al lote ${batch.batchNumber}: ${currentQty} → ${batch.currentQuantity}`,
         );
 
@@ -3679,7 +3838,7 @@ export class InventoryService {
           batch.currentQuantity > 0
         ) {
           batch.status = BatchStatus.ACTIVE;
-          console.log(
+          this.logger.log(
             `✅ Lote ${batch.batchNumber} reactivado (DEPLETED → ACTIVE)`,
           );
         }
@@ -3736,11 +3895,11 @@ export class InventoryService {
         manager.queryRunner,
       );
 
-      console.log(
+      this.logger.log(
         `✅ Inventario restaurado inteligentemente: ${creditNoteItem.quantity} unidades devueltas a ${batchesRestored.length} lote(s) original(es)`,
       );
     } catch (error) {
-      console.error(
+      this.logger.error(
         `❌ Error restaurando inventario a lotes originales:`,
         error,
       );

@@ -42,6 +42,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CustomerCreditsModule } from '../customer-credits/customer-credits.module';
 import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
     forwardRef(() => InventoryModule), // Para evitar dependencia circular
     NotificationsModule, // 🔔 Módulo de notificaciones
     forwardRef(() => CustomerCreditsModule), // 💳 Módulo de créditos de clientes
+    SubscriptionsModule, // 📋 Módulo de suscripciones para validar ventas
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],

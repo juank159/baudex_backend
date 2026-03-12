@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository, Between, In } from 'typeorm';
 import { Sale, SaleStatus } from '../../sales/entities/sale.entity';
 import { SaleItem } from '../../sales/entities/sale-item.entity';
 import { Invoice, InvoiceStatus } from '../../invoices/entities/invoice.entity';
@@ -67,7 +67,7 @@ export class ProfitabilityService {
     // 📅 CONSTRUIR FILTROS DE FECHA DINÁMICAMENTE
     const whereConditions: any = {
       organizationId,
-      status: InvoiceStatus.PAID, // Solo facturas pagadas
+      status: In([InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID]),
       deletedAt: null,
     };
 
@@ -181,10 +181,37 @@ export class ProfitabilityService {
         : 0;
     }
 
+    // Consultar gastos aprobados/pagados del período para calcular netProfit real
+    let totalExpenses = 0;
+    try {
+      const expensesParams: any[] = [organizationId];
+      let expensesDateFilter = '';
+      if (startDate && endDate) {
+        expensesDateFilter = ' AND date >= $2 AND date <= $3';
+        expensesParams.push(startDate, endDate);
+      }
+      const expensesResult = await this.invoiceRepository.manager.query(`
+        SELECT COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total
+        FROM expenses
+        WHERE organization_id = $1
+        AND status IN ('approved', 'paid')
+        AND deleted_at IS NULL
+        ${expensesDateFilter}
+      `, expensesParams);
+      totalExpenses = parseFloat(expensesResult[0]?.total || '0');
+    } catch (e) {
+      console.log('⚠️ Error consultando gastos para netProfit:', e);
+    }
+
+    const netProfit = grossProfit - totalExpenses;
+    const netMarginPercentage = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
     console.log('💰 DATOS REALES FIFO CALCULADOS DESDE FACTURAS:');
     console.log(`   📦 Ingresos: $${totalRevenue.toLocaleString()}`);
     console.log(`   💸 Costos FIFO: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📈 Ganancia FIFO: $${grossProfit.toLocaleString()}`);
+    console.log(`   📈 Ganancia Bruta: $${grossProfit.toLocaleString()}`);
+    console.log(`   💰 Gastos: $${totalExpenses.toLocaleString()}`);
+    console.log(`   📊 Ganancia Neta: $${netProfit.toLocaleString()}`);
     console.log(`   📊 Margen FIFO: ${grossMarginPercentage.toFixed(2)}%`);
 
     return {
@@ -192,8 +219,8 @@ export class ProfitabilityService {
       totalCOGS,
       grossProfit,
       grossMarginPercentage,
-      netProfit: grossProfit, // Sin gastos operativos por ahora
-      netMarginPercentage: grossMarginPercentage,
+      netProfit,
+      netMarginPercentage,
       averageMarginPerSale: invoices.length > 0 ? grossMarginPercentage : 0,
       topProfitableProducts,
       lowProfitableProducts: [], // TODO: implementar productos menos rentables

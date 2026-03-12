@@ -8,6 +8,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -40,6 +41,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard)
 @Controller('inventory')
 export class InventoryController {
+  private readonly logger = new Logger(InventoryController.name);
+
   constructor(
     private readonly inventoryService: InventoryService,
     private readonly kardexReportService: KardexReportService,
@@ -103,7 +106,7 @@ export class InventoryController {
     @CurrentUser() user: any,
   ) {
     try {
-      console.log(
+      this.logger.log(
         `🚀 Iniciando migración de stock - Organización: ${organizationId}`,
       );
 
@@ -119,7 +122,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error en migración de stock:', error);
+      this.logger.error('❌ Error en migración de stock:', error);
       throw new BadRequestException(`Error en migración: ${error.message}`);
     }
   }
@@ -340,7 +343,7 @@ export class InventoryController {
         metadata,
       );
     } catch (error) {
-      console.error('❌ Error in relative adjustment:', error);
+      this.logger.error('❌ Error in relative adjustment:', error);
       throw new BadRequestException(`Adjustment failed: ${error.message}`);
     }
   }
@@ -411,29 +414,34 @@ export class InventoryController {
 
       return transformedResult;
     } catch (error) {
-      console.error('❌ Error creating transfer:', error);
+      this.logger.error('❌ Error creating transfer:', error);
       throw new BadRequestException(`Transfer failed: ${error.message}`);
     }
   }
 
   @Get('batches')
-  @ApiOperation({ summary: 'Obtener lotes de inventario' })
+  @ApiOperation({ summary: 'Obtener lotes de inventario (todos o por producto)' })
   @ApiResponse({ status: 200, description: 'Lista de lotes obtenida' })
   async getBatches(
     @Query() query: InventoryBatchQueryDto,
     @TenantId() organizationId: string,
   ) {
-    const { productId, status } = query;
+    const { productId, status, page, limit } = query;
 
-    if (!productId) {
-      throw new BadRequestException('Product ID is required to get batches');
+    if (productId) {
+      // Si se proporciona productId, devolver batches de ese producto
+      return await this.inventoryService.getProductBatches(
+        productId,
+        organizationId,
+        status,
+        true, // includeExpired
+      );
     }
 
-    return await this.inventoryService.getProductBatches(
-      productId,
+    // Sin productId: devolver TODOS los batches paginados (para sync offline)
+    return await this.inventoryService.getAllBatches(
       organizationId,
-      status,
-      true, // includeExpired
+      { status, page: page || 1, limit: limit || 100 },
     );
   }
 
@@ -497,7 +505,7 @@ export class InventoryController {
     }
 
     try {
-      console.log(
+      this.logger.log(
         `🔍 KARDEX REQUEST - Product: ${productId}, Start: ${startDate || 'desde inicio'}, End: ${endDate || 'hasta hoy'}`,
       );
 
@@ -510,7 +518,7 @@ export class InventoryController {
         includeBatchDetails === 'true',
       );
 
-      console.log(
+      this.logger.log(
         `✅ KARDEX RESPONSE - Initial: ${kardexReport.initialBalance.quantity}, Final: ${kardexReport.finalBalance.quantity}, Movements: ${kardexReport.movements.length}`,
       );
 
@@ -521,7 +529,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error generando kardex:', error);
+      this.logger.error('❌ Error generando kardex:', error);
       throw new BadRequestException(`Error generando kardex: ${error.message}`);
     }
   }
@@ -714,7 +722,7 @@ export class InventoryController {
   })
   async validateInventoryIntegrity(@TenantId() organizationId: string) {
     try {
-      console.log(
+      this.logger.log(
         `🔍 Validando integridad de inventario - Organización: ${organizationId}`,
       );
 
@@ -730,7 +738,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error en validación de integridad:', error);
+      this.logger.error('❌ Error en validación de integridad:', error);
       throw new BadRequestException(
         `Error validando integridad: ${error.message}`,
       );
@@ -754,7 +762,7 @@ export class InventoryController {
     @CurrentUser() user: any,
   ) {
     try {
-      console.log(
+      this.logger.log(
         `🛠️ Corrigiendo inconsistencias - Organización: ${organizationId}`,
       );
 
@@ -779,7 +787,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error corrigiendo inconsistencias:', error);
+      this.logger.error('❌ Error corrigiendo inconsistencias:', error);
       throw new BadRequestException(
         `Error corrigiendo inconsistencias: ${error.message}`,
       );
@@ -791,7 +799,7 @@ export class InventoryController {
   @ApiResponse({ status: 200, description: 'Monitoreo ejecutado exitosamente' })
   async monitorInventoryIntegrity(@TenantId() organizationId: string) {
     try {
-      console.log(
+      this.logger.log(
         `📊 Ejecutando monitoreo de integridad - Organización: ${organizationId}`,
       );
 
@@ -803,7 +811,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error en monitoreo:', error);
+      this.logger.error('❌ Error en monitoreo:', error);
       throw new BadRequestException(`Error en monitoreo: ${error.message}`);
     }
   }
@@ -813,7 +821,7 @@ export class InventoryController {
   @ApiResponse({ status: 200, description: 'Diagnóstico completado' })
   async getFullDiagnostics(@TenantId() organizationId: string) {
     try {
-      console.log(
+      this.logger.log(
         `🏥 Ejecutando diagnóstico completo - Organización: ${organizationId}`,
       );
 
@@ -878,7 +886,7 @@ export class InventoryController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('❌ Error en diagnóstico:', error);
+      this.logger.error('❌ Error en diagnóstico:', error);
       throw new BadRequestException(`Error en diagnóstico: ${error.message}`);
     }
   }

@@ -174,72 +174,37 @@ export class PurchaseOrder extends BaseEntity {
   }
 
   get totalQuantityOrdered(): number {
-    const total =
-      this.items?.reduce((sum, item) => {
-        const orderedQty = Number(item.quantity || 0);
-        console.log(
-          `   - Item ${item.id}: quantity = ${item.quantity} (type: ${typeof item.quantity}) -> converted: ${orderedQty}`,
-        );
-        return sum + orderedQty;
-      }, 0) || 0;
-    console.log(`📊 totalQuantityOrdered calculation: ${total}`);
-    return total;
+    return this.items?.reduce((sum, item) => {
+      return sum + Number(item.quantity || 0);
+    }, 0) || 0;
   }
 
   get totalQuantityReceived(): number {
-    const total =
-      this.items?.reduce((sum, item) => {
-        const receivedQty = Number(item.receivedQuantity || 0);
-        console.log(
-          `   - Item ${item.id}: receivedQuantity = ${item.receivedQuantity} (type: ${typeof item.receivedQuantity}) -> converted: ${receivedQty}`,
-        );
-        return sum + receivedQty;
-      }, 0) || 0;
-    console.log(`📊 totalQuantityReceived calculation: ${total}`);
-    return total;
+    return this.items?.reduce((sum, item) => {
+      return sum + Number(item.receivedQuantity || 0);
+    }, 0) || 0;
   }
 
   get totalQuantityProcessed(): number {
-    const total =
-      this.items?.reduce((sum, item) => {
-        const quantityNum = Number(item.quantity || 0);
-        const pendingNum = Number(item.pendingQuantity || 0);
-        const processedQty = quantityNum - pendingNum;
-        console.log(
-          `   - Item ${item.id}: processed = ${processedQty} (quantity: ${item.quantity} -> ${quantityNum}, pending: ${item.pendingQuantity} -> ${pendingNum})`,
-        );
-        return sum + processedQty;
-      }, 0) || 0;
-    console.log(`📊 totalQuantityProcessed calculation: ${total}`);
-    return total;
+    return this.items?.reduce((sum, item) => {
+      const quantityNum = Number(item.quantity || 0);
+      const pendingNum = Number(item.pendingQuantity || 0);
+      return sum + (quantityNum - pendingNum);
+    }, 0) || 0;
   }
 
   get isFullyReceived(): boolean {
     const ordered = this.totalQuantityOrdered;
     const processed = this.totalQuantityProcessed;
-    const received = this.totalQuantityReceived;
-
-    // Completamente recibido: todo fue procesado (recibido + dañado + faltante = cantidad ordenada)
-    const result = ordered > 0 && processed >= ordered;
-    console.log(
-      `🎯 isFullyReceived check: processed=${processed} >= ${ordered} = ${result}`,
-    );
-    console.log(
-      `   (Note: received=${received} is for tracking only, not for completion status)`,
-    );
-    return result;
+    // Completamente recibido: todo fue procesado
+    return ordered > 0 && processed >= ordered;
   }
 
   get isPartiallyReceived(): boolean {
     const ordered = this.totalQuantityOrdered;
     const processed = this.totalQuantityProcessed;
-
-    // Parcialmente recibido: algo fue procesado pero no todo está completo
-    const result = processed > 0 && processed < ordered;
-    console.log(
-      `🎯 isPartiallyReceived check: processed=${processed} > 0 AND processed < ${ordered} = ${result}`,
-    );
-    return result;
+    // Parcialmente recibido: algo fue procesado pero no todo
+    return processed > 0 && processed < ordered;
   }
 
   get receiptPercentage(): number {
@@ -286,22 +251,11 @@ export class PurchaseOrder extends BaseEntity {
 
   // Actualizar estado basado en recepciones
   updateStatus(): void {
-    console.log(`🚀 DEBUG updateStatus() - Order ${this.id}:`);
-    console.log(`   - Total Ordered: ${this.totalQuantityOrdered}`);
-    console.log(`   - Total Received: ${this.totalQuantityReceived}`);
-    console.log(`   - Is Fully Received: ${this.isFullyReceived}`);
-    console.log(`   - Is Partially Received: ${this.isPartiallyReceived}`);
-    console.log(`   - Current Status: ${this.status}`);
-
     if (this.isFullyReceived) {
       this.status = PurchaseOrderStatus.RECEIVED;
       this.actualDeliveryDate = new Date();
-      console.log(`   ✅ Status updated to: ${this.status}`);
     } else if (this.isPartiallyReceived) {
       this.status = PurchaseOrderStatus.PARTIALLY_RECEIVED;
-      console.log(`   ⏳ Status updated to: ${this.status}`);
-    } else {
-      console.log(`   ❌ No status change - keeping: ${this.status}`);
     }
   }
 }

@@ -1,4 +1,4 @@
-import { IsOptional, IsEnum, IsBoolean, IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsEnum, IsBoolean, IsInt, Min, Max, IsString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   NotificationType,
@@ -6,7 +6,7 @@ import {
 } from '../entities/notification.entity';
 
 /**
- * DTO para consultar notificaciones con filtros
+ * DTO para consultar notificaciones con filtros y paginación
  */
 export class QueryNotificationsDto {
   @IsOptional()
@@ -34,4 +34,22 @@ export class QueryNotificationsDto {
   @IsInt()
   @Min(0)
   offset?: number = 0;
+
+  // Paginación basada en página (alternativa a offset)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  // Ordenamiento
+  @IsOptional()
+  @IsString()
+  @IsIn(['timestamp', 'createdAt', 'type', 'severity', 'isRead'])
+  sortBy?: string = 'timestamp';
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['ASC', 'DESC', 'asc', 'desc'])
+  sortOrder?: string = 'DESC';
 }

@@ -5,13 +5,19 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, IsNull } from 'typeorm';
+import { Repository, LessThan, IsNull, In } from 'typeorm';
 import {
   Notification,
   NotificationSeverity,
 } from './entities/notification.entity';
+import { DynamicNotificationState } from './entities/dynamic-notification-state.entity';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
+import {
+  UpdateDynamicNotificationStateDto,
+  BulkUpdateDynamicNotificationStateDto,
+  SyncDynamicNotificationStatesDto,
+} from './dto/dynamic-notification-state.dto';
 
 /**
  * 🔔 NOTIFICATION SERVICE
@@ -24,6 +30,8 @@ export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(DynamicNotificationState)
+    private readonly dynamicStateRepository: Repository<DynamicNotificationState>,
   ) {}
 
   /**
@@ -88,7 +96,7 @@ export class NotificationsService {
     userId: string,
     organizationId: string,
     query: QueryNotificationsDto,
-  ): Promise<{ notifications: Notification[]; total: number }> {
+  ): Promise<{ notifications: Notification[]; total: number; page: number; totalPages: number }> {
     const queryBuilder = this.notificationRepository
       .createQueryBuilder('notification')
       .where('notification.userId = :userId', { userId })
@@ -116,16 +124,43 @@ export class NotificationsService {
       });
     }
 
-    // Orden cronológico inverso (más recientes primero)
-    queryBuilder.orderBy('notification.createdAt', 'DESC');
+    // Ordenamiento dinámico
+    const sortField = query.sortBy || 'createdAt';
+    const sortDirection = (query.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC') as 'ASC' | 'DESC';
 
-    // Paginación
-    queryBuilder.skip(query.offset || 0);
-    queryBuilder.take(query.limit || 20);
+    // Mapear timestamp a createdAt para compatibilidad
+    const fieldMap: Record<string, string> = {
+      'timestamp': 'createdAt',
+      'createdAt': 'createdAt',
+      'type': 'type',
+      'severity': 'severity',
+      'isRead': 'isRead',
+    };
+    const actualField = fieldMap[sortField] || 'createdAt';
+    queryBuilder.orderBy(`notification.${actualField}`, sortDirection);
+
+    // Paginación - soportar tanto page como offset
+    const limit = query.limit || 20;
+    let offset = query.offset || 0;
+
+    // Si se usa page, calcular offset
+    if (query.page && query.page > 0) {
+      offset = (query.page - 1) * limit;
+    }
+
+    queryBuilder.skip(offset);
+    queryBuilder.take(limit);
 
     const [notifications, total] = await queryBuilder.getManyAndCount();
+    const currentPage = query.page || Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit);
 
-    return { notifications, total };
+    return {
+      notifications,
+      total,
+      page: currentPage,
+      totalPages,
+    };
   }
 
   /**
@@ -364,5 +399,246 @@ export class NotificationsService {
         critical,
       },
     };
+  }
+
+  // ==================== DYNAMIC NOTIFICATION STATES ====================
+
+  /**
+   * 📝 OBTENER ESTADO DE UNA NOTIFICACIÓN DINÁMICA
+   */
+  async getDynamicNotificationState(
+    dynamicNotificationId: string,
+    userId: string,
+    organizationId: string,
+  ): Promise<DynamicNotificationState | null> {
+    return this.dynamicStateRepository.findOne({
+      where: {
+        dynamicNotificationId,
+        userId,
+        organizationId,
+      },
+    });
+  }
+
+  /**
+   * 📋 OBTENER ESTADOS DE MÚLTIPLES NOTIFICACIONES DINÁMICAS
+   */
+  async getDynamicNotificationStates(
+    dynamicNotificationIds: string[],
+    userId: string,
+    organizationId: string,
+  ): Promise<DynamicNotificationState[]> {
+    if (!dynamicNotificationIds || dynamicNotificationIds.length === 0) {
+      // Retornar todos los estados del usuario
+      return this.dynamicStateRepository.find({
+        where: {
+          userId,
+          organizationId,
+        },
+      });
+    }
+
+    return this.dynamicStateRepository.find({
+      where: {
+        dynamicNotificationId: In(dynamicNotificationIds),
+        userId,
+        organizationId,
+      },
+    });
+  }
+
+  /**
+   * 📋 OBTENER SOLO LOS IDs DE NOTIFICACIONES DINÁMICAS LEÍDAS
+   * Endpoint optimizado para sincronización con frontend
+   */
+  async getReadDynamicNotificationIds(
+    userId: string,
+    organizationId: string,
+  ): Promise<string[]> {
+    const states = await this.dynamicStateRepository.find({
+      where: {
+        userId,
+        organizationId,
+        isRead: true,
+      },
+      select: ['dynamicNotificationId'],
+    });
+
+    return states.map((s) => s.dynamicNotificationId);
+  }
+
+  /**
+   * 👁️ MARCAR NOTIFICACIÓN DINÁMICA COMO LEÍDA
+   */
+  async markDynamicNotificationAsRead(
+    dto: UpdateDynamicNotificationStateDto,
+    userId: string,
+    organizationId: string,
+  ): Promise<DynamicNotificationState> {
+    // Buscar estado existente
+    let state = await this.dynamicStateRepository.findOne({
+      where: {
+        dynamicNotificationId: dto.dynamicNotificationId,
+        userId,
+        organizationId,
+      },
+    });
+
+    if (state) {
+      // Actualizar estado existente
+      state.isRead = dto.isRead;
+      state.readAt = dto.isRead ? new Date() : null;
+    } else {
+      // Crear nuevo estado
+      state = this.dynamicStateRepository.create({
+        dynamicNotificationId: dto.dynamicNotificationId,
+        userId,
+        organizationId,
+        isRead: dto.isRead,
+        readAt: dto.isRead ? new Date() : null,
+      });
+    }
+
+    const saved = await this.dynamicStateRepository.save(state);
+
+    this.logger.log(
+      `✅ Estado de notificación dinámica actualizado: ${dto.dynamicNotificationId} -> isRead=${dto.isRead}`,
+    );
+
+    return saved;
+  }
+
+  /**
+   * 👁️ MARCAR MÚLTIPLES NOTIFICACIONES DINÁMICAS COMO LEÍDAS
+   */
+  async markDynamicNotificationsAsRead(
+    dto: BulkUpdateDynamicNotificationStateDto,
+    userId: string,
+    organizationId: string,
+  ): Promise<{ affected: number }> {
+    let affected = 0;
+
+    for (const dynamicNotificationId of dto.dynamicNotificationIds) {
+      await this.markDynamicNotificationAsRead(
+        { dynamicNotificationId, isRead: dto.isRead },
+        userId,
+        organizationId,
+      );
+      affected++;
+    }
+
+    this.logger.log(
+      `✅ ${affected} notificaciones dinámicas actualizadas -> isRead=${dto.isRead}`,
+    );
+
+    return { affected };
+  }
+
+  /**
+   * 🔄 SINCRONIZAR ESTADOS DE NOTIFICACIONES DINÁMICAS
+   * Permite enviar múltiples estados en una sola petición
+   */
+  async syncDynamicNotificationStates(
+    dto: SyncDynamicNotificationStatesDto,
+    userId: string,
+    organizationId: string,
+  ): Promise<{ synced: number }> {
+    let synced = 0;
+
+    for (const stateData of dto.states) {
+      await this.markDynamicNotificationAsRead(
+        {
+          dynamicNotificationId: stateData.dynamicNotificationId,
+          isRead: stateData.isRead,
+        },
+        userId,
+        organizationId,
+      );
+      synced++;
+    }
+
+    this.logger.log(
+      `🔄 ${synced} estados de notificaciones dinámicas sincronizados`,
+    );
+
+    return { synced };
+  }
+
+  /**
+   * 👁️ MARCAR TODAS LAS NOTIFICACIONES DINÁMICAS COMO LEÍDAS
+   */
+  async markAllDynamicNotificationsAsRead(
+    userId: string,
+    organizationId: string,
+  ): Promise<{ affected: number }> {
+    const result = await this.dynamicStateRepository.update(
+      {
+        userId,
+        organizationId,
+        isRead: false,
+      },
+      {
+        isRead: true,
+        readAt: new Date(),
+      },
+    );
+
+    this.logger.log(
+      `✅ ${result.affected} notificaciones dinámicas marcadas como leídas para usuario ${userId}`,
+    );
+
+    return { affected: result.affected || 0 };
+  }
+
+  /**
+   * 🗑️ ELIMINAR ESTADO DE NOTIFICACIÓN DINÁMICA
+   */
+  async removeDynamicNotificationState(
+    dynamicNotificationId: string,
+    userId: string,
+    organizationId: string,
+  ): Promise<void> {
+    await this.dynamicStateRepository.delete({
+      dynamicNotificationId,
+      userId,
+      organizationId,
+    });
+
+    this.logger.log(
+      `🗑️ Estado de notificación dinámica eliminado: ${dynamicNotificationId}`,
+    );
+  }
+
+  /**
+   * 🧹 LIMPIAR ESTADOS ANTIGUOS (30+ días)
+   * Método para ejecutar en cron job semanal
+   */
+  async cleanOldDynamicNotificationStates(
+    daysOld: number = 30,
+  ): Promise<number> {
+    this.logger.log(
+      `🧹 Limpiando estados de notificaciones dinámicas de hace más de ${daysOld} días...`,
+    );
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+
+    const result = await this.dynamicStateRepository.delete({
+      updatedAt: LessThan(cutoffDate),
+    });
+
+    const count = result.affected || 0;
+
+    if (count > 0) {
+      this.logger.log(
+        `✅ ${count} estados de notificaciones dinámicas antiguos (${daysOld}+ días) eliminados`,
+      );
+    } else {
+      this.logger.log(
+        '✅ No hay estados de notificaciones dinámicas antiguos para limpiar',
+      );
+    }
+
+    return count;
   }
 }
