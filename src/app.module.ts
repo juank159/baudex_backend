@@ -40,6 +40,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { CreditNotesModule } from './credit-notes/credit-notes.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { CustomerCreditsModule } from './customer-credits/customer-credits.module';
+import { PrinterSettingsModule } from './printer-settings/printer-settings.module';
 
 @Module({
   imports: [
@@ -91,6 +92,9 @@ import { CustomerCreditsModule } from './customer-credits/customer-credits.modul
 
     // Módulo de Cuentas Bancarias
     BankAccountsModule,
+
+    // Módulo de Configuración de Impresoras
+    PrinterSettingsModule,
   ],
   controllers: [AppController, TestController, DashboardSimpleController, ProfitabilityProxyController, HealthController],
   providers: [AppService, ProfitabilityService],
