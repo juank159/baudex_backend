@@ -3,21 +3,29 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Raw } from 'typeorm';
+import { Repository, Raw, MoreThan } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 
 import { User, UserRole, UserStatus } from '../users/entities/user.entity';
 import { Organization } from '../organizations/entities/organization.entity';
+import { ActiveSession } from './entities/active-session.entity';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthResponse } from './interfaces/auth-response.interface';
 import { SeedService } from '../common/services/seed.service';
 import { SubscriptionService } from '../subscriptions/services/subscription.service';
+import {
+  getPlanLimits,
+  isUnlimited,
+} from '../subscriptions/config/plan-limits.config';
 
 @Injectable()
 export class AuthService {
@@ -26,7 +34,10 @@ export class AuthService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Organization)
     private readonly organizationRepository: Repository<Organization>,
+    @InjectRepository(ActiveSession)
+    private readonly activeSessionRepository: Repository<ActiveSession>,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
     private readonly seedService: SeedService,
     private readonly subscriptionService: SubscriptionService,
   ) {}
@@ -34,13 +45,15 @@ export class AuthService {
   async register(
     registerDto: RegisterDto,
     organizationId?: string,
+    deviceInfo?: string,
+    ipAddress?: string,
   ): Promise<AuthResponse> {
     const {
       email,
       password,
       firstName,
       lastName,
-      role = UserRole.USER,
+      role = UserRole.MANAGER,
       organizationName,
     } = registerDto;
 
@@ -149,6 +162,20 @@ export class AuthService {
 
     await this.userRepository.save(user);
 
+    // GARANTIZADO: Crear almacén principal para la organización
+    try {
+      await this.seedService.createMainWarehouse(targetOrganizationId);
+      console.log(
+        `🏪 Almacén principal garantizado para: ${organization.name}`,
+      );
+    } catch (warehouseError) {
+      console.error(
+        `❌ Error creando almacén principal para ${organization.name}:`,
+        warehouseError,
+      );
+      // No fallar el registro si hay error en el almacén, solo loguearlo
+    }
+
     // SEED: Crear datos de muestra para la nueva organización
     try {
       await this.seedService.createSampleDataForOrganization(
@@ -180,8 +207,26 @@ export class AuthService {
       // No fallar el registro si hay error en la suscripción, solo loguearlo
     }
 
-    // Generar token
-    const token = this.getJwtToken({ id: user.id });
+    // Crear sesión activa y generar token con jti
+    const jti = randomUUID();
+    const token = this.getJwtToken({ id: user.id, jti });
+
+    // Registrar sesión (no bloquear registro si falla)
+    try {
+      await this.createSession(
+        user.id,
+        targetOrganizationId,
+        jti,
+        deviceInfo,
+        ipAddress,
+      );
+      console.log(`📱 Sesión creada para nuevo usuario: ${user.email}`);
+    } catch (sessionError) {
+      console.error(
+        `❌ Error creando sesión para ${user.email}:`,
+        sessionError,
+      );
+    }
 
     return {
       token,
@@ -204,6 +249,8 @@ export class AuthService {
   async login(
     loginDto: LoginDto,
     organizationId?: string,
+    deviceInfo?: string,
+    ipAddress?: string,
   ): Promise<AuthResponse> {
     const { email, password } = loginDto;
 
@@ -250,12 +297,25 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    // Verificar límite de dispositivos según plan de suscripción
+    await this.checkDeviceLimit(user.id, user.organizationId);
+
     // Actualizar último login
     user.lastLoginAt = new Date();
     await this.userRepository.save(user);
 
-    // Generar token
-    const token = this.getJwtToken({ id: user.id });
+    // Crear sesión activa y generar token con jti
+    const jti = randomUUID();
+    const token = this.getJwtToken({ id: user.id, jti });
+
+    // Registrar sesión
+    await this.createSession(
+      user.id,
+      user.organizationId,
+      jti,
+      deviceInfo,
+      ipAddress,
+    );
 
     return {
       token,
@@ -276,7 +336,29 @@ export class AuthService {
   }
 
   async validateUser(payload: JwtPayload): Promise<User> {
-    const { id } = payload;
+    const { id, jti } = payload;
+
+    // Verificar sesión activa si tiene jti (tokens nuevos)
+    if (jti) {
+      const session = await this.activeSessionRepository.findOne({
+        where: {
+          jti,
+          isActive: true,
+          expiresAt: MoreThan(new Date()),
+        },
+      });
+
+      if (!session) {
+        throw new UnauthorizedException(
+          'Sesión expirada o revocada. Por favor inicia sesión nuevamente.',
+        );
+      }
+
+      // Actualizar lastActivityAt (fire-and-forget)
+      this.activeSessionRepository.update(session.id, {
+        lastActivityAt: new Date(),
+      }).catch(() => {});
+    }
 
     const user = await this.userRepository.findOne({
       where: {
@@ -355,13 +437,6 @@ export class AuthService {
       user.organization = organization;
     }
 
-    console.log('✅ AuthService.validateUser: User validated successfully', {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      organizationId: user.organizationId,
-    });
-
     return user;
   }
 
@@ -374,10 +449,214 @@ export class AuthService {
     return { token };
   }
 
+  // ==================== GESTIÓN DE SESIONES ====================
+
   /**
-   * ✅ NUEVO: Validar contraseña del usuario para operaciones sensibles
+   * Verificar límite de dispositivos según plan de suscripción
    */
-  async validatePassword(userId: string, password: string): Promise<{ valid: boolean; message: string }> {
+  private async checkDeviceLimit(
+    userId: string,
+    organizationId: string,
+  ): Promise<void> {
+    // Obtener suscripción activa
+    const subscription =
+      await this.subscriptionService.getActiveSubscription(organizationId);
+
+    if (!subscription) {
+      // Sin suscripción activa, permitir login pero con límite mínimo (2)
+      const activeCount = await this.getActiveSessionCount(userId);
+      if (activeCount >= 2) {
+        throw new ForbiddenException(
+          `Has alcanzado el límite de 2 dispositivos conectados. Cierra sesión en otro dispositivo para continuar.`,
+        );
+      }
+      return;
+    }
+
+    const limits = getPlanLimits(subscription.plan);
+    const maxDevices = limits.maxDevices;
+
+    // Si es ilimitado, no verificar
+    if (isUnlimited(maxDevices)) {
+      return;
+    }
+
+    const activeCount = await this.getActiveSessionCount(userId);
+
+    if (activeCount >= maxDevices) {
+      throw new ForbiddenException(
+        `Has alcanzado el límite de ${maxDevices} dispositivos conectados para tu plan. Cierra sesión en otro dispositivo para continuar.`,
+      );
+    }
+  }
+
+  /**
+   * Contar sesiones activas de un usuario
+   */
+  private async getActiveSessionCount(userId: string): Promise<number> {
+    return this.activeSessionRepository.count({
+      where: {
+        userId,
+        isActive: true,
+        expiresAt: MoreThan(new Date()),
+      },
+    });
+  }
+
+  /**
+   * Crear una nueva sesión activa
+   */
+  private async createSession(
+    userId: string,
+    organizationId: string,
+    jti: string,
+    deviceInfo?: string,
+    ipAddress?: string,
+  ): Promise<ActiveSession> {
+    // Calcular fecha de expiración basada en JWT_EXPIRES_IN
+    const expiresIn = this.configService.get('JWT_EXPIRES_IN', '7d');
+    const expiresAt = this.calculateExpirationDate(expiresIn);
+
+    const session = this.activeSessionRepository.create({
+      userId,
+      organizationId,
+      jti,
+      deviceInfo: deviceInfo || 'Unknown',
+      ipAddress: ipAddress || 'Unknown',
+      lastActivityAt: new Date(),
+      expiresAt,
+      isActive: true,
+    });
+
+    return this.activeSessionRepository.save(session);
+  }
+
+  /**
+   * Obtener sesiones activas del usuario
+   */
+  async getUserSessions(userId: string): Promise<ActiveSession[]> {
+    return this.activeSessionRepository.find({
+      where: {
+        userId,
+        isActive: true,
+        expiresAt: MoreThan(new Date()),
+      },
+      order: { lastActivityAt: 'DESC' },
+    });
+  }
+
+  /**
+   * Revocar una sesión específica
+   */
+  async revokeSession(
+    sessionId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
+    const session = await this.activeSessionRepository.findOne({
+      where: { id: sessionId, userId },
+    });
+
+    if (!session) {
+      throw new BadRequestException('Sesión no encontrada');
+    }
+
+    session.isActive = false;
+    await this.activeSessionRepository.save(session);
+
+    return { message: 'Sesión revocada exitosamente' };
+  }
+
+  /**
+   * Revocar todas las sesiones excepto la actual
+   */
+  async revokeAllSessionsExcept(
+    userId: string,
+    currentJti?: string,
+  ): Promise<{ message: string; revokedCount: number }> {
+    const sessions = await this.activeSessionRepository.find({
+      where: {
+        userId,
+        isActive: true,
+      },
+    });
+
+    let revokedCount = 0;
+    for (const session of sessions) {
+      if (session.jti !== currentJti) {
+        session.isActive = false;
+        await this.activeSessionRepository.save(session);
+        revokedCount++;
+      }
+    }
+
+    return {
+      message: `${revokedCount} sesiones revocadas exitosamente`,
+      revokedCount,
+    };
+  }
+
+  /**
+   * CRON: Limpiar sesiones expiradas cada 6 horas
+   */
+  @Cron('0 */6 * * *')
+  async cleanupExpiredSessions(): Promise<void> {
+    console.log('🧹 Limpiando sesiones expiradas...');
+
+    const result = await this.activeSessionRepository
+      .createQueryBuilder()
+      .delete()
+      .where('expires_at < :now', { now: new Date() })
+      .orWhere('is_active = :inactive', { inactive: false })
+      .execute();
+
+    console.log(`✅ ${result.affected || 0} sesiones expiradas eliminadas`);
+  }
+
+  /**
+   * Calcular fecha de expiración desde string como "7d", "24h", "30m"
+   */
+  private calculateExpirationDate(expiresIn: string): Date {
+    const now = new Date();
+    const match = expiresIn.match(/^(\d+)([dhms])$/);
+
+    if (!match) {
+      // Default: 7 días
+      now.setDate(now.getDate() + 7);
+      return now;
+    }
+
+    const value = parseInt(match[1], 10);
+    const unit = match[2];
+
+    switch (unit) {
+      case 'd':
+        now.setDate(now.getDate() + value);
+        break;
+      case 'h':
+        now.setHours(now.getHours() + value);
+        break;
+      case 'm':
+        now.setMinutes(now.getMinutes() + value);
+        break;
+      case 's':
+        now.setSeconds(now.getSeconds() + value);
+        break;
+      default:
+        now.setDate(now.getDate() + 7);
+    }
+
+    return now;
+  }
+
+  // ==================== VALIDACIÓN DE CONTRASEÑA ====================
+
+  /**
+   * Validar contraseña del usuario para operaciones sensibles
+   */
+  async validatePassword(
+    userId: string,
+    password: string,
+  ): Promise<{ valid: boolean; message: string }> {
     // Validar que se proporcione la contraseña
     if (!password || password.trim() === '') {
       throw new BadRequestException('La contraseña es requerida');
@@ -386,7 +665,7 @@ export class AuthService {
     // Buscar el usuario por ID
     const user = await this.userRepository.findOne({
       where: { id: userId, status: UserStatus.ACTIVE },
-      select: ['id', 'email', 'password'] // Incluir password para la validación
+      select: ['id', 'email', 'password'],
     });
 
     if (!user) {
@@ -397,15 +676,19 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      console.log(`🔒 Intento de validación de contraseña fallido para usuario ${user.email}`);
+      console.log(
+        `🔒 Intento de validación de contraseña fallido para usuario ${user.email}`,
+      );
       throw new UnauthorizedException('Contraseña incorrecta');
     }
 
-    console.log(`✅ Contraseña validada exitosamente para usuario ${user.email}`);
-    
+    console.log(
+      `✅ Contraseña validada exitosamente para usuario ${user.email}`,
+    );
+
     return {
       valid: true,
-      message: 'Contraseña válida'
+      message: 'Contraseña válida',
     };
   }
 

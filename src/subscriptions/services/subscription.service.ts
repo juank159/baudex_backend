@@ -837,6 +837,7 @@ export class SubscriptionService {
       maxCustomers: limits.maxCustomers,
       maxInvoicesPerMonth: limits.maxInvoicesPerMonth,
       maxUsers: limits.maxUsers,
+      maxDevices: limits.maxDevices,
       maxStorageMB: limits.maxStorageMB,
       maxExpensesPerMonth: limits.maxExpensesPerMonth,
       maxCategoriesPerLevel: limits.maxCategoriesPerLevel,

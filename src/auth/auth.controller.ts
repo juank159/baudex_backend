@@ -3,10 +3,12 @@ import {
   Post,
   Body,
   Get,
+  Delete,
+  Param,
   UseGuards,
-  Request,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -34,16 +36,39 @@ export class AuthController {
   })
   @ApiResponse({ status: 201, description: 'Usuario registrado exitosamente' })
   @ApiResponse({ status: 409, description: 'Usuario ya existe' })
-  register(@Body() registerDto: RegisterDto, @TenantId() tenantId?: string) {
-    return this.authService.register(registerDto, tenantId);
+  register(
+    @Body() registerDto: RegisterDto,
+    @TenantId() tenantId?: string,
+    @Req() req?: any,
+  ) {
+    const deviceInfo = req?.headers?.['user-agent'] || 'Unknown';
+    const ipAddress =
+      req?.headers?.['x-forwarded-for'] || req?.ip || 'Unknown';
+    return this.authService.register(
+      registerDto,
+      tenantId,
+      deviceInfo,
+      ipAddress,
+    );
   }
 
   @Post('login')
   @ApiOperation({ summary: 'Iniciar sesión' })
   @ApiResponse({ status: 200, description: 'Login exitoso' })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  login(@Body() loginDto: LoginDto, @TenantId() tenantId?: string) {
-    return this.authService.login(loginDto, tenantId);
+  @ApiResponse({
+    status: 403,
+    description: 'Límite de dispositivos alcanzado',
+  })
+  login(
+    @Body() loginDto: LoginDto,
+    @TenantId() tenantId?: string,
+    @Req() req?: any,
+  ) {
+    const deviceInfo = req?.headers?.['user-agent'] || 'Unknown';
+    const ipAddress =
+      req?.headers?.['x-forwarded-for'] || req?.ip || 'Unknown';
+    return this.authService.login(loginDto, tenantId, deviceInfo, ipAddress);
   }
 
   @Get('profile')
@@ -85,17 +110,72 @@ export class AuthController {
   @UseGuards(AuthGuard())
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Validar contraseña del usuario actual',
-    description: 'Verifica que la contraseña proporcionada coincida con la del usuario autenticado. Usado para operaciones sensibles.'
+    description:
+      'Verifica que la contraseña proporcionada coincida con la del usuario autenticado. Usado para operaciones sensibles.',
   })
   @ApiResponse({ status: 200, description: 'Contraseña válida' })
   @ApiResponse({ status: 401, description: 'Contraseña incorrecta' })
   @ApiResponse({ status: 400, description: 'Contraseña requerida' })
   validatePassword(
     @GetUser() user: User,
-    @Body() body: { password: string }
+    @Body() body: { password: string },
   ) {
     return this.authService.validatePassword(user.id, body.password);
+  }
+
+  // ==================== GESTIÓN DE SESIONES ====================
+
+  @Get('sessions')
+  @UseGuards(AuthGuard())
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Listar sesiones activas del usuario actual' })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de sesiones activas',
+  })
+  getSessions(@GetUser() user: User) {
+    return this.authService.getUserSessions(user.id);
+  }
+
+  @Delete('sessions/:sessionId')
+  @UseGuards(AuthGuard())
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revocar una sesión específica' })
+  @ApiResponse({ status: 200, description: 'Sesión revocada' })
+  @ApiResponse({ status: 400, description: 'Sesión no encontrada' })
+  revokeSession(
+    @Param('sessionId') sessionId: string,
+    @GetUser() user: User,
+  ) {
+    return this.authService.revokeSession(sessionId, user.id);
+  }
+
+  @Delete('sessions')
+  @UseGuards(AuthGuard())
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Revocar todas las sesiones excepto la actual',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Sesiones revocadas',
+  })
+  revokeAllSessions(@GetUser() user: User, @Req() req: any) {
+    // Extraer jti del token actual para no revocarlo
+    const token = req.headers?.authorization?.replace('Bearer ', '');
+    let currentJti: string | undefined;
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(token.split('.')[1], 'base64').toString(),
+      );
+      currentJti = decoded.jti;
+    } catch {
+      // Si no se puede decodificar, revocar todas
+    }
+    return this.authService.revokeAllSessionsExcept(user.id, currentJti);
   }
 }

@@ -81,6 +81,9 @@ export class PlanLimitsDto {
   @ApiProperty({ description: 'Máximo de usuarios (-1 = ilimitado)' })
   maxUsers: number;
 
+  @ApiProperty({ description: 'Máximo de dispositivos conectados (-1 = ilimitado)' })
+  maxDevices: number;
+
   @ApiProperty({ description: 'Máximo de almacenamiento en MB (-1 = ilimitado)' })
   maxStorageMB: number;
 

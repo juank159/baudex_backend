@@ -113,11 +113,21 @@ export class SeedService {
   }
 
   /**
-   * Crear almacén principal para la organización
+   * Crear almacén principal para la organización (idempotente)
+   * Si ya existe un almacén, retorna el existente sin crear duplicado
    */
-  private async createMainWarehouse(
+  async createMainWarehouse(
     organizationId: string,
   ): Promise<Warehouse> {
+    // Idempotente: verificar si ya existe un almacén para esta organización
+    const existing = await this.warehouseRepository.findOne({
+      where: { organizationId, deletedAt: null },
+    });
+    if (existing) {
+      console.log(`🏪 Almacén ya existe para organización: ${existing.name}`);
+      return existing;
+    }
+
     // Generar código único para el almacén
     const timestamp = Date.now().toString().slice(-6);
     const warehouseCode = `ALM-${timestamp}`;

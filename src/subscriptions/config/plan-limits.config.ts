@@ -11,6 +11,7 @@ export interface PlanLimits {
   maxCustomers: number;
   maxInvoicesPerMonth: number;
   maxUsers: number;
+  maxDevices: number;
   maxStorageMB: number;
   maxExpensesPerMonth: number;
   maxCategoriesPerLevel: number;
@@ -40,139 +41,83 @@ export interface PlanFeatures {
 }
 
 /**
+ * Features habilitadas para todos los planes
+ * Todas las funcionalidades están disponibles sin restricción
+ */
+const ALL_FEATURES_ENABLED: PlanFeatures = {
+  canExportReports: true,
+  canExportPdf: true,
+  canExportExcel: true,
+  canUseThermalPrinter: true,
+  canAccessAdvancedReports: true,
+  canUseMultipleWarehouses: true,
+  canUseApiIntegrations: true,
+  canUseBulkOperations: true,
+  canUseCustomBranding: true,
+  canAccessAuditLogs: true,
+  canUseAdvancedInventory: true,
+  canUseCreditNotes: true,
+  canUseCustomerCredits: true,
+  canUsePurchaseOrders: true,
+  canUseMultipleCurrencies: true,
+  canUseAdvancedPricing: true,
+  canScheduleReports: true,
+  canUseEmailNotifications: true,
+  prioritySupport: true,
+};
+
+/**
+ * Recursos ilimitados para todos los planes
+ * La ÚNICA restricción real es maxDevices (dispositivos conectados)
+ */
+const UNLIMITED_RESOURCES = {
+  maxProducts: -1,
+  maxCustomers: -1,
+  maxInvoicesPerMonth: -1,
+  maxUsers: -1,
+  maxStorageMB: -1,
+  maxExpensesPerMonth: -1,
+  maxCategoriesPerLevel: -1,
+};
+
+/**
  * Límites del Plan Trial (Prueba gratuita - 30 días)
+ * Solo limita: máximo 2 dispositivos conectados simultáneamente
  */
 export const TRIAL_LIMITS: PlanLimits = {
-  maxProducts: 50,
-  maxCustomers: 25,
-  maxInvoicesPerMonth: 100,
-  maxUsers: 2,
-  maxStorageMB: 100,
-  maxExpensesPerMonth: 50,
-  maxCategoriesPerLevel: 10,
-  features: {
-    canExportReports: false,
-    canExportPdf: true,
-    canExportExcel: false,
-    canUseThermalPrinter: false,
-    canAccessAdvancedReports: false,
-    canUseMultipleWarehouses: false,
-    canUseApiIntegrations: false,
-    canUseBulkOperations: false,
-    canUseCustomBranding: false,
-    canAccessAuditLogs: false,
-    canUseAdvancedInventory: false,
-    canUseCreditNotes: true,
-    canUseCustomerCredits: true,
-    canUsePurchaseOrders: false,
-    canUseMultipleCurrencies: false,
-    canUseAdvancedPricing: false,
-    canScheduleReports: false,
-    canUseEmailNotifications: false,
-    prioritySupport: false,
-  },
+  ...UNLIMITED_RESOURCES,
+  maxDevices: 2,
+  features: ALL_FEATURES_ENABLED,
 };
 
 /**
  * Límites del Plan Básico
+ * Solo limita: máximo 5 dispositivos conectados simultáneamente
  */
 export const BASIC_LIMITS: PlanLimits = {
-  maxProducts: 500,
-  maxCustomers: 200,
-  maxInvoicesPerMonth: 500,
-  maxUsers: 5,
-  maxStorageMB: 500,
-  maxExpensesPerMonth: 200,
-  maxCategoriesPerLevel: 25,
-  features: {
-    canExportReports: true,
-    canExportPdf: true,
-    canExportExcel: true,
-    canUseThermalPrinter: true,
-    canAccessAdvancedReports: false,
-    canUseMultipleWarehouses: false,
-    canUseApiIntegrations: false,
-    canUseBulkOperations: true,
-    canUseCustomBranding: false,
-    canAccessAuditLogs: false,
-    canUseAdvancedInventory: true,
-    canUseCreditNotes: true,
-    canUseCustomerCredits: true,
-    canUsePurchaseOrders: true,
-    canUseMultipleCurrencies: false,
-    canUseAdvancedPricing: false,
-    canScheduleReports: false,
-    canUseEmailNotifications: true,
-    prioritySupport: false,
-  },
+  ...UNLIMITED_RESOURCES,
+  maxDevices: 5,
+  features: ALL_FEATURES_ENABLED,
 };
 
 /**
  * Límites del Plan Premium
+ * Solo limita: máximo 10 dispositivos conectados simultáneamente
  */
 export const PREMIUM_LIMITS: PlanLimits = {
-  maxProducts: -1, // Ilimitado
-  maxCustomers: -1, // Ilimitado
-  maxInvoicesPerMonth: -1, // Ilimitado
-  maxUsers: 15,
-  maxStorageMB: 2000,
-  maxExpensesPerMonth: -1, // Ilimitado
-  maxCategoriesPerLevel: -1, // Ilimitado
-  features: {
-    canExportReports: true,
-    canExportPdf: true,
-    canExportExcel: true,
-    canUseThermalPrinter: true,
-    canAccessAdvancedReports: true,
-    canUseMultipleWarehouses: true,
-    canUseApiIntegrations: false,
-    canUseBulkOperations: true,
-    canUseCustomBranding: true,
-    canAccessAuditLogs: true,
-    canUseAdvancedInventory: true,
-    canUseCreditNotes: true,
-    canUseCustomerCredits: true,
-    canUsePurchaseOrders: true,
-    canUseMultipleCurrencies: true,
-    canUseAdvancedPricing: true,
-    canScheduleReports: true,
-    canUseEmailNotifications: true,
-    prioritySupport: false,
-  },
+  ...UNLIMITED_RESOURCES,
+  maxDevices: 10,
+  features: ALL_FEATURES_ENABLED,
 };
 
 /**
  * Límites del Plan Enterprise
+ * Sin límites: dispositivos ilimitados
  */
 export const ENTERPRISE_LIMITS: PlanLimits = {
-  maxProducts: -1,
-  maxCustomers: -1,
-  maxInvoicesPerMonth: -1,
-  maxUsers: -1, // Ilimitado
-  maxStorageMB: -1, // Ilimitado
-  maxExpensesPerMonth: -1,
-  maxCategoriesPerLevel: -1,
-  features: {
-    canExportReports: true,
-    canExportPdf: true,
-    canExportExcel: true,
-    canUseThermalPrinter: true,
-    canAccessAdvancedReports: true,
-    canUseMultipleWarehouses: true,
-    canUseApiIntegrations: true,
-    canUseBulkOperations: true,
-    canUseCustomBranding: true,
-    canAccessAuditLogs: true,
-    canUseAdvancedInventory: true,
-    canUseCreditNotes: true,
-    canUseCustomerCredits: true,
-    canUsePurchaseOrders: true,
-    canUseMultipleCurrencies: true,
-    canUseAdvancedPricing: true,
-    canScheduleReports: true,
-    canUseEmailNotifications: true,
-    prioritySupport: true,
-  },
+  ...UNLIMITED_RESOURCES,
+  maxDevices: -1, // Ilimitado
+  features: ALL_FEATURES_ENABLED,
 };
 
 /**

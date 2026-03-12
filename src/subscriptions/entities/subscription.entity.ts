@@ -229,14 +229,9 @@ export class Subscription extends BaseEntity {
   }
 
   private updateMaxUsers(): void {
-    const limits = {
-      [SubscriptionPlan.TRIAL]: 2,
-      [SubscriptionPlan.BASIC]: 5,
-      [SubscriptionPlan.PREMIUM]: 15,
-      [SubscriptionPlan.ENTERPRISE]: -1, // Unlimited
-    };
-
-    this.maxUsers = limits[this.plan];
+    // Todos los planes tienen usuarios ilimitados
+    // La única restricción es maxDevices (manejado por ActiveSession)
+    this.maxUsers = -1;
   }
 
   static createTrial(organizationId: string): Subscription {
@@ -252,7 +247,7 @@ export class Subscription extends BaseEntity {
     subscription.endDate = endDate;
     subscription.trialEndsAt = endDate;
 
-    subscription.maxUsers = 2;
+    subscription.maxUsers = -1; // Usuarios ilimitados, solo se limitan dispositivos
     subscription.autoRenew = false;
     subscription.isTrialUsed = true;
 
