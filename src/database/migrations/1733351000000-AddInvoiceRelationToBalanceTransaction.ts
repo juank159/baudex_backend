@@ -5,6 +5,15 @@ export class AddInvoiceRelationToBalanceTransaction1733351000000 implements Migr
   name = 'AddInvoiceRelationToBalanceTransaction1733351000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Verificar si la tabla existe (puede no existir aún si CreateClientBalanceTables no ha corrido)
+    const tableExists = await queryRunner.query(`
+      SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'client_balance_transactions')
+    `);
+    if (!tableExists[0].exists) {
+      console.log('⏭️ Tabla client_balance_transactions no existe aún, se configurará en CreateClientBalanceTables');
+      return;
+    }
+
     // Agregar columna related_invoice_id a client_balance_transactions
     await queryRunner.query(`
       ALTER TABLE "client_balance_transactions"

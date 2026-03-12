@@ -86,7 +86,7 @@ export class Expense extends BaseEntity {
   @Column({ type: 'uuid', nullable: true })
   approvedById?: string;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   approvedAt?: Date;
 
   @Column({ type: 'text', nullable: true })

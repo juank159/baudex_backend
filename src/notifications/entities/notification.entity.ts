@@ -126,18 +126,18 @@ export class Notification {
   @Index() // Índice para filtrar no leídas
   isRead: boolean;
 
-  @Column({ name: 'read_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'read_at', type: 'timestamptz', nullable: true })
   readAt: Date;
 
   // ========== EMAIL (Opcional) ==========
   @Column({ default: false })
   emailed: boolean;
 
-  @Column({ name: 'emailed_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'emailed_at', type: 'timestamptz', nullable: true })
   emailedAt: Date;
 
   // ========== EXPIRACIÓN (Auto-limpieza) ==========
-  @Column({ name: 'expires_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
   expiresAt: Date;
 
   // ========== TIMESTAMPS ==========

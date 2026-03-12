@@ -45,7 +45,7 @@ export class CreditPayment extends BaseEntity {
   /**
    * Fecha del pago
    */
-  @Column({ name: 'payment_date', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ name: 'payment_date', type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   paymentDate: Date;
 
   /**

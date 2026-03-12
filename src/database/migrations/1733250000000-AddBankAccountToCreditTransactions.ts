@@ -4,6 +4,15 @@ export class AddBankAccountToCreditTransactions1733250000000 implements Migratio
   name = 'AddBankAccountToCreditTransactions1733250000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Verificar si la tabla existe (puede no existir aún si CreateCreditTransactionsTable no ha corrido)
+    const tableExists = await queryRunner.query(`
+      SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'credit_transactions')
+    `);
+    if (!tableExists[0].exists) {
+      console.log('⏭️ Tabla credit_transactions no existe aún, se configurará en CreateCreditTransactionsTable');
+      return;
+    }
+
     // Agregar columna bank_account_id a credit_transactions
     await queryRunner.query(`
       ALTER TABLE "credit_transactions"

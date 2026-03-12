@@ -51,7 +51,7 @@ export class InventoryMovement extends BaseEntity {
   })
   status: MovementStatus;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   @Index()
   movementDate: Date;
 

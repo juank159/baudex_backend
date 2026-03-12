@@ -41,10 +41,10 @@
 //   status: PriceStatus;
 
 //   // Fechas de vigencia
-//   @Column({ type: 'timestamp', nullable: true })
+//   @Column({ type: 'timestamptz', nullable: true })
 //   validFrom?: Date;
 
-//   @Column({ type: 'timestamp', nullable: true })
+//   @Column({ type: 'timestamptz', nullable: true })
 //   validTo?: Date;
 
 //   // Descuentos y promociones
@@ -157,10 +157,10 @@ export class ProductPrice extends BaseEntity {
   status: PriceStatus;
 
   // Fechas de vigencia
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   validFrom?: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   validTo?: Date;
 
   // Descuentos y promociones

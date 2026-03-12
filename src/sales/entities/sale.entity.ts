@@ -50,7 +50,7 @@ export class Sale extends BaseEntity {
   @Column({ type: 'varchar', length: 50, unique: true })
   saleNumber: string;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   @Index()
   saleDate: Date;
 
@@ -156,7 +156,7 @@ export class Sale extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   confirmedBy?: User;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   confirmedAt?: Date;
 
   // Relación con factura (opcional)

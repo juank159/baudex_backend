@@ -56,13 +56,13 @@ export class Subscription extends BaseEntity {
   })
   type: SubscriptionType;
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamptz' })
   startDate: Date;
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamptz' })
   endDate: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   cancelledAt?: Date;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
@@ -86,10 +86,10 @@ export class Subscription extends BaseEntity {
   @Column({ type: 'int', default: -1 })
   maxUsers: number; // -1 = unlimited
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   lastBillingDate?: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   nextBillingDate?: Date;
 
   @Column({ type: 'int', default: 0 })
@@ -98,7 +98,7 @@ export class Subscription extends BaseEntity {
   @Column({ type: 'boolean', default: true })
   autoRenew: boolean;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   trialEndsAt?: Date;
 
   @Column({ type: 'boolean', default: false })

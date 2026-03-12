@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Raw } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 
@@ -119,10 +119,13 @@ export class AuthService {
       }
     }
 
-    // Verificar si el usuario ya existe en la misma organización
+    // Verificar si el usuario ya existe en la misma organización (case-insensitive)
+    const normalizedEmail = email.toLowerCase().trim();
     const existingUser = await this.userRepository.findOne({
       where: {
-        email,
+        email: Raw((alias) => `LOWER(${alias}) = :email`, {
+          email: normalizedEmail,
+        }),
         organizationId: targetOrganizationId,
       },
     });
@@ -135,7 +138,7 @@ export class AuthService {
 
     // Crear usuario (el password se encripta automáticamente en @BeforeInsert)
     const user = this.userRepository.create({
-      email,
+      email: normalizedEmail,
       password, // Se encriptará automáticamente
       firstName,
       lastName,
@@ -204,9 +207,11 @@ export class AuthService {
   ): Promise<AuthResponse> {
     const { email, password } = loginDto;
 
-    // Construir las condiciones de búsqueda
+    // Buscar usuario activo con email case-insensitive
     const whereCondition: any = {
-      email,
+      email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+        email: email.trim(),
+      }),
       status: UserStatus.ACTIVE,
     };
 
@@ -215,7 +220,6 @@ export class AuthService {
       whereCondition.organizationId = organizationId;
     }
 
-    // Buscar usuario activo
     const user = await this.userRepository.findOne({
       where: whereCondition,
       select: [

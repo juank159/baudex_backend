@@ -7,7 +7,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Raw } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -150,7 +150,11 @@ export class UsersService {
    */
   async findByEmail(email: string): Promise<User | null> {
     return this.userRepository.findOne({
-      where: { email },
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: email.trim(),
+        }),
+      },
       select: [
         'id',
         'firstName',
@@ -172,7 +176,12 @@ export class UsersService {
    */
   async findByEmailWithPassword(email: string): Promise<User | null> {
     return this.userRepository.findOne({
-      where: { email, status: UserStatus.ACTIVE },
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: email.trim(),
+        }),
+        status: UserStatus.ACTIVE,
+      },
       select: [
         'id',
         'email',
@@ -482,7 +491,7 @@ export class UsersService {
   async isEmailAvailable(email: string, excludeId?: string): Promise<boolean> {
     const query = this.userRepository
       .createQueryBuilder('user')
-      .where('user.email = :email', { email });
+      .where('LOWER(user.email) = LOWER(:email)', { email: email.trim() });
 
     if (excludeId) {
       query.andWhere('user.id != :excludeId', { excludeId });

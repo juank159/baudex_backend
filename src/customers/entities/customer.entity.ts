@@ -90,7 +90,7 @@
 //   metadata?: Record<string, any>;
 
 //   // Campos calculados
-//   @Column({ type: 'timestamp', nullable: true })
+//   @Column({ type: 'timestamptz', nullable: true })
 //   lastPurchaseAt?: Date;
 
 //   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
@@ -316,7 +316,7 @@ export class Customer extends BaseEntity {
   @Column({ type: 'json', nullable: true })
   metadata?: Record<string, any>;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   lastPurchaseAt?: Date;
 
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })

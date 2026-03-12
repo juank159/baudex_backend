@@ -63,7 +63,7 @@ export class DynamicNotificationState {
   @Column({ name: 'is_read', default: false })
   isRead: boolean;
 
-  @Column({ name: 'read_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'read_at', type: 'timestamptz', nullable: true })
   readAt: Date;
 
   // ========== TIMESTAMPS ==========

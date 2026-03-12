@@ -26,7 +26,7 @@ export class InventoryBatchMovement extends BaseEntity {
   })
   type: BatchMovementType;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   @Index()
   movementDate: Date;
 

@@ -67,7 +67,7 @@ export class CreditNote extends BaseEntity {
   @Column({ type: 'varchar', length: 50 })
   number: string; // Número de nota de crédito (CN-001, CN-002, etc.)
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamptz' })
   date: Date; // Fecha de emisión
 
   // ==================== REFERENCIAS ====================
@@ -151,7 +151,7 @@ export class CreditNote extends BaseEntity {
   })
   status: CreditNoteStatus;
 
-  @Column({ type: 'timestamp', nullable: true, name: 'applied_at' })
+  @Column({ type: 'timestamptz', nullable: true, name: 'applied_at' })
   appliedAt: Date; // Cuándo se aplicó el crédito al balance del cliente
 
   @Column({ type: 'uuid', nullable: true, name: 'applied_by_id' })
@@ -169,7 +169,7 @@ export class CreditNote extends BaseEntity {
   @Column({ type: 'boolean', default: false, name: 'inventory_restored' })
   inventoryRestored: boolean; // ¿Se ha restaurado el inventario?
 
-  @Column({ type: 'timestamp', nullable: true, name: 'inventory_restored_at' })
+  @Column({ type: 'timestamptz', nullable: true, name: 'inventory_restored_at' })
   inventoryRestoredAt: Date; // Cuándo se restauró el inventario
 
   // ==================== NOTAS Y METADATA ====================

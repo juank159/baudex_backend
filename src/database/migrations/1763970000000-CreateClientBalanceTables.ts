@@ -46,6 +46,7 @@ export class CreateClientBalanceTables1763970000000 implements MigrationInterfac
         "payment_method" varchar(50),
         "client_balance_id" uuid NOT NULL,
         "related_credit_id" uuid,
+        "related_invoice_id" uuid NULL,
         "organization_id" uuid NOT NULL,
         "created_by_id" uuid NOT NULL,
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
@@ -163,6 +164,24 @@ export class CreateClientBalanceTables1763970000000 implements MigrationInterfac
 
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "IDX_client_balance_trans_created_at" ON "client_balance_transactions" ("created_at")
+    `);
+
+    // FK para related_invoice_id (de AddInvoiceRelationToBalanceTransaction)
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_client_balance_trans_invoice') THEN
+          ALTER TABLE "client_balance_transactions"
+          ADD CONSTRAINT "FK_client_balance_trans_invoice"
+          FOREIGN KEY ("related_invoice_id") REFERENCES "invoices"("id")
+          ON DELETE SET NULL;
+        END IF;
+      END$$;
+    `);
+
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "IDX_client_balance_trans_invoice"
+      ON "client_balance_transactions" ("related_invoice_id")
     `);
 
     console.log('✅ Tablas client_balances y client_balance_transactions creadas exitosamente');

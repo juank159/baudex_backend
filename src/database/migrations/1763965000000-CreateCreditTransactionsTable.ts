@@ -14,7 +14,8 @@ export class CreateCreditTransactionsTable1763965000000 implements MigrationInte
             'charge',
             'debt_increase',
             'payment',
-            'balance_used'
+            'balance_used',
+            'balance_generated'
           );
         END IF;
       END$$;
@@ -32,6 +33,7 @@ export class CreateCreditTransactionsTable1763965000000 implements MigrationInte
         "credit_id" uuid NOT NULL,
         "organization_id" uuid NOT NULL,
         "created_by_id" uuid NOT NULL,
+        "bank_account_id" uuid NULL,
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
         CONSTRAINT "PK_credit_transactions" PRIMARY KEY ("id")
       )
@@ -74,6 +76,19 @@ export class CreateCreditTransactionsTable1763965000000 implements MigrationInte
 
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "IDX_credit_transactions_created_at" ON "credit_transactions" ("created_at")
+    `);
+
+    // FK para bank_account_id (de AddBankAccountToCreditTransactions)
+    await queryRunner.query(`
+      ALTER TABLE "credit_transactions"
+      ADD CONSTRAINT "FK_credit_transactions_bank_account"
+      FOREIGN KEY ("bank_account_id") REFERENCES "bank_accounts"("id")
+      ON DELETE SET NULL
+    `);
+
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "IDX_credit_transactions_bank_account"
+      ON "credit_transactions"("bank_account_id")
     `);
 
     console.log('✅ Tabla credit_transactions creada exitosamente');

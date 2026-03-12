@@ -5,12 +5,19 @@ export class AddBalanceGeneratedToTransactionEnum1733350000000 implements Migrat
   name = 'AddBalanceGeneratedToTransactionEnum1733350000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Verificar si el enum existe (puede no existir aún si CreateCreditTransactionsTable no ha corrido)
+    const enumExists = await queryRunner.query(`
+      SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'credit_transaction_type_enum')
+    `);
+    if (!enumExists[0].exists) {
+      console.log('⏭️ Enum credit_transaction_type_enum no existe aún, se configurará en CreateCreditTransactionsTable');
+      return;
+    }
+
     // Agregar nuevo valor 'balance_generated' al enum credit_transaction_type_enum
-    // Este valor se usa para registrar cuando un sobrepago genera saldo a favor
     await queryRunner.query(`
       DO $$
       BEGIN
-        -- Verificar si el valor ya existe antes de agregarlo
         IF NOT EXISTS (
           SELECT 1 FROM pg_enum
           WHERE enumlabel = 'balance_generated'

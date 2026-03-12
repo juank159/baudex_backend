@@ -31,7 +31,7 @@ export class InventoryBatch extends BaseEntity {
   @Column({ type: 'varchar', length: 50, unique: true })
   batchNumber: string;
 
-  @Column({ type: 'timestamp', name: 'purchase_date' })
+  @Column({ type: 'timestamptz', name: 'purchase_date' })
   @Index()
   purchaseDate: Date;
 

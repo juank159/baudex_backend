@@ -31,7 +31,7 @@ export class PurchaseOrder extends BaseEntity {
   @Column({ type: 'varchar', length: 50, unique: true, name: 'poNumber' })
   orderNumber: string;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', name: 'date' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP', name: 'date' })
   @Index()
   orderDate: Date;
 
@@ -123,7 +123,7 @@ export class PurchaseOrder extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   approvedBy?: User;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   approvedAt?: Date;
 
   // Usuario que recibió la orden
@@ -133,7 +133,7 @@ export class PurchaseOrder extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   receivedBy?: User;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   receivedAt?: Date;
 
   // Items de la orden

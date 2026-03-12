@@ -37,16 +37,16 @@ export class Organization extends BaseEntity {
   @Column({ type: 'varchar', length: 50, nullable: true })
   subscriptionStatus?: string;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   subscriptionStartDate?: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   subscriptionEndDate?: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   trialStartDate?: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   trialEndDate?: Date;
 
   @Column({ type: 'boolean', default: true })

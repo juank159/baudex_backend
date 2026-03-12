@@ -57,7 +57,7 @@ export class User extends BaseEntity {
   })
   status: UserStatus;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   lastLoginAt?: Date;
 
   @Column({ type: 'text', nullable: true })

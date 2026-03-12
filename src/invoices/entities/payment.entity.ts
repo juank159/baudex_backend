@@ -35,7 +35,7 @@ export class Payment extends BaseEntity {
   })
   paymentMethod: PaymentMethod;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   paymentDate: Date;
 
   @Column({ type: 'varchar', length: 255, nullable: true })

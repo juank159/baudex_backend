@@ -22,4 +22,7 @@ export const getDatabaseConfig = (
   autoLoadEntities: true,
   retryAttempts: 3,
   retryDelay: 3000,
+  extra: {
+    options: '-c timezone=UTC',
+  },
 });
