@@ -22,7 +22,4 @@ export const getDatabaseConfig = (
   autoLoadEntities: true,
   retryAttempts: 3,
   retryDelay: 3000,
-  extra: {
-    family: 4, // Forzar IPv4 - Railway no puede conectar a Supabase via IPv6
-  },
 });

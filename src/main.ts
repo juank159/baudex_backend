@@ -1,3 +1,7 @@
+import * as dns from 'dns';
+// Forzar IPv4 antes de cualquier conexión - Railway no soporta IPv6 hacia Supabase
+dns.setDefaultResultOrder('ipv4first');
+
 import { NestFactory } from '@nestjs/core';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
