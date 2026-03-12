@@ -55,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 
 # Comando por defecto
-CMD ["node", "dist/main"]
+CMD ["node", "--dns-result-order=ipv4first", "dist/main"]
