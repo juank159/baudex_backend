@@ -1,5 +1,5 @@
 # Multi-stage build para optimizar tamaño de imagen
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Crear directorio de la aplicación
 WORKDIR /usr/src/app
@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # Etapa de producción
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Instalar dumb-init para manejo de señales
 RUN apk add --no-cache dumb-init
