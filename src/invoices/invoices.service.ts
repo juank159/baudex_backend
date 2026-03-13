@@ -132,15 +132,19 @@ export class InvoicesService {
       } else if (itemDto.productId) {
         // ✅ VALIDAR PRODUCTO REGISTRADO
         const product = await this.productsService.findOne(itemDto.productId);
-        const isValid = await this.productsService.validateStockForSale(
-          itemDto.productId,
-          itemDto.quantity,
-        );
 
-        if (!isValid) {
-          throw new BadRequestException(
-            `Stock insuficiente para el producto: ${product.name}`,
+        // 📦 Solo validar stock si skipStockValidation no está activo
+        if (!createInvoiceDto.skipStockValidation) {
+          const isValid = await this.productsService.validateStockForSale(
+            itemDto.productId,
+            itemDto.quantity,
           );
+
+          if (!isValid) {
+            throw new BadRequestException(
+              `Stock insuficiente para el producto: ${product.name}`,
+            );
+          }
         }
 
         processedItems.push({

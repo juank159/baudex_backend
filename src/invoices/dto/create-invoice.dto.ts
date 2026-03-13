@@ -483,4 +483,9 @@ export class CreateInvoiceDto {
   )
   @Min(0, { message: 'El saldo aplicado debe ser mayor o igual a 0' })
   clientBalanceApplied?: number;
+
+  // 📦 Saltar validación de stock (cuando el usuario lo tiene desactivado en preferencias)
+  @IsOptional()
+  @IsBoolean({ message: 'skipStockValidation debe ser un valor booleano' })
+  skipStockValidation?: boolean = false;
 }
