@@ -476,43 +476,69 @@ export class AuthService {
 
   /**
    * Verificar límite de dispositivos según plan de suscripción.
-   * Limpia sesiones stale (sin actividad en 48h+) antes de validar.
+   * Patrón "último login gana": si el límite se alcanza, se revoca
+   * la sesión más antigua para hacer espacio al nuevo login.
    */
   private async checkDeviceLimit(
     userId: string,
     organizationId: string,
   ): Promise<void> {
-    // Limpiar sesiones stale antes de verificar el límite
+    // Paso 1: Limpiar sesiones stale (sin actividad en 48h+)
     await this.cleanupStaleSessions(userId);
 
-    // Obtener suscripción activa
+    // Paso 2: Determinar límite según plan
+    let maxDevices = 2; // default sin suscripción
+
     const subscription =
       await this.subscriptionService.getActiveSubscription(organizationId);
 
-    if (!subscription) {
-      // Sin suscripción activa, permitir login pero con límite mínimo (2)
-      const activeCount = await this.getActiveSessionCount(userId);
-      if (activeCount >= 2) {
-        throw new ForbiddenException(
-          `Has alcanzado el límite de 2 dispositivos conectados. Cierra sesión en otro dispositivo para continuar.`,
-        );
-      }
-      return;
+    if (subscription) {
+      const limits = getPlanLimits(subscription.plan);
+      maxDevices = limits.maxDevices;
     }
-
-    const limits = getPlanLimits(subscription.plan);
-    const maxDevices = limits.maxDevices;
 
     // Si es ilimitado, no verificar
     if (isUnlimited(maxDevices)) {
       return;
     }
 
+    // Paso 3: Si se alcanzó el límite, revocar sesiones más antiguas
     const activeCount = await this.getActiveSessionCount(userId);
 
     if (activeCount >= maxDevices) {
-      throw new ForbiddenException(
-        `Has alcanzado el límite de ${maxDevices} dispositivos conectados para tu plan. Cierra sesión en otro dispositivo para continuar.`,
+      await this.revokeOldestSessions(userId, activeCount - maxDevices + 1);
+    }
+  }
+
+  /**
+   * Revocar las N sesiones más antiguas del usuario para hacer espacio.
+   * Patrón "último login gana" - el dispositivo más reciente tiene prioridad.
+   */
+  private async revokeOldestSessions(
+    userId: string,
+    count: number,
+  ): Promise<void> {
+    const oldestSessions = await this.activeSessionRepository.find({
+      where: {
+        userId,
+        isActive: true,
+        expiresAt: MoreThan(new Date()),
+      },
+      order: { lastActivityAt: 'ASC' },
+      take: count,
+    });
+
+    for (const session of oldestSessions) {
+      session.isActive = false;
+      await this.activeSessionRepository.save(session);
+      console.log(
+        `🔄 Sesión antigua revocada (último login gana): device=${session.deviceInfo?.substring(0, 30)}..., lastActivity=${session.lastActivityAt.toISOString()}`,
+      );
+    }
+
+    if (oldestSessions.length > 0) {
+      console.log(
+        `✅ ${oldestSessions.length} sesión(es) revocada(s) para hacer espacio al nuevo login`,
       );
     }
   }
