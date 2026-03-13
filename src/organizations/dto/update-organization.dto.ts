@@ -18,4 +18,12 @@ export class UpdateOrganizationDto extends PartialType(
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Habilitar/deshabilitar soporte multi-moneda',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  multiCurrencyEnabled?: boolean;
 }

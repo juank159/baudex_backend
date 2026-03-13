@@ -44,6 +44,34 @@ export class Payment extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   notes?: string;
 
+  // Multi-currency: moneda del pago (null = moneda base de la organización)
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  paymentCurrency?: string;
+
+  // Multi-currency: monto en la moneda del pago
+  @Column({
+    type: 'float',
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        value != null ? (typeof value === 'string' ? parseFloat(value) : value) : null,
+    },
+  })
+  paymentCurrencyAmount?: number;
+
+  // Multi-currency: tasa de cambio (1 moneda extranjera = X moneda base)
+  @Column({
+    type: 'float',
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        value != null ? (typeof value === 'string' ? parseFloat(value) : value) : null,
+    },
+  })
+  exchangeRate?: number;
+
   // Relación con organización (multitenant)
   @Column({ type: 'uuid', name: 'organization_id' })
   @Index()

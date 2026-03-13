@@ -64,6 +64,9 @@ export class Organization extends BaseEntity {
   @Column({ type: 'uuid', nullable: true })
   mainWarehouseId?: string;
 
+  @Column({ type: 'boolean', default: false })
+  multiCurrencyEnabled: boolean;
+
   // Relaciones
   @OneToMany(() => User, (user) => user.organization)
   users: User[];

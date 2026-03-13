@@ -56,6 +56,13 @@ export class OrganizationResponseDto {
   isActive: boolean;
 
   @ApiProperty({
+    description: 'Si la organización acepta pagos en múltiples monedas',
+    example: false,
+  })
+  @Expose()
+  multiCurrencyEnabled: boolean;
+
+  @ApiProperty({
     description: 'Moneda por defecto',
     example: 'USD',
   })

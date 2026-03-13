@@ -70,4 +70,25 @@ export class PaymentResponseDto {
     example: '2024-01-15T10:30:00Z',
   })
   updatedAt: Date;
+
+  @ApiPropertyOptional({
+    description: 'Código de moneda del pago (null = moneda base)',
+    example: 'USD',
+    nullable: true,
+  })
+  paymentCurrency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Monto en la moneda del pago',
+    example: 50.00,
+    nullable: true,
+  })
+  paymentCurrencyAmount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tasa de cambio usada (1 extranjera = X base)',
+    example: 4000,
+    nullable: true,
+  })
+  exchangeRate?: number;
 }

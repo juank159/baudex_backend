@@ -73,6 +73,32 @@ export class AddPaymentDto {
   @IsOptional()
   @IsString({ message: 'Las notas deben ser una cadena' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Código de moneda del pago (null = moneda base). Ej: USD, EUR',
+    example: 'USD',
+  })
+  @IsOptional()
+  @IsString({ message: 'El código de moneda debe ser una cadena' })
+  paymentCurrency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Monto en la moneda del pago (antes de conversión)',
+    example: 50.00,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto en moneda de pago debe tener máximo 2 decimales' })
+  @Min(0.01, { message: 'El monto en moneda de pago debe ser mayor a 0' })
+  paymentCurrencyAmount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tasa de cambio: 1 moneda extranjera = X moneda base. Ej: 1 USD = 4000 COP → exchangeRate=4000',
+    example: 4000,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'La tasa de cambio debe ser un número' })
+  @Min(0.0001, { message: 'La tasa de cambio debe ser mayor a 0' })
+  exchangeRate?: number;
 }
 
 /**
@@ -123,6 +149,32 @@ export class PaymentItemDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Código de moneda del pago (null = moneda base). Ej: USD, EUR',
+    example: 'USD',
+  })
+  @IsOptional()
+  @IsString({ message: 'El código de moneda debe ser una cadena' })
+  paymentCurrency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Monto en la moneda del pago (antes de conversión)',
+    example: 50.00,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto en moneda de pago debe tener máximo 2 decimales' })
+  @Min(0.01, { message: 'El monto en moneda de pago debe ser mayor a 0' })
+  paymentCurrencyAmount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tasa de cambio: 1 moneda extranjera = X moneda base. Ej: 1 USD = 4000 COP → exchangeRate=4000',
+    example: 4000,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'La tasa de cambio debe ser un número' })
+  @Min(0.0001, { message: 'La tasa de cambio debe ser mayor a 0' })
+  exchangeRate?: number;
 }
 
 /**

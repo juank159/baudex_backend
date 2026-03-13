@@ -1401,6 +1401,15 @@ export class InvoicesService {
       );
     }
 
+    // Validar campos multi-moneda: si uno está presente, los 3 deben estar
+    if (paymentDto.paymentCurrency) {
+      if (!paymentDto.paymentCurrencyAmount || !paymentDto.exchangeRate) {
+        throw new BadRequestException(
+          'Cuando se especifica paymentCurrency, paymentCurrencyAmount y exchangeRate son requeridos',
+        );
+      }
+    }
+
     return this.dataSource.transaction(async (manager) => {
       // Generar número de pago único
       const paymentNumber = await this.generatePaymentNumber(tenantId);
@@ -1417,6 +1426,10 @@ export class InvoicesService {
         bankAccountId: paymentDto.bankAccountId || null,
         createdById,
         organizationId: tenantId,
+        // Multi-currency fields
+        paymentCurrency: paymentDto.paymentCurrency || null,
+        paymentCurrencyAmount: paymentDto.paymentCurrencyAmount || null,
+        exchangeRate: paymentDto.exchangeRate || null,
       });
 
       await manager.save(Payment, payment);
@@ -1798,6 +1811,10 @@ export class InvoicesService {
           bankAccountId: paymentItem.bankAccountId || null,
           createdById,
           organizationId: tenantId,
+          // Multi-currency fields
+          paymentCurrency: paymentItem.paymentCurrency || null,
+          paymentCurrencyAmount: paymentItem.paymentCurrencyAmount || null,
+          exchangeRate: paymentItem.exchangeRate || null,
         });
 
         const savedPayment = await manager.save(Payment, payment);
