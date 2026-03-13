@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Sale, SaleStatus } from '../../sales/entities/sale.entity';
 import { SaleItem } from '../../sales/entities/sale-item.entity';
 import { Invoice, InvoiceStatus } from '../../invoices/entities/invoice.entity';
@@ -58,40 +58,40 @@ export class ProfitabilityService {
 
   async getProfitabilityStats(
     organizationId: string,
-    startDate?: Date,
-    endDate?: Date,
+    startDate?: string,
+    endDate?: string,
   ): Promise<ProfitabilityStats> {
     console.log('🎯 CALCULANDO RENTABILIDAD FIFO CON FACTURAS REALES');
-    console.log(`📅 Filtros de fecha - Inicio: ${startDate?.toISOString() || 'Sin filtro'}, Fin: ${endDate?.toISOString() || 'Sin filtro'}`);
-    
-    // 📅 CONSTRUIR FILTROS DE FECHA DINÁMICAMENTE
-    const whereConditions: any = {
-      organizationId,
-      status: In([InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID]),
-      deletedAt: null,
-    };
+    console.log(`📅 Filtros de fecha - Inicio: ${startDate || 'Sin filtro'}, Fin: ${endDate || 'Sin filtro'}`);
 
-    // Solo aplicar filtro de fecha si se proporciona
+    // 📅 USAR QUERYBUILDER CON CAST EXPLÍCITO ::date PARA COMPARACIONES CORRECTAS
+    const qb = this.invoiceRepository.createQueryBuilder('invoice')
+      .leftJoinAndSelect('invoice.items', 'item')
+      .leftJoinAndSelect('item.product', 'product')
+      .leftJoinAndSelect('product.category', 'category')
+      .where('invoice.organizationId = :organizationId', { organizationId })
+      .andWhere('invoice.status IN (:...statuses)', {
+        statuses: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID],
+      })
+      .andWhere('invoice.deletedAt IS NULL');
+
     if (startDate && endDate) {
-      whereConditions.date = Between(startDate, endDate);
-      console.log(`📅 Aplicando filtro de fechas: ${startDate.toISOString()} - ${endDate.toISOString()}`);
+      qb.andWhere('invoice.date >= CAST(:startDate AS date) AND invoice.date <= CAST(:endDate AS date)', {
+        startDate,
+        endDate,
+      });
+      console.log(`📅 Aplicando filtro de fechas: ${startDate} - ${endDate}`);
     } else if (startDate) {
-      // Solo fecha de inicio
-      whereConditions.date = Between(startDate, new Date());
-      console.log(`📅 Aplicando filtro desde: ${startDate.toISOString()}`);
+      qb.andWhere('invoice.date >= CAST(:startDate AS date)', { startDate });
+      console.log(`📅 Aplicando filtro desde: ${startDate}`);
     } else if (endDate) {
-      // Solo fecha de fin
-      whereConditions.date = Between(new Date('2000-01-01'), endDate);
-      console.log(`📅 Aplicando filtro hasta: ${endDate.toISOString()}`);
+      qb.andWhere('invoice.date <= CAST(:endDate AS date)', { endDate });
+      console.log(`📅 Aplicando filtro hasta: ${endDate}`);
     } else {
       console.log(`📅 Sin filtro de fechas - incluyendo todas las facturas`);
     }
 
-    // CAMBIO CRÍTICO: Usar facturas en lugar de ventas para FIFO real
-    const invoices = await this.invoiceRepository.find({
-      where: whereConditions,
-      relations: ['items', 'items.product', 'items.product.category'],
-    });
+    const invoices = await qb.getMany();
 
     console.log(`📊 Encontradas ${invoices.length} facturas pagadas con FIFO real`);
 
@@ -153,19 +153,19 @@ export class ProfitabilityService {
     const topProfitableProducts = Array.from(productStats.values())
       .map((product: any) => {
         const grossProfit = product.totalRevenue - product.totalCOGS;
-        const marginPercentage = product.totalRevenue > 0 
-          ? (grossProfit / product.totalRevenue) * 100 
+        const marginPercentage = product.totalRevenue > 0
+          ? (grossProfit / product.totalRevenue) * 100
           : 0;
-        
+
         return {
           ...product,
           grossProfit,
           marginPercentage,
-          averageSellingPrice: product.unitsSold > 0 
-            ? product.totalRevenue / product.unitsSold 
+          averageSellingPrice: product.unitsSold > 0
+            ? product.totalRevenue / product.unitsSold
             : 0,
-          averageFifoCost: product.unitsSold > 0 
-            ? product.totalCOGS / product.unitsSold 
+          averageFifoCost: product.unitsSold > 0
+            ? product.totalCOGS / product.unitsSold
             : 0,
         };
       })
@@ -176,8 +176,8 @@ export class ProfitabilityService {
     const marginsByCategory: Record<string, number> = {};
     for (const [categoryName, stats] of categoryStats.entries()) {
       const categoryProfit = (stats as any).totalRevenue - (stats as any).totalCOGS;
-      marginsByCategory[categoryName] = (stats as any).totalRevenue > 0 
-        ? (categoryProfit / (stats as any).totalRevenue) * 100 
+      marginsByCategory[categoryName] = (stats as any).totalRevenue > 0
+        ? (categoryProfit / (stats as any).totalRevenue) * 100
         : 0;
     }
 
@@ -187,8 +187,14 @@ export class ProfitabilityService {
       const expensesParams: any[] = [organizationId];
       let expensesDateFilter = '';
       if (startDate && endDate) {
-        expensesDateFilter = ' AND date >= $2 AND date <= $3';
+        expensesDateFilter = ' AND date >= $2::date AND date <= $3::date';
         expensesParams.push(startDate, endDate);
+      } else if (startDate) {
+        expensesDateFilter = ' AND date >= $2::date';
+        expensesParams.push(startDate);
+      } else if (endDate) {
+        expensesDateFilter = ' AND date <= $2::date';
+        expensesParams.push(endDate);
       }
       const expensesResult = await this.invoiceRepository.manager.query(`
         SELECT COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total
@@ -223,16 +229,16 @@ export class ProfitabilityService {
       netMarginPercentage,
       averageMarginPerSale: invoices.length > 0 ? grossMarginPercentage : 0,
       topProfitableProducts,
-      lowProfitableProducts: [], // TODO: implementar productos menos rentables
+      lowProfitableProducts: [],
       marginsByCategory,
       trend: {
-        previousPeriodGrossMargin: 0, // TODO: implementar comparación con período anterior
+        previousPeriodGrossMargin: 0,
         currentPeriodGrossMargin: grossMarginPercentage,
         marginGrowth: 0,
         isImproving: grossMarginPercentage > 0,
         dailyMargins: [
           {
-            date: (endDate || new Date()).toISOString(),
+            date: endDate || new Date().toISOString().split('T')[0],
             grossMarginPercentage,
             dailyRevenue: totalRevenue,
             dailyCOGS: totalCOGS,

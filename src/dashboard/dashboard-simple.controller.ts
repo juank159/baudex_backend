@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, InternalServerErrorException } from '@nestjs/common';
 import { InjectEntityManager } from '@nestjs/typeorm';
 import { EntityManager } from 'typeorm';
 import { ProfitabilityService } from '../common/services/profitability.service';
@@ -21,27 +21,39 @@ export class DashboardSimpleController {
       // ✅ Ahora usa el organizationId del usuario autenticado via TenantId decorator
       
       console.log(`🏢 Usando organizationId: ${organizationId}`);
-      
+
       if (!organizationId) {
         throw new Error('Organization ID not found');
       }
 
-      // 📅 APLICAR FILTROS DE FECHA A LAS QUERIES
+      // 🌐 OBTENER TIMEZONE DE LA ORGANIZACIÓN
+      const [orgRow] = await this.entityManager.query(
+        'SELECT timezone FROM organizations WHERE id = $1',
+        [organizationId],
+      );
+      const orgTimezone = orgRow?.timezone || 'America/New_York';
+      console.log(`🌐 Timezone de la organización: ${orgTimezone}`);
+
+      // 📅 NORMALIZAR PARÁMETROS DE FECHA A YYYY-MM-DD
+      const startDateStr = query.startDate ? String(query.startDate).substring(0, 10) : null;
+      const endDateStr = query.endDate ? String(query.endDate).substring(0, 10) : null;
+
+      // 📅 FILTROS DE FECHA CON CAST EXPLÍCITO ::date
       let dateFilter = '';
-      const queryParams = [organizationId];
-      
-      if (query.startDate && query.endDate) {
-        dateFilter = ' AND date >= $2 AND date <= $3';
-        queryParams.push(query.startDate, query.endDate);
-        console.log(`📅 Aplicando filtro de fechas: ${query.startDate} - ${query.endDate}`);
-      } else if (query.startDate) {
-        dateFilter = ' AND date >= $2';
-        queryParams.push(query.startDate);
-        console.log(`📅 Aplicando filtro desde: ${query.startDate}`);
-      } else if (query.endDate) {
-        dateFilter = ' AND date <= $2';
-        queryParams.push(query.endDate);
-        console.log(`📅 Aplicando filtro hasta: ${query.endDate}`);
+      const queryParams: any[] = [organizationId];
+
+      if (startDateStr && endDateStr) {
+        dateFilter = ' AND date >= $2::date AND date <= $3::date';
+        queryParams.push(startDateStr, endDateStr);
+        console.log(`📅 Aplicando filtro de fechas: ${startDateStr} - ${endDateStr}`);
+      } else if (startDateStr) {
+        dateFilter = ' AND date >= $2::date';
+        queryParams.push(startDateStr);
+        console.log(`📅 Aplicando filtro desde: ${startDateStr}`);
+      } else if (endDateStr) {
+        dateFilter = ' AND date <= $2::date';
+        queryParams.push(endDateStr);
+        console.log(`📅 Aplicando filtro hasta: ${endDateStr}`);
       } else {
         console.log(`📅 Sin filtro de fechas - mostrando todas las facturas`);
       }
@@ -120,6 +132,22 @@ export class DashboardSimpleController {
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
       // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
+      // paymentDate es timestamptz → convertir a timezone del tenant antes de comparar
+      let paymentDateFilter = '';
+      const paymentParams: any[] = [organizationId];
+
+      if (startDateStr && endDateStr) {
+        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date
+                              AND (p."paymentDate" AT TIME ZONE $2)::date <= $4::date`;
+        paymentParams.push(orgTimezone, startDateStr, endDateStr);
+      } else if (startDateStr) {
+        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date`;
+        paymentParams.push(orgTimezone, startDateStr);
+      } else if (endDateStr) {
+        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date <= $3::date`;
+        paymentParams.push(orgTimezone, endDateStr);
+      }
+
       const paymentMethodsQuery = `
         SELECT
           COALESCE(ba.name, p."paymentMethod") as method,
@@ -129,13 +157,13 @@ export class DashboardSimpleController {
         LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
         WHERE p.organization_id = $1
         AND p.deleted_at IS NULL
-        ${dateFilter.replace(/date/g, 'p."paymentDate"')}
+        ${paymentDateFilter}
         GROUP BY COALESCE(ba.name, p."paymentMethod")
         ORDER BY total_amount DESC
       `;
 
       console.log('💳 Consultando métodos de pago...');
-      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, queryParams);
+      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, paymentParams);
       console.log(`💳 Métodos de pago encontrados: ${paymentMethods.length}`);
 
       const totalPayments = paymentMethods.reduce((sum, pm) => sum + parseFloat(pm.total_amount || 0), 0);
@@ -193,18 +221,21 @@ export class DashboardSimpleController {
       let previousPeriodExpenses = 0;
       let previousPeriodInvoicesCount = 0;
 
-      if (query.startDate && query.endDate) {
-        const start = new Date(query.startDate);
-        const end = new Date(query.endDate);
-        const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      if (startDateStr && endDateStr) {
+        // Calcular período anterior usando Date math con strings normalizados
+        const start = new Date(startDateStr + 'T00:00:00');
+        const end = new Date(endDateStr + 'T00:00:00');
+        const diffDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
 
-        // Calcular fechas del período anterior
         const prevEnd = new Date(start);
         prevEnd.setDate(prevEnd.getDate() - 1);
         const prevStart = new Date(prevEnd);
         prevStart.setDate(prevStart.getDate() - diffDays);
 
-        console.log(`📅 Calculando período anterior: ${prevStart.toISOString().split('T')[0]} - ${prevEnd.toISOString().split('T')[0]}`);
+        const prevStartStr = prevStart.toISOString().split('T')[0];
+        const prevEndStr = prevEnd.toISOString().split('T')[0];
+
+        console.log(`📅 Calculando período anterior: ${prevStartStr} - ${prevEndStr}`);
 
         const previousInvoicesQuery = `
           SELECT
@@ -213,7 +244,7 @@ export class DashboardSimpleController {
           FROM invoices
           WHERE organization_id = $1
           AND deleted_at IS NULL
-          AND date >= $2 AND date <= $3
+          AND date >= $2::date AND date <= $3::date
         `;
 
         const previousExpensesQuery = `
@@ -222,19 +253,19 @@ export class DashboardSimpleController {
           WHERE organization_id = $1
           AND status = 'approved'
           AND deleted_at IS NULL
-          AND date >= $2 AND date <= $3
+          AND date >= $2::date AND date <= $3::date
         `;
 
         const [prevInvResult] = await this.entityManager.query(previousInvoicesQuery, [
           organizationId,
-          prevStart.toISOString().split('T')[0],
-          prevEnd.toISOString().split('T')[0]
+          prevStartStr,
+          prevEndStr,
         ]);
 
         const [prevExpResult] = await this.entityManager.query(previousExpensesQuery, [
           organizationId,
-          prevStart.toISOString().split('T')[0],
-          prevEnd.toISOString().split('T')[0]
+          prevStartStr,
+          prevEndStr,
         ]);
 
         previousPeriodRevenue = parseFloat(prevInvResult?.total_revenue || '0');
@@ -300,40 +331,8 @@ export class DashboardSimpleController {
         }
       };
     } catch (error) {
-      console.log('❌ Error obteniendo datos reales:', error);
-      
-      // Fallback - usar datos reales básicos sin consultas complejas
-      return {
-        totalRevenue: 336400, // Datos conocidos reales
-        totalExpenses: 650,
-        totalProfit: 335750,
-        totalInvoices: 4,
-        paidInvoices: 4,
-        pendingInvoices: 0,
-        totalCustomers: 2, // Datos reales conocidos
-        totalProducts: 2, // Datos reales conocidos
-        profitMargin: '99.8',
-        revenueGrowth: 0,
-        monthlyStats: {
-          currentMonth: {
-            revenue: 336400,
-            expenses: 650,
-            profit: 335750,
-            invoicesCount: 4
-          },
-          previousMonth: {
-            revenue: 285940,
-            expenses: 585,
-            profit: 285355,
-            invoicesCount: 3
-          }
-        },
-        chartData: {
-          revenue: [201840, 252300, 285940, 336400],
-          expenses: [325, 455, 585, 650],
-          profit: [201515, 251845, 285355, 335750]
-        }
-      };
+      console.error('❌ Error obteniendo datos del dashboard:', error);
+      throw new InternalServerErrorException('Error al obtener resumen del dashboard');
     }
   }
 
@@ -612,25 +611,18 @@ export class DashboardSimpleController {
         throw new Error('Organization ID not found');
       }
 
-      // 📅 RESPETAR FILTROS DE FECHA DEL FRONTEND
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-      
-      if (query.startDate) {
-        startDate = new Date(query.startDate);
-        console.log(`📅 Fecha inicio filtro: ${startDate.toISOString()}`);
-      }
-      
-      if (query.endDate) {
-        endDate = new Date(query.endDate);
-        console.log(`📅 Fecha fin filtro: ${endDate.toISOString()}`);
-      }
+      // 📅 NORMALIZAR FILTROS DE FECHA A STRINGS YYYY-MM-DD
+      const startDate = query.startDate ? String(query.startDate).substring(0, 10) : undefined;
+      const endDate = query.endDate ? String(query.endDate).substring(0, 10) : undefined;
 
-      // ✅ USAR EL PROFITABILITYSERVICE ACTUALIZADO CON FIFO REAL
+      if (startDate) console.log(`📅 Fecha inicio filtro: ${startDate}`);
+      if (endDate) console.log(`📅 Fecha fin filtro: ${endDate}`);
+
+      // ✅ USAR EL PROFITABILITYSERVICE CON STRINGS NORMALIZADOS
       const realStats = await this.profitabilityService.getProfitabilityStats(
         organizationId,
         startDate,
-        endDate
+        endDate,
       );
 
       console.log('💰 DATOS FIFO FILTRADOS:');
@@ -645,58 +637,8 @@ export class DashboardSimpleController {
       };
 
     } catch (error) {
-      console.log('❌ Error calculando rentabilidad FIFO:', error.message);
-      
-      // Fallback con datos ejemplo
-      const totalRevenue = 6400;
-      const totalCOGS = 2500;
-      const grossProfit = totalRevenue - totalCOGS;
-      const grossMarginPercentage = (grossProfit / totalRevenue) * 100;
-      
-      return {
-        message: '⚠️ RENTABILIDAD FIFO - MODO FALLBACK',
-        error: error.message,
-        totalRevenue,
-        totalCOGS,
-        grossProfit,
-        grossMarginPercentage,
-        netProfit: grossProfit,
-        netMarginPercentage: grossMarginPercentage,
-        averageMarginPerSale: grossMarginPercentage,
-        topProfitableProducts: [
-          {
-            productId: 'a36c5958-0230-4f67-b3f8-86ac72c5df82',
-            productName: 'sal refisal 1 kg',
-            sku: 'SAL92158',
-            categoryName: 'General',
-            totalRevenue: 6400,
-            totalCOGS: 2500,
-            grossProfit: 3900,
-            marginPercentage: 60.94,
-            unitsSold: 2,
-            averageSellingPrice: 3200,
-            averageFifoCost: 1250,
-          }
-        ],
-        lowProfitableProducts: [],
-        marginsByCategory: {
-          'General': 60.94
-        },
-        trend: {
-          previousPeriodGrossMargin: 0,
-          currentPeriodGrossMargin: grossMarginPercentage,
-          marginGrowth: 0,
-          isImproving: true,
-          dailyMargins: [
-            {
-              date: new Date().toISOString(),
-              grossMarginPercentage,
-              dailyRevenue: totalRevenue,
-              dailyCOGS: totalCOGS,
-            }
-          ]
-        }
-      };
+      console.error('❌ Error calculando rentabilidad FIFO:', error.message);
+      throw new InternalServerErrorException('Error al calcular rentabilidad');
     }
   }
 
@@ -709,32 +651,25 @@ export class DashboardSimpleController {
       // Usar organización real conocida
       const organizationId = '20d665c8-25a3-454a-a564-2e8a0c81f025';
 
-      // 📅 RESPETAR FILTROS DE FECHA DEL FRONTEND
-      let startDate: Date | undefined;
-      let endDate: Date | undefined;
-      
-      if (query.startDate) {
-        startDate = new Date(query.startDate);
-        console.log(`📅 Fecha inicio filtro: ${startDate.toISOString()}`);
-      }
-      
-      if (query.endDate) {
-        endDate = new Date(query.endDate);
-        console.log(`📅 Fecha fin filtro: ${endDate.toISOString()}`);
-      }
+      // 📅 NORMALIZAR FILTROS DE FECHA A STRINGS YYYY-MM-DD
+      const startDate = query.startDate ? String(query.startDate).substring(0, 10) : undefined;
+      const endDate = query.endDate ? String(query.endDate).substring(0, 10) : undefined;
 
-      // ✅ USAR EL PROFITABILITYSERVICE CON FILTROS
+      if (startDate) console.log(`📅 Fecha inicio filtro: ${startDate}`);
+      if (endDate) console.log(`📅 Fecha fin filtro: ${endDate}`);
+
+      // ✅ USAR EL PROFITABILITYSERVICE CON STRINGS NORMALIZADOS
       const realStats = await this.profitabilityService.getProfitabilityStats(
         organizationId,
         startDate,
-        endDate
+        endDate,
       );
 
       return {
         message: '🎉 PRUEBA REAL DE FILTROS FIFO!',
         filtersApplied: {
-          startDate: startDate?.toISOString() || 'No aplicado',
-          endDate: endDate?.toISOString() || 'No aplicado'
+          startDate: startDate || 'No aplicado',
+          endDate: endDate || 'No aplicado',
         },
         ...realStats
       };
