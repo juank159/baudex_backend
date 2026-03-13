@@ -449,15 +449,42 @@ export class AuthService {
     return { token };
   }
 
+  // ==================== LOGOUT ====================
+
+  /**
+   * Cerrar sesión actual: revocar la sesión identificada por jti
+   */
+  async logout(jti?: string): Promise<{ message: string }> {
+    if (!jti) {
+      return { message: 'Sesión cerrada (sin jti)' };
+    }
+
+    const session = await this.activeSessionRepository.findOne({
+      where: { jti },
+    });
+
+    if (session) {
+      session.isActive = false;
+      await this.activeSessionRepository.save(session);
+      console.log(`🔓 Sesión revocada por logout: jti=${jti.substring(0, 8)}...`);
+    }
+
+    return { message: 'Sesión cerrada exitosamente' };
+  }
+
   // ==================== GESTIÓN DE SESIONES ====================
 
   /**
-   * Verificar límite de dispositivos según plan de suscripción
+   * Verificar límite de dispositivos según plan de suscripción.
+   * Limpia sesiones stale (sin actividad en 48h+) antes de validar.
    */
   private async checkDeviceLimit(
     userId: string,
     organizationId: string,
   ): Promise<void> {
+    // Limpiar sesiones stale antes de verificar el límite
+    await this.cleanupStaleSessions(userId);
+
     // Obtener suscripción activa
     const subscription =
       await this.subscriptionService.getActiveSubscription(organizationId);
@@ -486,6 +513,36 @@ export class AuthService {
     if (activeCount >= maxDevices) {
       throw new ForbiddenException(
         `Has alcanzado el límite de ${maxDevices} dispositivos conectados para tu plan. Cierra sesión en otro dispositivo para continuar.`,
+      );
+    }
+  }
+
+  /**
+   * Revocar sesiones sin actividad en las últimas 48 horas.
+   * Previene bloqueos cuando el usuario cerró la app sin hacer logout.
+   */
+  private async cleanupStaleSessions(userId: string): Promise<void> {
+    const staleThreshold = new Date();
+    staleThreshold.setHours(staleThreshold.getHours() - 48);
+
+    const staleSessions = await this.activeSessionRepository.find({
+      where: {
+        userId,
+        isActive: true,
+        lastActivityAt: Raw(
+          (alias) => `${alias} < :threshold`,
+          { threshold: staleThreshold.toISOString() },
+        ),
+      },
+    });
+
+    if (staleSessions.length > 0) {
+      for (const session of staleSessions) {
+        session.isActive = false;
+        await this.activeSessionRepository.save(session);
+      }
+      console.log(
+        `🧹 ${staleSessions.length} sesiones stale revocadas para usuario ${userId.substring(0, 8)}...`,
       );
     }
   }

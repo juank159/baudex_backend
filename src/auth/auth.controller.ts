@@ -125,6 +125,31 @@ export class AuthController {
     return this.authService.validatePassword(user.id, body.password);
   }
 
+  // ==================== LOGOUT ====================
+
+  @Post('logout')
+  @UseGuards(AuthGuard())
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cerrar sesión actual (revocar sesión del dispositivo)',
+  })
+  @ApiResponse({ status: 200, description: 'Sesión cerrada exitosamente' })
+  @ApiResponse({ status: 401, description: 'Token inválido' })
+  logout(@Req() req: any) {
+    const token = req.headers?.authorization?.replace('Bearer ', '');
+    let jti: string | undefined;
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(token.split('.')[1], 'base64').toString(),
+      );
+      jti = decoded.jti;
+    } catch {
+      // Si no se puede decodificar, intentar revocar por user
+    }
+    return this.authService.logout(jti);
+  }
+
   // ==================== GESTIÓN DE SESIONES ====================
 
   @Get('sessions')
