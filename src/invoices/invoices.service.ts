@@ -158,6 +158,13 @@ export class InvoicesService {
       }
     }
 
+    // 🌐 OBTENER TIMEZONE DE LA ORGANIZACIÓN para fechas correctas
+    const organization = await this.organizationRepository.findOne({
+      where: { id: tenantId },
+      select: ['id', 'timezone'],
+    });
+    const orgTimezone = organization?.timezone || 'America/New_York';
+
     return this.dataSource.transaction(async (manager) => {
       // Calcular status
       const finalStatus =
@@ -170,14 +177,23 @@ export class InvoicesService {
         createInvoiceDto.paymentMethod,
         customer,
         createInvoiceDto.metadata,
+        orgTimezone,
       );
+
+      // 📅 CALCULAR FECHA EN TIMEZONE DE LA ORGANIZACIÓN (no UTC)
+      // Si el frontend envía "2026-03-13T01:00:00Z" pero el tenant está en UTC-5,
+      // la fecha real del negocio es 2026-03-12, no 2026-03-13
+      const invoiceDateUtc = createInvoiceDto.date
+        ? new Date(createInvoiceDto.date)
+        : new Date();
+      const invoiceDateStr = invoiceDateUtc.toLocaleDateString('en-CA', {
+        timeZone: orgTimezone,
+      }); // "YYYY-MM-DD" en timezone del tenant
 
       // Crear factura
       const invoice = manager.create(Invoice, {
         number: createInvoiceDto.number,
-        date: createInvoiceDto.date
-          ? new Date(createInvoiceDto.date)
-          : new Date(),
+        date: new Date(invoiceDateStr + 'T12:00:00'), // Mediodía para evitar edge cases de timezone
         dueDate: calculatedDueDate, // 📅 SIEMPRE usar la fecha calculada por el backend
         paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
         taxPercentage: createInvoiceDto.taxPercentage || 19,
@@ -744,31 +760,37 @@ export class InvoicesService {
     paymentMethod: PaymentMethod,
     customer: any,
     metadata?: any,
+    orgTimezone?: string,
   ): Date {
-    const now = new Date();
+    const tz = orgTimezone || 'America/New_York';
+    // Obtener "hoy" en el timezone de la organización
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // "YYYY-MM-DD"
+
+    // Helper: crear Date a partir de "YYYY-MM-DD" + días adicionales
+    const addDays = (dateStr: string, days: number): Date => {
+      const d = new Date(dateStr + 'T12:00:00'); // Mediodía para evitar edge cases
+      d.setDate(d.getDate() + days);
+      return d;
+    };
+
+    // "Hoy" como Date (mediodía para evitar offset UTC)
+    const todayDate = new Date(todayStr + 'T12:00:00');
 
     // 📅 CASO 1: Pagos múltiples con saldo pendiente → plazo extendido
-    // Si la metadata indica que hay pagos múltiples y queda saldo
     if (metadata?.isMultiplePayment) {
       const totalPaid = Number(metadata.totalPaid) || 0;
       const remainingBalance = Number(metadata.remainingBalance) || 0;
 
-      // Si hay saldo pendiente (pago parcial)
       if (remainingBalance > 0 || metadata.createCreditForRemaining) {
         const days = customer?.paymentTerms || 30;
-        const dueDate = new Date(now);
-        dueDate.setDate(dueDate.getDate() + days);
-        dueDate.setHours(23, 59, 59);
-
+        const dueDate = addDays(todayStr, days);
         console.log(`📅 Pago parcial detectado - Fecha de vencimiento: ${dueDate.toISOString().split('T')[0]} (${days} días)`);
         console.log(`   Total pagado: $${totalPaid}, Saldo restante: $${remainingBalance}`);
-
         return dueDate;
       }
 
-      // Si pago completo → fin del día actual
-      console.log('📅 Pago completo detectado - Vence hoy al final del día');
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      console.log('📅 Pago completo detectado - Vence hoy');
+      return todayDate;
     }
 
     // 📅 CASO 2: Método de pago específico
@@ -777,32 +799,25 @@ export class InvoicesService {
       case PaymentMethod.CREDIT_CARD:
       case PaymentMethod.DEBIT_CARD:
       case PaymentMethod.BANK_TRANSFER:
-        // Pagos inmediatos: fin del día actual
-        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        return todayDate;
 
-      case PaymentMethod.CREDIT:
-        // Crédito: según términos del cliente (o 30 días por defecto)
+      case PaymentMethod.CREDIT: {
         const creditDays = customer?.paymentTerms || 30;
-        const creditDate = new Date(now);
-        creditDate.setDate(creditDate.getDate() + creditDays);
-        creditDate.setHours(23, 59, 59);
+        const creditDate = addDays(todayStr, creditDays);
         console.log(`📅 Crédito - Fecha de vencimiento: ${creditDate.toISOString().split('T')[0]} (${creditDays} días)`);
         return creditDate;
+      }
 
-      case PaymentMethod.CHECK:
-        // Cheque: 15 días para permitir cobro
-        const checkDate = new Date(now);
-        checkDate.setDate(checkDate.getDate() + 15);
-        checkDate.setHours(23, 59, 59);
+      case PaymentMethod.CHECK: {
+        const checkDate = addDays(todayStr, 15);
         console.log(`📅 Cheque - Fecha de vencimiento: ${checkDate.toISOString().split('T')[0]} (15 días)`);
         return checkDate;
+      }
 
-      default:
-        // Otros: 30 días por defecto
-        const defaultDate = new Date(now);
-        defaultDate.setDate(defaultDate.getDate() + 30);
-        defaultDate.setHours(23, 59, 59);
+      default: {
+        const defaultDate = addDays(todayStr, 30);
         return defaultDate;
+      }
     }
   }
 
