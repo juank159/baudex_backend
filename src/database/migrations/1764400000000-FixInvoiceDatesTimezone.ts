@@ -21,17 +21,17 @@ export class FixInvoiceDatesTimezone1764400000000
         AND i.date != (i.created_at AT TIME ZONE COALESCE(o.timezone, 'America/New_York'))::date
     `);
 
-    // Corregir due_date para facturas de pago inmediato (cash, card, transfer)
-    // donde due_date debería ser = date (mismo día, no día siguiente en UTC)
-    // Solo corregir cuando due_date original == date original (ambas estaban mal por 1 día)
+    // Corregir dueDate para facturas de pago inmediato (cash, card, transfer)
+    // donde dueDate debería ser = date (mismo día, no día siguiente en UTC)
+    // Solo corregir cuando dueDate original == date original (ambas estaban mal por 1 día)
     await queryRunner.query(`
       UPDATE invoices i
-      SET due_date = (i.created_at AT TIME ZONE COALESCE(o.timezone, 'America/New_York'))::date
+      SET "dueDate" = (i.created_at AT TIME ZONE COALESCE(o.timezone, 'America/New_York'))::date
       FROM organizations o
       WHERE i.organization_id = o.id
         AND i.deleted_at IS NULL
-        AND i.payment_method IN ('cash', 'credit_card', 'debit_card', 'bank_transfer')
-        AND i.due_date != (i.created_at AT TIME ZONE COALESCE(o.timezone, 'America/New_York'))::date
+        AND i."paymentMethod" IN ('cash', 'credit_card', 'debit_card', 'bank_transfer')
+        AND i."dueDate" != (i.created_at AT TIME ZONE COALESCE(o.timezone, 'America/New_York'))::date
     `);
 
     console.log('✅ Migración: Fechas de facturas corregidas con timezone de organización');
