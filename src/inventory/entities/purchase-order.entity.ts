@@ -27,8 +27,9 @@ export enum PurchaseOrderStatus {
 @Entity('purchase_orders')
 @Index(['organizationId', 'orderDate'])
 @Index(['organizationId', 'status'])
+@Index(['organizationId', 'orderNumber'], { unique: true })
 export class PurchaseOrder extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true, name: 'poNumber' })
+  @Column({ type: 'varchar', length: 50, name: 'poNumber' })
   orderNumber: string;
 
   @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP', name: 'date' })

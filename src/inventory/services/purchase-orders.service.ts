@@ -178,7 +178,8 @@ export class PurchaseOrdersService {
 
         if (
           errCode === '23505' &&
-          errConstraint === 'purchase_orders_poNumber_key' &&
+          (errConstraint === 'purchase_orders_poNumber_key' ||
+            errConstraint === 'UQ_purchase_orders_org_poNumber') &&
           attempt < MAX_RETRIES - 1
         ) {
           this.logger.warn(
@@ -884,6 +885,10 @@ export class PurchaseOrdersService {
       }
     }
 
-    return `${prefix}${String(sequence).padStart(6, '0')}`;
+    const orderNumber = `${prefix}${String(sequence).padStart(6, '0')}`;
+    this.logger.log(
+      `generateOrderNumber: MAX="${result[0]?.max_po || 'null'}" → next="${orderNumber}" (org: ${organizationId.substring(0, 8)}...)`,
+    );
+    return orderNumber;
   }
 }
