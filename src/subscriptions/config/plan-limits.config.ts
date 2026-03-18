@@ -92,31 +92,31 @@ export const TRIAL_LIMITS: PlanLimits = {
 
 /**
  * Límites del Plan Básico
- * Solo limita: máximo 5 dispositivos conectados simultáneamente
+ * Solo limita: máximo 2 dispositivos conectados simultáneamente
  */
 export const BASIC_LIMITS: PlanLimits = {
   ...UNLIMITED_RESOURCES,
-  maxDevices: 5,
+  maxDevices: 2,
   features: ALL_FEATURES_ENABLED,
 };
 
 /**
  * Límites del Plan Premium
- * Solo limita: máximo 10 dispositivos conectados simultáneamente
+ * Solo limita: máximo 3 dispositivos conectados simultáneamente
  */
 export const PREMIUM_LIMITS: PlanLimits = {
   ...UNLIMITED_RESOURCES,
-  maxDevices: 10,
+  maxDevices: 3,
   features: ALL_FEATURES_ENABLED,
 };
 
 /**
  * Límites del Plan Enterprise
- * Sin límites: dispositivos ilimitados
+ * Solo limita: máximo 5 dispositivos conectados simultáneamente
  */
 export const ENTERPRISE_LIMITS: PlanLimits = {
   ...UNLIMITED_RESOURCES,
-  maxDevices: -1, // Ilimitado
+  maxDevices: 5,
   features: ALL_FEATURES_ENABLED,
 };
 
