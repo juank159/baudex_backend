@@ -871,10 +871,10 @@ export class PurchaseOrdersService {
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `PO-${year}${month}-`;
 
-    // Usar MAX con FOR UPDATE para bloquear filas y evitar colisiones concurrentes
+    // Buscar MAX global (sin filtrar por org) porque el constraint poNumber es global
     const result = await queryRunner.query(
-      `SELECT MAX("poNumber") as max_po FROM purchase_orders WHERE "organization_id" = $1 AND "poNumber" LIKE $2`,
-      [organizationId, `${prefix}%`],
+      `SELECT MAX("poNumber") as max_po FROM purchase_orders WHERE "poNumber" LIKE $1`,
+      [`${prefix}%`],
     );
 
     let sequence = 1;
@@ -887,7 +887,7 @@ export class PurchaseOrdersService {
 
     const orderNumber = `${prefix}${String(sequence).padStart(6, '0')}`;
     this.logger.log(
-      `generateOrderNumber: MAX="${result[0]?.max_po || 'null'}" → next="${orderNumber}" (org: ${organizationId.substring(0, 8)}...)`,
+      `generateOrderNumber: MAX="${result[0]?.max_po || 'null'}" → next="${orderNumber}"`,
     );
     return orderNumber;
   }
