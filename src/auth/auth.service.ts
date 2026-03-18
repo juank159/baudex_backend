@@ -476,8 +476,8 @@ export class AuthService {
 
   /**
    * Verificar límite de dispositivos según plan de suscripción.
-   * Patrón "último login gana": si el límite se alcanza, se revoca
-   * la sesión más antigua para hacer espacio al nuevo login.
+   * Si el límite se alcanza, BLOQUEA el login y pide al usuario
+   * que cierre sesión en otro dispositivo primero.
    */
   private async checkDeviceLimit(
     userId: string,
@@ -488,6 +488,7 @@ export class AuthService {
 
     // Paso 2: Determinar límite según plan
     let maxDevices = 2; // default sin suscripción
+    let planName = 'Plan de Prueba';
 
     const subscription =
       await this.subscriptionService.getActiveSubscription(organizationId);
@@ -495,6 +496,7 @@ export class AuthService {
     if (subscription) {
       const limits = getPlanLimits(subscription.plan);
       maxDevices = limits.maxDevices;
+      planName = this.getPlanDisplayName(subscription.plan);
     }
 
     // Si es ilimitado, no verificar
@@ -502,45 +504,31 @@ export class AuthService {
       return;
     }
 
-    // Paso 3: Si se alcanzó el límite, revocar sesiones más antiguas
+    // Paso 3: Si se alcanzó el límite, BLOQUEAR el login
     const activeCount = await this.getActiveSessionCount(userId);
 
     if (activeCount >= maxDevices) {
-      await this.revokeOldestSessions(userId, activeCount - maxDevices + 1);
+      console.log(
+        `🚫 Límite de dispositivos alcanzado: ${activeCount}/${maxDevices} para usuario ${userId.substring(0, 8)}...`,
+      );
+      throw new ForbiddenException(
+        `Has alcanzado el límite de ${maxDevices} dispositivo(s) permitido(s) en tu ${planName}. ` +
+          `Cierra sesión en uno de tus dispositivos conectados e intenta de nuevo.`,
+      );
     }
   }
 
   /**
-   * Revocar las N sesiones más antiguas del usuario para hacer espacio.
-   * Patrón "último login gana" - el dispositivo más reciente tiene prioridad.
+   * Obtener nombre legible del plan
    */
-  private async revokeOldestSessions(
-    userId: string,
-    count: number,
-  ): Promise<void> {
-    const oldestSessions = await this.activeSessionRepository.find({
-      where: {
-        userId,
-        isActive: true,
-        expiresAt: MoreThan(new Date()),
-      },
-      order: { lastActivityAt: 'ASC' },
-      take: count,
-    });
-
-    for (const session of oldestSessions) {
-      session.isActive = false;
-      await this.activeSessionRepository.save(session);
-      console.log(
-        `🔄 Sesión antigua revocada (último login gana): device=${session.deviceInfo?.substring(0, 30)}..., lastActivity=${session.lastActivityAt.toISOString()}`,
-      );
-    }
-
-    if (oldestSessions.length > 0) {
-      console.log(
-        `✅ ${oldestSessions.length} sesión(es) revocada(s) para hacer espacio al nuevo login`,
-      );
-    }
+  private getPlanDisplayName(plan: string): string {
+    const names: Record<string, string> = {
+      trial: 'Plan de Prueba',
+      basic: 'Plan Básico',
+      premium: 'Plan Premium',
+      enterprise: 'Plan Empresarial',
+    };
+    return names[plan] || 'Plan actual';
   }
 
   /**
