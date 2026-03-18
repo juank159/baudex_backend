@@ -206,9 +206,21 @@ export class PurchaseOrdersService {
       return finalOrder;
     } catch (error) {
       await queryRunner.rollbackTransaction();
+
+      // Manejar error de poNumber duplicado: reintentar con nuevo número
+      const errCode = error?.driverError?.code || error?.code;
+      const errConstraint = error?.driverError?.constraint || error?.constraint;
+      if (errCode === '23505' && errConstraint === 'purchase_orders_poNumber_key') {
+        this.logger.warn(`poNumber duplicado detectado, reintentando con nuevo número...`);
+        await queryRunner.release();
+        return this.create(createPurchaseOrderDto, organizationId, userId);
+      }
+
       throw error;
     } finally {
-      await queryRunner.release();
+      if (!queryRunner.isReleased) {
+        await queryRunner.release();
+      }
     }
   }
 
@@ -226,12 +238,12 @@ export class PurchaseOrdersService {
       search,
     } = query;
 
+    // Solo cargar supplier y createdBy para el listado (NO items ni products)
     const queryBuilder = this.purchaseOrderRepository
       .createQueryBuilder('po')
       .leftJoinAndSelect('po.supplier', 'supplier')
-      .leftJoinAndSelect('po.items', 'items')
-      .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('po.createdBy', 'createdBy')
+      .loadRelationCountAndMap('po.itemCount', 'po.items')
       .where('po.organizationId = :organizationId', { organizationId });
 
     if (supplierId) {
@@ -840,26 +852,32 @@ export class PurchaseOrdersService {
     totalValue: number;
     averageOrderValue: number;
   }> {
-    const orders = await this.purchaseOrderRepository.find({
-      where: { organizationId },
-    });
+    // Usar queries agregadas en vez de cargar todos los registros
+    const statsResult = await this.purchaseOrderRepository
+      .createQueryBuilder('po')
+      .select('po.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('COALESCE(SUM(po.total), 0)', 'totalValue')
+      .where('po.organizationId = :organizationId', { organizationId })
+      .groupBy('po.status')
+      .getRawMany();
 
     const stats = {
-      total: orders.length,
+      total: 0,
       byStatus: {} as Record<PurchaseOrderStatus, number>,
       totalValue: 0,
       averageOrderValue: 0,
     };
 
-    // Inicializar contadores de estado
     Object.values(PurchaseOrderStatus).forEach((status) => {
       stats.byStatus[status] = 0;
     });
 
-    // Calcular estadísticas
-    orders.forEach((order) => {
-      stats.byStatus[order.status]++;
-      stats.totalValue += Number(order.total) || 0;
+    statsResult.forEach((row) => {
+      const count = parseInt(row.count, 10);
+      stats.byStatus[row.status] = count;
+      stats.total += count;
+      stats.totalValue += parseFloat(row.totalValue) || 0;
     });
 
     stats.averageOrderValue =
@@ -874,12 +892,22 @@ export class PurchaseOrdersService {
   ): Promise<string> {
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const prefix = `PO-${year}${month}-`;
 
-    const count = await queryRunner.manager.count(PurchaseOrder, {
-      where: { organizationId },
-    });
+    // Usar MAX en lugar de COUNT para evitar colisiones con registros eliminados o gaps
+    const result = await queryRunner.query(
+      `SELECT MAX("poNumber") as max_po FROM purchase_orders WHERE "organization_id" = $1 AND "poNumber" LIKE $2`,
+      [organizationId, `${prefix}%`],
+    );
 
-    const sequence = String(count + 1).padStart(6, '0');
-    return `PO-${year}${month}-${sequence}`;
+    let sequence = 1;
+    if (result[0]?.max_po) {
+      const lastNum = parseInt(result[0].max_po.replace(prefix, ''), 10);
+      if (!isNaN(lastNum)) {
+        sequence = lastNum + 1;
+      }
+    }
+
+    return `${prefix}${String(sequence).padStart(6, '0')}`;
   }
 }

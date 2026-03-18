@@ -27,6 +27,7 @@ export enum PurchaseOrderStatus {
 
 @Entity('purchase_orders')
 @Index(['organizationId', 'orderDate'])
+@Index(['organizationId', 'status'])
 export class PurchaseOrder extends BaseEntity {
   @Column({ type: 'varchar', length: 50, unique: true, name: 'poNumber' })
   orderNumber: string;
@@ -104,6 +105,7 @@ export class PurchaseOrder extends BaseEntity {
 
   // Relación con proveedor
   @Column({ type: 'uuid' })
+  @Index()
   supplierId: string;
 
   @ManyToOne(() => Supplier, (supplier) => supplier.purchaseOrders)
@@ -139,7 +141,6 @@ export class PurchaseOrder extends BaseEntity {
   // Items de la orden
   @OneToMany(() => PurchaseOrderItem, (item) => item.purchaseOrder, {
     cascade: true,
-    eager: true,
   })
   items: PurchaseOrderItem[];
 
