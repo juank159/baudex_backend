@@ -53,9 +53,7 @@ export class PurchaseOrdersService {
     organizationId: string,
     userId: string,
   ): Promise<PurchaseOrder> {
-    const MAX_RETRIES = 5;
-
-    // Verificar proveedor y productos ANTES del loop (no cambian entre intentos)
+    // Verificar proveedor y productos ANTES de la transacción
     const supplier = await this.supplierRepository.findOne({
       where: { id: createPurchaseOrderDto.supplierId, organizationId },
     });
@@ -75,6 +73,7 @@ export class PurchaseOrdersService {
     }
 
     const { items: itemsDto, ...orderData } = createPurchaseOrderDto;
+    const MAX_RETRIES = 3;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const queryRunner = this.dataSource.createQueryRunner();
@@ -82,13 +81,12 @@ export class PurchaseOrdersService {
       await queryRunner.startTransaction();
 
       try {
-        // Generar número de orden con lock para evitar colisiones
+        // generateOrderNumber ya tiene su propio loop robusto con double-check y fallback
         const orderNumber = await this.generateOrderNumber(
           organizationId,
           queryRunner,
         );
 
-        // Crear la orden de compra
         const purchaseOrder = queryRunner.manager.create(PurchaseOrder, {
           ...orderData,
           orderNumber,
@@ -176,14 +174,17 @@ export class PurchaseOrdersService {
         const errConstraint =
           error?.driverError?.constraint || error?.constraint;
 
+        // Última defensa: si aún así hay colisión de poNumber, reintentar
         if (
           errCode === '23505' &&
-          (errConstraint === 'purchase_orders_poNumber_key' ||
-            errConstraint === 'UQ_purchase_orders_org_poNumber') &&
+          errConstraint === 'UQ_purchase_orders_org_poNumber' &&
           attempt < MAX_RETRIES - 1
         ) {
           this.logger.warn(
-            `poNumber duplicado (intento ${attempt + 1}/${MAX_RETRIES}), reintentando...`,
+            `poNumber colisión en INSERT (intento ${attempt + 1}/${MAX_RETRIES}), reintentando...`,
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.random() * 50 + 20),
           );
           continue;
         }
@@ -273,18 +274,6 @@ export class PurchaseOrdersService {
     if (!purchaseOrder) {
       throw new NotFoundException('Purchase order not found');
     }
-
-    this.logger.log(
-      `🔍 DEBUG purchaseOrder.items length: ${purchaseOrder.items.length}`,
-    );
-    purchaseOrder.items.forEach((item, index) => {
-      this.logger.log(`🔍 DEBUG Item ${index}:`);
-      this.logger.log(`   - id: ${item.id}`);
-      this.logger.log(`   - productId: ${item.productId}`);
-      this.logger.log(
-        `   - product: ${item.product ? JSON.stringify({ id: item.product.id, name: item.product.name }) : 'NULL'}`,
-      );
-    });
 
     return purchaseOrder;
   }
@@ -871,24 +860,85 @@ export class PurchaseOrdersService {
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `PO-${year}${month}-`;
 
-    // Buscar MAX global (sin filtrar por org) porque el constraint poNumber es global
-    const result = await queryRunner.query(
-      `SELECT MAX("poNumber") as max_po FROM purchase_orders WHERE "poNumber" LIKE $1`,
-      [`${prefix}%`],
-    );
+    let attempts = 0;
+    const maxAttempts = 10;
 
-    let sequence = 1;
-    if (result[0]?.max_po) {
-      const lastNum = parseInt(result[0].max_po.replace(prefix, ''), 10);
-      if (!isNaN(lastNum)) {
-        sequence = lastNum + 1;
+    while (attempts < maxAttempts) {
+      try {
+        // Buscar todos los poNumber existentes para esta org + mes/año (incluye soft-deleted)
+        const existingOrders = await queryRunner.manager
+          .createQueryBuilder(PurchaseOrder, 'po')
+          .withDeleted()
+          .select('po.orderNumber')
+          .where('po.organizationId = :organizationId', { organizationId })
+          .andWhere('po.orderNumber LIKE :pattern', { pattern: `${prefix}%` })
+          .orderBy('po.orderNumber', 'DESC')
+          .getMany();
+
+        // Extraer el número de secuencia más alto
+        let maxSequence = 0;
+        for (const order of existingOrders) {
+          const sequencePart = order.orderNumber.substring(prefix.length);
+          const sequenceNumber = parseInt(sequencePart, 10);
+          if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
+            maxSequence = sequenceNumber;
+          }
+        }
+
+        const nextSequence = maxSequence + 1;
+        const newOrderNumber = `${prefix}${String(nextSequence).padStart(6, '0')}`;
+
+        // Double-check: verificar que NO existe (maneja race conditions)
+        const existingCheck = await queryRunner.manager
+          .createQueryBuilder(PurchaseOrder, 'po')
+          .withDeleted()
+          .where('po.organizationId = :organizationId', { organizationId })
+          .andWhere('po.orderNumber = :orderNumber', { orderNumber: newOrderNumber })
+          .getOne();
+
+        if (!existingCheck) {
+          this.logger.log(
+            `generateOrderNumber: org=${organizationId.substring(0, 8)}... maxSeq=${maxSequence} → next="${newOrderNumber}"`,
+          );
+          return newOrderNumber;
+        }
+
+        // Si ya existe, reintentar
+        attempts++;
+        this.logger.warn(
+          `generateOrderNumber: "${newOrderNumber}" ya existe, reintentando (${attempts}/${maxAttempts})`,
+        );
+
+        // Delay aleatorio para reducir colisiones concurrentes
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 10 + 5),
+        );
+      } catch (error) {
+        this.logger.error(
+          `Error generando orderNumber (intento ${attempts + 1}):`,
+          error,
+        );
+        attempts++;
+        if (attempts >= maxAttempts) {
+          // Fallback: timestamp + random
+          const timestamp = Date.now().toString().slice(-6);
+          const randomSuffix = Math.floor(Math.random() * 1000)
+            .toString()
+            .padStart(3, '0');
+          const fallbackNumber = `${prefix}${timestamp}${randomSuffix}`;
+          this.logger.warn(`Usando fallback orderNumber: ${fallbackNumber}`);
+          return fallbackNumber;
+        }
       }
     }
 
-    const orderNumber = `${prefix}${String(sequence).padStart(6, '0')}`;
-    this.logger.log(
-      `generateOrderNumber: MAX="${result[0]?.max_po || 'null'}" → next="${orderNumber}"`,
-    );
-    return orderNumber;
+    // Fallback final con timestamp + random
+    const timestamp = Date.now().toString().slice(-6);
+    const randomSuffix = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, '0');
+    const finalFallback = `${prefix}${timestamp}${randomSuffix}`;
+    this.logger.warn(`Usando fallback final orderNumber: ${finalFallback}`);
+    return finalFallback;
   }
 }
