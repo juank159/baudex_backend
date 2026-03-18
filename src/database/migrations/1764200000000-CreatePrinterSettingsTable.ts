@@ -6,17 +6,17 @@ export class CreatePrinterSettingsTable1764200000000
   name = 'CreatePrinterSettingsTable1764200000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Crear enums
+    // Crear enums (idempotente)
     await queryRunner.query(
-      `CREATE TYPE "printer_connection_type_enum" AS ENUM('network', 'usb')`,
+      `DO $$ BEGIN CREATE TYPE "printer_connection_type_enum" AS ENUM('network', 'usb'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
     );
     await queryRunner.query(
-      `CREATE TYPE "printer_paper_size_enum" AS ENUM('mm58', 'mm80')`,
+      `DO $$ BEGIN CREATE TYPE "printer_paper_size_enum" AS ENUM('mm58', 'mm80'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
     );
 
-    // Crear tabla
+    // Crear tabla (idempotente)
     await queryRunner.query(`
-      CREATE TABLE "printer_settings" (
+      CREATE TABLE IF NOT EXISTS "printer_settings" (
         "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
         "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
         "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -37,12 +37,12 @@ export class CreatePrinterSettingsTable1764200000000
       )
     `);
 
-    // Crear índices
+    // Crear índices (idempotente)
     await queryRunner.query(
-      `CREATE INDEX "IDX_printer_settings_org_active" ON "printer_settings" ("organization_id", "is_active")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_printer_settings_org_active" ON "printer_settings" ("organization_id", "is_active")`,
     );
     await queryRunner.query(
-      `CREATE INDEX "IDX_printer_settings_org_id" ON "printer_settings" ("organization_id")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_printer_settings_org_id" ON "printer_settings" ("organization_id")`,
     );
   }
 

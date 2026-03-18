@@ -23,18 +23,18 @@ export class CreateDynamicNotificationStatesTable1764300000000
       )
     `);
 
-    // Índices para optimizar consultas
+    // Índices para optimizar consultas (idempotente)
     await queryRunner.query(
-      `CREATE INDEX "IDX_dynamic_notification_states_org_user" ON "dynamic_notification_states" ("organization_id", "user_id")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_dynamic_notification_states_org_user" ON "dynamic_notification_states" ("organization_id", "user_id")`,
     );
     await queryRunner.query(
-      `CREATE INDEX "IDX_dynamic_notification_states_user_read" ON "dynamic_notification_states" ("user_id", "is_read")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_dynamic_notification_states_user_read" ON "dynamic_notification_states" ("user_id", "is_read")`,
     );
     await queryRunner.query(
-      `CREATE INDEX "IDX_dynamic_notification_states_notification_id" ON "dynamic_notification_states" ("dynamic_notification_id")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_dynamic_notification_states_notification_id" ON "dynamic_notification_states" ("dynamic_notification_id")`,
     );
     await queryRunner.query(
-      `CREATE INDEX "IDX_dynamic_notification_states_org" ON "dynamic_notification_states" ("organization_id")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_dynamic_notification_states_org" ON "dynamic_notification_states" ("organization_id")`,
     );
   }
 
