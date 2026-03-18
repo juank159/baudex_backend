@@ -7,13 +7,11 @@ export class LoggerMiddleware implements NestMiddleware {
     const start = Date.now();
 
     res.on('finish', () => {
-      const duration = Date.now() - start;
-      const logMessage = `${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`;
-
+      // Solo loguear errores (4xx y 5xx) para evitar spam de logs en producción
       if (res.statusCode >= 400) {
-        console.error(`❌ ${logMessage}`);
-      } else {
-        console.log(`✅ ${logMessage}`);
+        const duration = Date.now() - start;
+        const logMessage = `${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`;
+        console.error(`${logMessage}`);
       }
     });
 

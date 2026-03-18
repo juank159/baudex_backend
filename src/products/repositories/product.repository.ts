@@ -509,7 +509,6 @@ export class ProductRepository extends Repository<Product> {
   }
 
   // async findLowStockProducts(): Promise<Product[]> {
-  //   console.log('🔍 ProductRepository: Buscando productos con stock bajo...');
 
   //   const products = await this.createQueryBuilder('product')
   //     .where('product.stock <= product.minStock')
@@ -523,9 +522,7 @@ export class ProductRepository extends Repository<Product> {
   //     .addOrderBy('product.minStock', 'DESC') // ✅ AÑADIDO: Orden secundario
   //     .getMany();
 
-  //   console.log(`📋 Productos con stock bajo encontrados: ${products.length}`);
   //   products.forEach((p) => {
-  //     console.log(`   - ${p.name}: stock=${p.stock}, minStock=${p.minStock}`);
   //   });
 
   //   return products;
@@ -533,7 +530,6 @@ export class ProductRepository extends Repository<Product> {
 
   // ⚡ OPTIMIZACIÓN: Query mejorada que hace la comparación en la base de datos
   async findLowStockProducts(): Promise<Product[]> {
-    console.log('🔍 ProductRepository: Buscando productos con stock bajo...');
 
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
@@ -553,10 +549,6 @@ export class ProductRepository extends Repository<Product> {
       .andWhere('CAST(product.stock AS DECIMAL) <= CAST(product.minStock AS DECIMAL)')
       .orderBy('CAST(product.stock AS DECIMAL)', 'ASC')
       .getMany();
-
-    console.log(
-      `📋 Productos con stock bajo encontrados: ${lowStockProducts.length}`,
-    );
 
     return lowStockProducts;
   }
@@ -640,29 +632,23 @@ export class ProductRepository extends Repository<Product> {
   //   outOfStockProducts: number;
   //   lowStockProducts: number;
   // }> {
-  //   console.log('🔍 ProductRepository: Calculando estadísticas...');
 
   //   try {
   //     const total = await this.count();
-  //     console.log(`📊 Total de productos: ${total}`);
 
   //     const active = await this.count({
   //       where: { status: ProductStatus.ACTIVE },
   //     });
-  //     console.log(`✅ Productos activos: ${active}`);
 
   //     const inactive = await this.count({
   //       where: { status: ProductStatus.INACTIVE },
   //     });
-  //     console.log(`❌ Productos inactivos: ${inactive}`);
 
   //     const outOfStock = await this.count({
   //       where: { status: ProductStatus.OUT_OF_STOCK },
   //     });
-  //     console.log(`🚫 Productos sin stock: ${outOfStock}`);
 
   //     // ✅ SOLUCIÓN FINAL: Solo stock <= minStock (usando minStock individual)
-  //     console.log('🔍 Consultando productos para calcular stock bajo...');
 
   //     const allProducts = await this.find({
   //       where: {
@@ -671,7 +657,6 @@ export class ProductRepository extends Repository<Product> {
   //       select: ['id', 'name', 'stock', 'minStock', 'status'],
   //     });
 
-  //     console.log(
   //       `📋 Productos encontrados para análisis: ${allProducts.length}`,
   //     );
 
@@ -682,7 +667,6 @@ export class ProductRepository extends Repository<Product> {
   //       // ✅ LÓGICA FINAL: Solo stock <= minStock (cada producto usa su propio minStock)
   //       const isLowStock = product.stock <= product.minStock;
 
-  //       console.log(
   //         `🔍 Analizando ${product.name}: stock=${product.stock}, minStock=${product.minStock}, status=${product.status}, isLowStock=${isLowStock}`,
   //       );
 
@@ -697,8 +681,6 @@ export class ProductRepository extends Repository<Product> {
   //       }
   //     }
 
-  //     console.log(`⚠️ Productos con stock bajo calculados: ${lowStockCount}`);
-  //     console.log('🔍 Lista de productos con stock bajo:', lowStockDebugList);
 
   //     const stats = {
   //       total,
@@ -713,7 +695,6 @@ export class ProductRepository extends Repository<Product> {
   //       lowStockProducts: lowStockCount,
   //     };
 
-  //     console.log('✅ ProductRepository: Estadísticas calculadas:', stats);
   //     return stats;
   //   } catch (error) {
   //     console.error(
@@ -747,7 +728,6 @@ export class ProductRepository extends Repository<Product> {
     outOfStockProducts: number;
     lowStockProducts: number;
   }> {
-    console.log('🔍 ProductRepository: Calculando estadísticas...');
 
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
@@ -758,25 +738,20 @@ export class ProductRepository extends Repository<Product> {
       const total = await this.count({
         where: { organizationId: tenantId },
       });
-      console.log(`📊 Total de productos: ${total}`);
 
       const active = await this.count({
         where: { organizationId: tenantId, status: ProductStatus.ACTIVE },
       });
-      console.log(`✅ Productos activos: ${active}`);
 
       const inactive = await this.count({
         where: { organizationId: tenantId, status: ProductStatus.INACTIVE },
       });
-      console.log(`❌ Productos inactivos: ${inactive}`);
 
       const outOfStock = await this.count({
         where: { organizationId: tenantId, status: ProductStatus.OUT_OF_STOCK },
       });
-      console.log(`🚫 Productos sin stock: ${outOfStock}`);
 
       // ✅ CORRECCIÓN: Calcular stock bajo con conversión a números
-      console.log('🔍 Consultando productos para calcular stock bajo...');
 
       const allProducts = await this.find({
         where: {
@@ -786,10 +761,6 @@ export class ProductRepository extends Repository<Product> {
         select: ['id', 'name', 'stock', 'minStock', 'status'],
       });
 
-      console.log(
-        `📋 Productos encontrados para análisis: ${allProducts.length}`,
-      );
-
       let lowStockCount = 0;
       const lowStockDebugList = [];
 
@@ -798,10 +769,6 @@ export class ProductRepository extends Repository<Product> {
         const stock = Number(product.stock) || 0;
         const minStock = Number(product.minStock) || 0;
         const isLowStock = stock <= minStock;
-
-        console.log(
-          `🔍 Analizando ${product.name}: stock=${stock} (num), minStock=${minStock} (num), status=${product.status}, isLowStock=${isLowStock}`,
-        );
 
         if (isLowStock) {
           lowStockCount++;
@@ -814,8 +781,6 @@ export class ProductRepository extends Repository<Product> {
         }
       }
 
-      console.log(`⚠️ Productos con stock bajo calculados: ${lowStockCount}`);
-      console.log('🔍 Lista de productos con stock bajo:', lowStockDebugList);
 
       const stats = {
         total,
@@ -830,7 +795,6 @@ export class ProductRepository extends Repository<Product> {
         lowStockProducts: lowStockCount,
       };
 
-      console.log('✅ ProductRepository: Estadísticas calculadas:', stats);
       return stats;
     } catch (error) {
       console.error(

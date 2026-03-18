@@ -380,6 +380,7 @@ export class OrganizationsController {
       locale: organization.locale,
       timezone: organization.timezone,
       settings: organization.settings,
+      multiCurrencyEnabled: organization.multiCurrencyEnabled ?? false,
       createdAt: organization.createdAt.toISOString(),
       updatedAt: organization.updatedAt.toISOString(),
       displayName: organization.displayName,

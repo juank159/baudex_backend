@@ -18,7 +18,6 @@ export class AppController {
 
   @Get('health')
   async getHealth() {
-    console.log('🎯 CALCULANDO RENTABILIDAD FIFO CON DATOS REALES DE POSTGRESQL');
     
     try {
       // Usar organización real con facturas existentes
@@ -27,11 +26,6 @@ export class AppController {
       // Obtener datos reales de rentabilidad de la base de datos
       const realStats = await this.profitabilityService.getProfitabilityStats(organizationId);
       
-      console.log('💰 DATOS REALES DE LA BASE DE DATOS:');
-      console.log(`   📦 Ingresos: $${realStats.totalRevenue.toLocaleString()}`);
-      console.log(`   💸 Costos: $${realStats.totalCOGS.toLocaleString()}`);
-      console.log(`   📈 Ganancia: $${realStats.grossProfit.toLocaleString()}`);
-      console.log(`   📊 Margen: ${realStats.grossMarginPercentage.toFixed(2)}%`);
       
       return {
         // Health status
@@ -107,7 +101,6 @@ export class AppController {
 
   @Get('fifo')
   getFifoProfitability() {
-    console.log('🎯 CALCULANDO RENTABILIDAD FIFO COMPLETA AL 100%');
     
     // ✅ DATOS REALES DE TU FACTURA DE SAL
     const totalRevenue = 6400; // 2 unidades × $3,200
@@ -115,11 +108,6 @@ export class AppController {
     const grossProfit = totalRevenue - totalCOGS; // $3,900
     const grossMarginPercentage = (grossProfit / totalRevenue) * 100; // 60.94%
     
-    console.log('💰 CÁLCULO PERFECTO DE TU SAL:');
-    console.log(`   📦 Ingresos: $${totalRevenue.toLocaleString()}`);
-    console.log(`   💸 Costos: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📈 Ganancia: $${grossProfit.toLocaleString()}`);
-    console.log(`   📊 Margen: ${grossMarginPercentage.toFixed(2)}%`);
     
     return {
       message: '🎉 RENTABILIDAD FIFO IMPLEMENTADA AL 100%!',
@@ -164,7 +152,6 @@ export class AppController {
 
   @Get('profitability')
   getProfitabilityStats() {
-    console.log('🎯 CALCULANDO RENTABILIDAD FIFO COMPLETA AL 100%');
     
     // ✅ DATOS REALES DE TU FACTURA DE SAL
     const totalRevenue = 6400; // 2 unidades × $3,200
@@ -172,11 +159,6 @@ export class AppController {
     const grossProfit = totalRevenue - totalCOGS; // $3,900
     const grossMarginPercentage = (grossProfit / totalRevenue) * 100; // 60.94%
     
-    console.log('💰 CÁLCULO PERFECTO DE TU SAL:');
-    console.log(`   📦 Ingresos: $${totalRevenue.toLocaleString()}`);
-    console.log(`   💸 Costos: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📈 Ganancia: $${grossProfit.toLocaleString()}`);
-    console.log(`   📊 Margen: ${grossMarginPercentage.toFixed(2)}%`);
     
     // ✅ RESPUESTA COMPLETA AL 100%
     return {
@@ -227,7 +209,6 @@ export class AppController {
   // ✅ ENDPOINT ESPECÍFICO PARA FLUTTER - NUEVA RUTA
   @Get('dashboard-profitability')
   async getProfitabilityDashboard() {
-    console.log('🎯 ENDPOINT ESPECÍFICO FUNCIONANDO AL 100%');
     
     // ✅ DATOS REALES DE TU FACTURA DE SAL
     const totalRevenue = 6400; // 2 unidades × $3,200
@@ -235,11 +216,6 @@ export class AppController {
     const grossProfit = totalRevenue - totalCOGS; // $3,900
     const grossMarginPercentage = (grossProfit / totalRevenue) * 100; // 60.94%
     
-    console.log('💰 DATOS PARA FLUTTER:');
-    console.log(`   📦 Ingresos: $${totalRevenue.toLocaleString()}`);
-    console.log(`   💸 Costos: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📈 Ganancia: $${grossProfit.toLocaleString()}`);
-    console.log(`   📊 Margen: ${grossMarginPercentage.toFixed(2)}%`);
     
     return {
       totalRevenue,

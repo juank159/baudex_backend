@@ -505,20 +505,6 @@ export class DashboardService {
       .limit(5)
       .getMany();
 
-    console.log('🔍 DEBUG - Pagos en rango de fechas:', {
-      count: samplePayments.length,
-      startDate,
-      endDate,
-      sample: samplePayments.map(p => ({
-        paymentNumber: p.paymentNumber,
-        amount: p.amount,
-        paymentMethod: p.paymentMethod,
-        bankAccountId: p.bankAccountId,
-        bankAccountName: p.bankAccount?.name || 'Sin cuenta',
-        date: p.paymentDate
-      }))
-    });
-
     // Consulta principal: agrupar pagos por cuenta bancaria
     const paymentStats = await this.paymentRepository
       .createQueryBuilder('payment')
@@ -537,7 +523,6 @@ export class DashboardService {
       .orderBy('total_amount', 'DESC')
       .getRawMany();
 
-    console.log('💰 DEBUG - Payment stats result:', paymentStats);
 
     const totalAmount = paymentStats.reduce(
       (sum, item) => sum + parseFloat(item.total_amount || 0),
@@ -590,16 +575,6 @@ export class DashboardService {
     const invoicesTotal = parseFloat(invoicesIncome?.total || '0');
     const creditsTotal = parseFloat(creditsIncome?.total || '0');
     const total = invoicesTotal + creditsTotal;
-
-    console.log('📊 DEBUG - Income Type Breakdown:', {
-      invoicesTotal,
-      creditsTotal,
-      total,
-      invoicesQuery: invoicesIncome,
-      creditsQuery: creditsIncome,
-      startDate,
-      endDate
-    });
 
     return {
       invoices: invoicesTotal,
@@ -907,18 +882,10 @@ export class DashboardService {
         .limit(10)
         .getMany();
 
-      console.log(
-        `🔍 Facturas vencidas encontradas: ${overdueInvoices.length}`,
-      );
-
       for (const invoice of overdueInvoices) {
         const customerName = invoice.customer
           ? `${invoice.customer.firstName} ${invoice.customer.lastName}`.trim()
           : 'Cliente';
-
-        console.log(
-          `📄 Factura vencida: ${invoice.number}, vence: ${invoice.dueDate}, días vencidos: ${invoice.daysOverdue}`,
-        );
 
         notifications.push({
           id: `overdue-${invoice.id}`,
@@ -966,15 +933,7 @@ export class DashboardService {
         .limit(8)
         .getMany();
 
-      console.log(
-        `📦 Productos sin stock encontrados: ${outOfStockProducts.length}`,
-      );
-
       for (const product of outOfStockProducts) {
-        console.log(
-          `🚫 Producto sin stock: ${product.name}, stock actual: ${product.stock}`,
-        );
-
         notifications.push({
           id: `out-of-stock-${product.id}`,
           type: 'stock_out',
@@ -1021,17 +980,9 @@ export class DashboardService {
         .limit(10)
         .getMany();
 
-      console.log(
-        `⚠️ Productos con stock bajo encontrados: ${lowStockProducts.length}`,
-      );
-
       for (const product of lowStockProducts) {
         const stockPercentage = Math.round(
           (product.stock / product.minStock) * 100,
-        );
-
-        console.log(
-          `📉 Producto stock bajo: ${product.name}, stock: ${product.stock}/${product.minStock} (${stockPercentage}%)`,
         );
 
         notifications.push({
@@ -1233,18 +1184,10 @@ export class DashboardService {
         (n) => n.status === 'pending',
       ).length;
 
-      console.log(
-        `📊 Total notificaciones generadas: ${total}, no leídas: ${unreadCount}`,
-      );
-
       // Aplicar paginación
       const paginatedNotifications = notifications.slice(
         offset,
         offset + limit,
-      );
-
-      console.log(
-        `📄 Notificaciones paginadas: ${paginatedNotifications.length} (offset: ${offset}, limit: ${limit})`,
       );
 
       return {
@@ -1571,18 +1514,13 @@ export class DashboardService {
     organizationId: string,
   ): Promise<ProfitabilityStats> {
     try {
-      console.log('🔄 Calculando métricas de rentabilidad FIFO...');
-      console.log('📝 Query recibida:', query);
-      console.log('🏢 Organization ID:', organizationId);
 
       // Usar fechas directas sin getDateRange por ahora
       const startDate = new Date(query.startDate || '2025-09-23');
       const endDate = new Date(query.endDate || '2025-09-23');
 
-      console.log('📅 Fechas directas:', { startDate, endDate });
 
       // ✅ 1. CALCULAR INGRESOS REALES DESDE INVOICE ITEMS
-      console.log('📈 Paso 1: Calculando ingresos reales desde facturas...');
       const revenueData = await this.calculateTotalRevenue(
         organizationId,
         startDate,
@@ -1591,7 +1529,6 @@ export class DashboardService {
       );
 
       // ✅ 2. CALCULAR COSTOS REALES USANDO FIFO + PRODUCTOS TEMPORALES CON MARGEN
-      console.log('💸 Paso 2: Calculando costos reales (FIFO + productos temporales)...');
       const cogsData = await this.calculateRealCOGS(
         organizationId,
         startDate,
@@ -1607,13 +1544,7 @@ export class DashboardService {
           ? (grossProfit / revenueData.totalRevenue) * 100
           : 0;
 
-      console.log('🧮 CÁLCULO FIFO CORRECTO:');
-      console.log(`   💰 Total Ingresos: $${revenueData.totalRevenue.toLocaleString()}`);
-      console.log(`   💸 Total Costo FIFO: $${cogsData.totalCOGS.toLocaleString()}`);
-      console.log(`   📈 Ganancia Bruta: $${grossProfit.toLocaleString()}`);
-      console.log(`   📊 Margen Bruto: ${grossMarginPercentage.toFixed(2)}%`);
 
-      console.log('💰 Paso 3: Calculando gastos...');
       // 4. Obtener gastos para calcular ganancia neta (simplificado)
       const netProfit = grossProfit; // Por ahora sin gastos
       const netMarginPercentage =
@@ -1621,15 +1552,12 @@ export class DashboardService {
           ? (netProfit / revenueData.totalRevenue) * 100
           : 0;
 
-      console.log('📊 Paso 4: Calculando margen promedio...');
       // 5. Calcular margen promedio por venta
       const averageMarginPerSale =
         revenueData.salesCount > 0 ? grossMarginPercentage : 0;
 
-      console.log('🏆 Devolviendo resultados básicos...');
       
       // 6. Obtener productos más y menos rentables REALES
-      console.log('🏆 Paso 5: Calculando productos rentables...');
       const [topProfitableProducts, lowProfitableProducts] = await Promise.all([
         this.getTopProfitableProducts(
           organizationId,
@@ -1650,7 +1578,6 @@ export class DashboardService {
       ]);
 
       // 7. Calcular márgenes por categoría REALES
-      console.log('📊 Paso 6: Calculando márgenes por categoría...');
       const marginsByCategory = await this.getMarginsByCategory(
         organizationId,
         startDate,
@@ -1659,7 +1586,6 @@ export class DashboardService {
       );
 
       // 8. Generar tendencia de rentabilidad REAL
-      console.log('📈 Paso 7: Calculando tendencias...');
       const trend = await this.getProfitabilityTrend(
         organizationId,
         startDate,
@@ -1667,7 +1593,6 @@ export class DashboardService {
         query.warehouseId,
       );
 
-      console.log('✅ Métricas de rentabilidad FIFO calculadas exitosamente');
 
       return {
         totalRevenue: revenueData.totalRevenue,
@@ -1720,18 +1645,11 @@ export class DashboardService {
       });
     }
 
-    console.log('🔍 Query SQL para ingresos:', queryBuilder.getSql());
-    console.log('🔍 Parámetros:', queryBuilder.getParameters());
     
     const result = await queryBuilder.getRawOne();
     const totalRevenue = parseFloat(result?.totalRevenue || 0);
     const salesCount = parseInt(result?.salesCount || 0);
 
-    console.log('💰 INGRESOS CALCULADOS (DESDE FACTURAS):');
-    console.log(`   📈 Total Revenue: $${totalRevenue.toLocaleString()}`);
-    console.log(`   🛒 Número de facturas: ${salesCount}`);
-    console.log(`   📝 Query usada: SUM(invoiceItem.quantity * invoiceItem.unitPrice)`);
-    console.log('🔍 Resultado raw:', result);
 
     return {
       totalRevenue,
@@ -1770,12 +1688,6 @@ export class DashboardService {
     const result = await queryBuilder.getRawOne();
     const totalCOGS = parseFloat(result?.totalCOGS || 0);
 
-    console.log('💸 COSTOS FIFO CALCULADOS (DESDE FACTURAS):');
-    console.log(`   📦 Total COGS: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📝 Query usada: SUM(invoiceItem.quantity * COALESCE(product.cost, 1250))`);
-    console.log(`   ⚡ Ejemplo tu sal: si vendiste 2 × $3,200 = $6,400`);
-    console.log(`   ⚡ Y costo FIFO es 2 × $1,250 = $2,500`);
-    console.log(`   ⚡ Ganancia = $6,400 - $2,500 = $3,900`);
 
     return {
       totalCOGS,
@@ -2046,7 +1958,6 @@ export class DashboardService {
     endDate: Date,
     warehouseId?: string,
   ): Promise<{ totalCOGS: number }> {
-    console.log('🔍 Calculando costos reales desde invoiceItem.totalCost...');
 
     const queryBuilder = this.invoiceRepository
       .createQueryBuilder('invoice')
@@ -2073,12 +1984,6 @@ export class DashboardService {
     const result = await queryBuilder.getRawOne();
     const totalCOGS = parseFloat(result?.totalCOGS || 0);
 
-    console.log('💸 COSTOS REALES CALCULADOS (DESDE INVOICE ITEMS):');
-    console.log(`   📦 Total COGS: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📝 Query usada: SUM(COALESCE(invoiceItem.totalCost, 0))`);
-    console.log(`   ✅ Incluye FIFO para productos registrados`);
-    console.log(`   ✅ Incluye margen configurado para productos temporales`);
-    console.log(`   🎯 Este valor refleja tu configuración de margen para productos temporales`);
 
     return {
       totalCOGS,
@@ -2104,6 +2009,5 @@ export class DashboardService {
       { id: productId, organizationId },
       { cost }
     );
-    console.log(`✅ Producto ${productId} actualizado con costo $${cost}`);
   }
 }

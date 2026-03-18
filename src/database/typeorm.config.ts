@@ -18,7 +18,7 @@ export default new DataSource({
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   synchronize: false, // Siempre false para migraciones
-  logging: true,
+  logging: configService.get('NODE_ENV') === 'development',
 });
 
 // package.json - agregar estos scripts

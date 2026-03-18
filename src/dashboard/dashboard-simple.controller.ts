@@ -14,13 +14,10 @@ export class DashboardSimpleController {
     @Query() query: any,
     @TenantId() organizationId: string,
   ) {
-    console.log('📊 Dashboard Summary Request:', query);
-    console.log('📊 Organization from TenantId:', organizationId);
 
     try {
       // ✅ Ahora usa el organizationId del usuario autenticado via TenantId decorator
       
-      console.log(`🏢 Usando organizationId: ${organizationId}`);
 
       if (!organizationId) {
         throw new Error('Organization ID not found');
@@ -32,7 +29,6 @@ export class DashboardSimpleController {
         [organizationId],
       );
       const orgTimezone = orgRow?.timezone || 'America/New_York';
-      console.log(`🌐 Timezone de la organización: ${orgTimezone}`);
 
       // 📅 NORMALIZAR PARÁMETROS DE FECHA A YYYY-MM-DD
       const startDateStr = query.startDate ? String(query.startDate).substring(0, 10) : null;
@@ -45,17 +41,13 @@ export class DashboardSimpleController {
       if (startDateStr && endDateStr) {
         dateFilter = ' AND date >= $2::date AND date <= $3::date';
         queryParams.push(startDateStr, endDateStr);
-        console.log(`📅 Aplicando filtro de fechas: ${startDateStr} - ${endDateStr}`);
       } else if (startDateStr) {
         dateFilter = ' AND date >= $2::date';
         queryParams.push(startDateStr);
-        console.log(`📅 Aplicando filtro desde: ${startDateStr}`);
       } else if (endDateStr) {
         dateFilter = ' AND date <= $2::date';
         queryParams.push(endDateStr);
-        console.log(`📅 Aplicando filtro hasta: ${endDateStr}`);
       } else {
-        console.log(`📅 Sin filtro de fechas - mostrando todas las facturas`);
       }
 
       // Obtener datos reales de facturas CON FILTROS DE FECHA
@@ -99,12 +91,9 @@ export class DashboardSimpleController {
         AND deleted_at IS NULL
       `;
 
-      console.log(`🔍 Ejecutando query de facturas con parámetros:`, queryParams);
-      console.log(`🔍 Query de facturas:`, invoicesQuery);
       
       const [invoiceResult] = await this.entityManager.query(invoicesQuery, queryParams);
       
-      console.log(`🔍 Resultado de facturas:`, invoiceResult);
       
       // Para gastos, usar los mismos parámetros de fecha
       const [expenseResult] = await this.entityManager.query(expensesQuery, queryParams);
@@ -113,7 +102,6 @@ export class DashboardSimpleController {
 
       const totalRevenue = parseFloat(invoiceResult?.total_revenue || '0');
       
-      console.log(`💰 Total Revenue calculado: ${totalRevenue}`);
       const totalExpenses = parseFloat(expenseResult?.total_expenses_amount || '0');
       const totalProfit = totalRevenue - totalExpenses;
       const totalInvoices = parseInt(invoiceResult?.total_invoices || '0');
@@ -122,13 +110,6 @@ export class DashboardSimpleController {
       const totalProducts = parseInt(productResult?.total_products || '0');
       const totalCustomers = parseInt(customerResult?.total_customers || '0');
 
-      console.log('💰 DATOS REALES DE LA BASE DE DATOS:');
-      console.log(`   📈 Ingresos totales: $${totalRevenue}`);
-      console.log(`   💸 Gastos totales: $${totalExpenses}`);
-      console.log(`   📊 Ganancia neta: $${totalProfit}`);
-      console.log(`   🧾 Facturas totales: ${totalInvoices}`);
-      console.log(`   📦 Productos totales: ${totalProducts}`);
-      console.log(`   👥 Clientes totales: ${totalCustomers}`);
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
       // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
@@ -162,9 +143,7 @@ export class DashboardSimpleController {
         ORDER BY total_amount DESC
       `;
 
-      console.log('💳 Consultando métodos de pago...');
       const paymentMethods = await this.entityManager.query(paymentMethodsQuery, paymentParams);
-      console.log(`💳 Métodos de pago encontrados: ${paymentMethods.length}`);
 
       const totalPayments = paymentMethods.reduce((sum, pm) => sum + parseFloat(pm.total_amount || 0), 0);
       const paymentMethodsBreakdown = paymentMethods.map(pm => ({
@@ -174,9 +153,7 @@ export class DashboardSimpleController {
         percentage: totalPayments > 0 ? (parseFloat(pm.total_amount || 0) / totalPayments * 100) : 0,
       }));
 
-      console.log(`💳 Total de pagos: $${totalPayments}`);
       paymentMethodsBreakdown.forEach(pm => {
-        console.log(`   ${pm.method}: $${pm.totalAmount} (${pm.percentage.toFixed(1)}%)`);
       });
 
       // 📊 OBTENER DESGLOSE POR TIPO DE INGRESO (Facturas vs Créditos)
@@ -198,7 +175,6 @@ export class DashboardSimpleController {
         ${dateFilter}
       `;
 
-      console.log('📊 Consultando desglose de ingresos...');
       const [invoicesIncomeResult] = await this.entityManager.query(invoicesIncomeQuery, queryParams);
       const [creditsIncomeResult] = await this.entityManager.query(creditsIncomeQuery, queryParams);
 
@@ -212,9 +188,6 @@ export class DashboardSimpleController {
         total: totalIncome,
       };
 
-      console.log(`📊 Facturas pagadas: $${invoicesIncome}`);
-      console.log(`📊 Créditos aplicados: $${creditsIncome}`);
-      console.log(`📊 Total ingresos: $${totalIncome}`);
 
       // 📊 CALCULAR DATOS REALES DEL PERÍODO ANTERIOR (mismo rango de días, pero desplazado hacia atrás)
       let previousPeriodRevenue = 0;
@@ -235,7 +208,6 @@ export class DashboardSimpleController {
         const prevStartStr = prevStart.toISOString().split('T')[0];
         const prevEndStr = prevEnd.toISOString().split('T')[0];
 
-        console.log(`📅 Calculando período anterior: ${prevStartStr} - ${prevEndStr}`);
 
         const previousInvoicesQuery = `
           SELECT
@@ -272,7 +244,6 @@ export class DashboardSimpleController {
         previousPeriodExpenses = parseFloat(prevExpResult?.total_expenses || '0');
         previousPeriodInvoicesCount = parseInt(prevInvResult?.total_invoices || '0');
 
-        console.log(`📊 Período anterior - Ingresos: $${previousPeriodRevenue}, Gastos: $${previousPeriodExpenses}, Facturas: ${previousPeriodInvoicesCount}`);
       }
 
       const previousPeriodProfit = previousPeriodRevenue - previousPeriodExpenses;
@@ -280,7 +251,6 @@ export class DashboardSimpleController {
         ? ((totalRevenue - previousPeriodRevenue) / previousPeriodRevenue * 100)
         : 0;
 
-      console.log(`📈 Crecimiento de ingresos: ${revenueGrowth.toFixed(1)}%`);
 
       return {
         totalRevenue,
@@ -341,8 +311,6 @@ export class DashboardSimpleController {
     @Query() query: any,
     @TenantId() organizationId: string,
   ) {
-    console.log('🔄 Recent Activities Request:', query);
-    console.log('📊 Organization from TenantId:', organizationId);
 
     try {
       // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
@@ -368,17 +336,13 @@ export class DashboardSimpleController {
         LIMIT 2
       `;
 
-      console.log(`🔍 Ejecutando queries de actividades...`);
       const invoices = await this.entityManager.query(recentInvoicesQuery, [organizationId]);
-      console.log(`📊 Facturas encontradas: ${invoices.length}`);
       const expenses = await this.entityManager.query(recentExpensesQuery, [organizationId]);
-      console.log(`💸 Gastos encontrados: ${expenses.length}`);
 
       const activities = [];
 
       // Procesar facturas
       invoices.forEach((invoice, index) => {
-        console.log(`📄 Procesando factura ${index + 1}: ${invoice.id} - Total: ${invoice.total}`);
         activities.push({
           id: `inv_${invoice.id}`,
           type: 'invoice_created',
@@ -392,7 +356,6 @@ export class DashboardSimpleController {
 
       // Procesar gastos
       expenses.forEach((expense, index) => {
-        console.log(`💸 Procesando gasto ${index + 1}: ${expense.id} - Monto: ${expense.amount}`);
         activities.push({
           id: `exp_${expense.id}`,
           type: 'expense_added',
@@ -407,9 +370,7 @@ export class DashboardSimpleController {
       // Ordenar por fecha más reciente
       activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      console.log(`✅ Total actividades creadas: ${activities.length}`);
       activities.forEach((activity, index) => {
-        console.log(`   ${index + 1}. ${activity.title}: ${activity.description}`);
       });
 
       const finalActivities = activities.slice(0, 10);
@@ -431,7 +392,6 @@ export class DashboardSimpleController {
       };
 
     } catch (error) {
-      console.log('❌ Error cargando actividades reales:', error);
       
       // Fallback sin actividades
       return {
@@ -457,8 +417,6 @@ export class DashboardSimpleController {
     @Query() query: any,
     @TenantId() organizationId: string,
   ) {
-    console.log('🔔 Dashboard Notifications Request:', query);
-    console.log('📊 Organization from TenantId:', organizationId);
 
     try {
       // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
@@ -479,12 +437,9 @@ export class DashboardSimpleController {
         LIMIT 3
       `;
 
-      console.log(`🔍 Ejecutando query de productos con stock bajo...`);
       const lowStockProducts = await this.entityManager.query(lowStockQuery, [organizationId]);
-      console.log(`📦 Productos con stock bajo encontrados: ${lowStockProducts.length}`);
       
       lowStockProducts.forEach((product, index) => {
-        console.log(`📦 Procesando producto con stock bajo: ${product.name} (Stock: ${product.stock})`);
         notifications.push({
           id: `stock_${product.id}`,
           title: 'Stock bajo',
@@ -506,12 +461,9 @@ export class DashboardSimpleController {
         LIMIT 2
       `;
 
-      console.log(`🔍 Ejecutando query de facturas pendientes...`);
       const pendingInvoices = await this.entityManager.query(pendingInvoicesQuery, [organizationId]);
-      console.log(`📄 Facturas pendientes encontradas: ${pendingInvoices.length}`);
       
       pendingInvoices.forEach((invoice, index) => {
-        console.log(`📄 Procesando factura pendiente: ${invoice.number || '#INV-' + invoice.id} - Total: ${invoice.total}`);
         notifications.push({
           id: `invoice_${invoice.id}`,
           title: 'Factura pendiente',
@@ -525,7 +477,6 @@ export class DashboardSimpleController {
 
       // Agregar notificación de sistema si no hay otras
       if (notifications.length === 0) {
-        console.log(`📢 No se encontraron notificaciones específicas, agregando notificación de sistema`);
         notifications.push({
           id: 'system_1',
           title: 'Sistema operativo',
@@ -542,10 +493,7 @@ export class DashboardSimpleController {
 
       const unreadCount = notifications.filter(n => !n.isRead).length;
 
-      console.log(`✅ Total notificaciones creadas: ${notifications.length}`);
-      console.log(`📬 Notificaciones no leídas: ${unreadCount}`);
       notifications.forEach((notification, index) => {
-        console.log(`   ${index + 1}. ${notification.title}: ${notification.message}`);
       });
 
       const finalNotifications = notifications.slice(0, 10);
@@ -569,7 +517,6 @@ export class DashboardSimpleController {
       };
 
     } catch (error) {
-      console.log('❌ Error cargando notificaciones reales:', error);
       
       // Fallback sin notificaciones
       return {
@@ -601,9 +548,6 @@ export class DashboardSimpleController {
     @Query() query: any,
     @TenantId() organizationId: string,
   ) {
-    console.log('🎯 CALCULANDO RENTABILIDAD FIFO CON FILTROS DE FECHA');
-    console.log(`📅 Query parameters:`, query);
-    console.log('📊 Organization from TenantId:', organizationId);
 
     try {
       // ✅ Usa el organizationId del usuario autenticado via TenantId decorator
@@ -615,8 +559,6 @@ export class DashboardSimpleController {
       const startDate = query.startDate ? String(query.startDate).substring(0, 10) : undefined;
       const endDate = query.endDate ? String(query.endDate).substring(0, 10) : undefined;
 
-      if (startDate) console.log(`📅 Fecha inicio filtro: ${startDate}`);
-      if (endDate) console.log(`📅 Fecha fin filtro: ${endDate}`);
 
       // ✅ USAR EL PROFITABILITYSERVICE CON STRINGS NORMALIZADOS
       const realStats = await this.profitabilityService.getProfitabilityStats(
@@ -625,11 +567,6 @@ export class DashboardSimpleController {
         endDate,
       );
 
-      console.log('💰 DATOS FIFO FILTRADOS:');
-      console.log(`   📦 Ingresos: $${realStats.totalRevenue.toLocaleString()}`);
-      console.log(`   💸 Costos FIFO: $${realStats.totalCOGS.toLocaleString()}`);
-      console.log(`   📈 Ganancia: $${realStats.grossProfit.toLocaleString()}`);
-      console.log(`   📊 Margen: ${realStats.grossMarginPercentage.toFixed(2)}%`);
 
       return {
         message: '🎉 RENTABILIDAD FIFO CON FILTROS APLICADOS!',
@@ -644,8 +581,6 @@ export class DashboardSimpleController {
 
   @Get('profitability/test-real')
   async testRealProfitability(@Query() query: any) {
-    console.log('🧪 PRUEBA REAL CON FILTROS DE FECHA');
-    console.log(`📅 Query parameters:`, query);
     
     try {
       // Usar organización real conocida
@@ -655,8 +590,6 @@ export class DashboardSimpleController {
       const startDate = query.startDate ? String(query.startDate).substring(0, 10) : undefined;
       const endDate = query.endDate ? String(query.endDate).substring(0, 10) : undefined;
 
-      if (startDate) console.log(`📅 Fecha inicio filtro: ${startDate}`);
-      if (endDate) console.log(`📅 Fecha fin filtro: ${endDate}`);
 
       // ✅ USAR EL PROFITABILITYSERVICE CON STRINGS NORMALIZADOS
       const realStats = await this.profitabilityService.getProfitabilityStats(

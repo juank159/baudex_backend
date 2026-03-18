@@ -81,7 +81,6 @@ export class InvoicesService {
     createInvoiceDto: CreateInvoiceDto,
     createdById: string,
   ): Promise<Invoice> {
-    console.log('🚀 === CREANDO FACTURA EN BACKEND ===');
 
     // Obtener tenant ID
     const tenantId = this.tenantAwareService.getTenantId();
@@ -109,7 +108,6 @@ export class InvoicesService {
     for (const itemDto of createInvoiceDto.items) {
       if (itemDto.isTemporary) {
         // ✅ CREAR PRODUCTO TEMPORAL
-        console.log(`📦 Creando producto temporal: ${itemDto.description}`);
 
         const temporaryProduct = await this.temporaryProductService.create({
           name: itemDto.description,
@@ -230,14 +228,8 @@ export class InvoicesService {
 
                 if (hasTax) {
                   itemTaxPercentage = Number(product.taxRate) || 0;
-                  console.log(
-                    `📊 IVA del producto ${itemDto.description}: ${itemTaxPercentage}% (taxCategory: ${product.taxCategory})`,
-                  );
                 } else {
                   itemTaxPercentage = 0;
-                  console.log(
-                    `📊 Producto ${itemDto.description} SIN IVA (taxCategory: ${product?.taxCategory}, isTaxable: ${product?.isTaxable}, taxRate: ${product?.taxRate})`,
-                  );
                 }
 
                 const fifoCost = await this.inventoryService.calculateFifoCost(
@@ -247,9 +239,6 @@ export class InvoicesService {
                 );
                 unitCost = fifoCost.unitCost;
                 totalCost = fifoCost.totalCost;
-                console.log(
-                  `💰 FIFO calculado para ${itemDto.description}: Costo unitario=${unitCost}, Costo total=${totalCost}`,
-                );
               } catch (error) {
                 console.warn(
                   `⚠️ No se pudo calcular FIFO para producto ${itemDto.productId}: ${error.message}`,
@@ -274,10 +263,6 @@ export class InvoicesService {
                 // Si precio = $1800 y margen = 20%, entonces costo = $1800 * (1 - 0.20) = $1440
                 unitCost = itemDto.unitPrice * (1 - marginPercent / 100);
                 totalCost = unitCost * itemDto.quantity;
-
-                console.log(
-                  `🔸 Costo estimado para producto temporal ${itemDto.description}: Precio=${itemDto.unitPrice}, Margen=${marginPercent}%, Costo unitario=${unitCost.toFixed(4)}, Costo total=${totalCost.toFixed(2)}`,
-                );
               } catch (error) {
                 console.warn(
                   `⚠️ No se pudo calcular costo estimado para producto temporal ${itemDto.description}: ${error.message}`,
@@ -336,10 +321,6 @@ export class InvoicesService {
         0;
 
       if (clientBalanceToApply > 0) {
-        console.log('💰 === PROCESANDO SALDO A FAVOR DEL CLIENTE ===');
-        console.log(`   Cliente: ${customer.firstName} ${customer.lastName} (${createInvoiceDto.customerId})`);
-        console.log(`   Saldo a aplicar: $${clientBalanceToApply.toLocaleString()}`);
-        console.log(`   Total factura: $${completeInvoice.total.toLocaleString()}`);
 
         try {
           // Descontar el saldo del cliente
@@ -370,16 +351,12 @@ export class InvoicesService {
             organizationId: tenantId,
           });
           await manager.save(Payment, balancePayment);
-          console.log(`📝 Pago con saldo a favor registrado: ${balancePaymentNumber}`);
 
           // Registrar el saldo aplicado en la factura
           completeInvoice.clientBalanceApplied = clientBalanceToApply;
           completeInvoice.paidAmount += clientBalanceToApply;
           completeInvoice.balanceDue = completeInvoice.total - completeInvoice.paidAmount;
 
-          console.log(`✅ Saldo aplicado exitosamente`);
-          console.log(`   Monto pagado actualizado: $${completeInvoice.paidAmount.toLocaleString()}`);
-          console.log(`   Saldo pendiente: $${completeInvoice.balanceDue.toLocaleString()}`);
         } catch (error) {
           console.error(`❌ Error al aplicar saldo a favor: ${error.message}`);
           throw new BadRequestException(
@@ -398,10 +375,6 @@ export class InvoicesService {
       // 🏦 NUEVO: Procesar pagos múltiples si vienen en metadata
       const metadata = createInvoiceDto.metadata;
       if (metadata?.isMultiplePayment && metadata?.multiplePayments?.length > 0) {
-        console.log('💳 === PROCESANDO PAGOS MÚLTIPLES ===');
-        console.log(`   Total de pagos a procesar: ${metadata.multiplePayments.length}`);
-        console.log(`   Total pagado: $${metadata.totalPaid?.toLocaleString()}`);
-        console.log(`   Crear crédito: ${metadata.createCreditForRemaining}`);
 
         await this.processMultiplePaymentsOnCreate(
           completeInvoice,
@@ -448,11 +421,6 @@ export class InvoicesService {
     const clientBalanceApplied = Number(metadata.clientBalanceApplied) || 0;
     const previouslyPaid = invoice.paidAmount || 0; // Incluye saldo a favor si se aplicó
 
-    console.log(`💳 Procesando ${multiplePayments.length} pagos para factura ${invoice.number}`);
-    console.log(`   Total factura: $${invoice.total.toLocaleString()}`);
-    console.log(`   Saldo a favor aplicado previamente: $${clientBalanceApplied.toLocaleString()}`);
-    console.log(`   Monto ya pagado (incluye saldo a favor): $${previouslyPaid.toLocaleString()}`);
-    console.log(`   Total pagos múltiples: $${totalPaid.toLocaleString()}`);
 
     // 1. Crear registro de pago para cada método
     for (const paymentData of multiplePayments) {
@@ -481,7 +449,6 @@ export class InvoicesService {
 
       await manager.save(Payment, payment);
 
-      console.log(`   ✅ Pago creado: $${amount.toLocaleString()} - ${paymentMethod} ${paymentData.bankAccountName ? `(${paymentData.bankAccountName})` : ''}`);
 
       // 🏦 Actualizar saldo de cuenta bancaria usando el manager de la transacción
       if (paymentData.bankAccountId) {
@@ -495,7 +462,6 @@ export class InvoicesService {
             .where('id = :id', { id: paymentData.bankAccountId })
             .andWhere('organization_id = :orgId', { orgId: organizationId })
             .execute();
-          console.log(`   🏦 Saldo actualizado en cuenta ${paymentData.bankAccountId}: +$${amount.toLocaleString()}`);
         } catch (error) {
           console.warn(`   ⚠️ Error actualizando saldo de cuenta: ${error.message}`);
         }
@@ -509,13 +475,10 @@ export class InvoicesService {
     invoice.paidAmount = Math.min(totalPaidWithBalance, invoice.total);
     invoice.balanceDue = remainingBalance;
 
-    console.log(`   💰 Total pagado (saldo a favor + pagos múltiples): $${totalPaidWithBalance.toLocaleString()}`);
-    console.log(`   💰 Saldo pendiente: $${remainingBalance.toLocaleString()}`);
 
     // 3. Determinar el estado de la factura y ajustar fecha de vencimiento
     if (remainingBalance <= 0) {
       invoice.status = InvoiceStatus.PAID;
-      console.log(`   📊 Estado: PAGADA (total cubierto)`);
     } else if (totalPaidWithBalance > 0) {
       // ✅ CORREGIDO: Usar totalPaidWithBalance para incluir saldo a favor
       invoice.status = InvoiceStatus.PARTIALLY_PAID;
@@ -527,16 +490,12 @@ export class InvoicesService {
       });
       invoice.dueDate = this.calculateDueDateForPartialPayment(customer);
 
-      console.log(`   📊 Estado: PARCIALMENTE PAGADA (saldo: $${remainingBalance.toLocaleString()})`);
-      console.log(`   📅 Nueva fecha de vencimiento para saldo: ${invoice.dueDate.toISOString().split('T')[0]}`);
     } else {
       invoice.status = InvoiceStatus.PENDING;
-      console.log(`   📊 Estado: PENDIENTE`);
     }
 
     // 4. Crear crédito si hay saldo pendiente y se solicitó
     if (remainingBalance > 0 && createCreditForRemaining) {
-      console.log(`   💳 Creando crédito por saldo pendiente de $${remainingBalance.toLocaleString()}`);
 
       try {
         // Calcular fecha de vencimiento (30 días por defecto)
@@ -568,7 +527,6 @@ export class InvoicesService {
 
         const savedCredit = await manager.save(CustomerCredit, credit);
 
-        console.log(`   ✅ Crédito creado: ${savedCredit.id} por $${remainingBalance.toLocaleString()}`);
 
         // Actualizar el creditBalance del cliente
         await manager.increment(
@@ -614,7 +572,6 @@ export class InvoicesService {
               item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
               manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
             );
-            console.log(`   ✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`);
           } catch (error) {
             console.error(`   ❌ Error descontando stock: ${error.message}`);
           }
@@ -636,15 +593,8 @@ export class InvoicesService {
         .where('id = :id', { id: invoice.customerId })
         .execute();
 
-      console.log(`   💰 Balance del cliente actualizado: -$${paymentAmount.toLocaleString()}`);
     }
 
-    console.log('💳 === PAGOS MÚLTIPLES PROCESADOS ===');
-    console.log(`   Factura: ${invoice.number}`);
-    console.log(`   Total: $${invoice.total.toLocaleString()}`);
-    console.log(`   Pagado: $${invoice.paidAmount.toLocaleString()}`);
-    console.log(`   Saldo: $${invoice.balanceDue.toLocaleString()}`);
-    console.log(`   Estado: ${invoice.status}`);
   }
 
   /**
@@ -784,12 +734,9 @@ export class InvoicesService {
       if (remainingBalance > 0 || metadata.createCreditForRemaining) {
         const days = customer?.paymentTerms || 30;
         const dueDate = addDays(todayStr, days);
-        console.log(`📅 Pago parcial detectado - Fecha de vencimiento: ${dueDate.toISOString().split('T')[0]} (${days} días)`);
-        console.log(`   Total pagado: $${totalPaid}, Saldo restante: $${remainingBalance}`);
         return dueDate;
       }
 
-      console.log('📅 Pago completo detectado - Vence hoy');
       return todayDate;
     }
 
@@ -804,13 +751,11 @@ export class InvoicesService {
       case PaymentMethod.CREDIT: {
         const creditDays = customer?.paymentTerms || 30;
         const creditDate = addDays(todayStr, creditDays);
-        console.log(`📅 Crédito - Fecha de vencimiento: ${creditDate.toISOString().split('T')[0]} (${creditDays} días)`);
         return creditDate;
       }
 
       case PaymentMethod.CHECK: {
         const checkDate = addDays(todayStr, 15);
-        console.log(`📅 Cheque - Fecha de vencimiento: ${checkDate.toISOString().split('T')[0]} (15 días)`);
         return checkDate;
       }
 
@@ -845,7 +790,6 @@ export class InvoicesService {
   // ): Promise<void> {
   //   switch (invoice.status) {
   //     case InvoiceStatus.PAID:
-  //       console.log('💰 Aplicando lógica para factura PAGADA');
   //       // Marcar como pagada completamente
   //       invoice.paidAmount = invoice.total;
   //       invoice.balanceDue = 0;
@@ -869,7 +813,6 @@ export class InvoicesService {
   //       break;
 
   //     case InvoiceStatus.PENDING:
-  //       console.log('⏰ Aplicando lógica para factura PENDIENTE');
   //       // Reducir stock pero mantener como pendiente de pago
   //       for (const item of invoice.items) {
   //         if (item.productId) {
@@ -882,12 +825,10 @@ export class InvoicesService {
   //       break;
 
   //     case InvoiceStatus.DRAFT:
-  //       console.log('📝 Aplicando lógica para factura BORRADOR');
   //       // No reducir stock ni actualizar balances
   //       break;
 
   //     default:
-  //       console.log(`❓ Status desconocido: ${invoice.status}`);
   //   }
   // }
 
@@ -901,15 +842,12 @@ export class InvoicesService {
   ): Promise<void> {
     switch (invoice.status) {
       case InvoiceStatus.PAID:
-        console.log('💰 Aplicando lógica para factura PAGADA');
 
         // ✅ CORREGIDO: Calcular el monto real a pagar (considerando saldo a favor ya aplicado)
         // Si ya se aplicó saldo a favor, paidAmount ya tiene ese valor
         const previouslyPaidAmount = invoice.paidAmount || 0; // Incluye saldo a favor si se aplicó
         const remainingToPay = invoice.total - previouslyPaidAmount;
 
-        console.log(`   Monto ya pagado (saldo a favor): $${previouslyPaidAmount.toLocaleString()}`);
-        console.log(`   Monto restante a pagar: $${remainingToPay.toLocaleString()}`);
 
         // Marcar como pagada completamente
         invoice.paidAmount = invoice.total;
@@ -934,7 +872,6 @@ export class InvoicesService {
           });
 
           await manager.save(Payment, payment);
-          console.log(`🏦 Pago registrado: $${remainingToPay.toLocaleString()} - Cuenta: ${bankAccountId || 'Sin cuenta'}`);
 
           // 🏦 Actualizar saldo de la cuenta bancaria SOLO con el monto del pago real
           if (bankAccountId) {
@@ -944,13 +881,11 @@ export class InvoicesService {
                 remainingToPay, // ✅ CORREGIDO: Solo actualizar con el monto real pagado
                 organizationId || invoice.organizationId,
               );
-              console.log(`🏦 Saldo actualizado en cuenta ${bankAccountId}: +$${remainingToPay.toLocaleString()}`);
             } catch (error) {
               console.warn(`⚠️ Error actualizando saldo de cuenta: ${error.message}`);
             }
           }
         } else {
-          console.log('   ✅ Factura completamente pagada con saldo a favor (no se requiere pago adicional)');
         }
 
         // Solo reducir stock si está habilitado usando FIFO
@@ -978,9 +913,6 @@ export class InvoicesService {
                   mainWarehouseId, // 🏪 Usar almacén principal
                   item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
                   manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
-                );
-                console.log(
-                  `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,
                 );
               } catch (error) {
                 console.error(
@@ -1004,7 +936,6 @@ export class InvoicesService {
         break;
 
       case InvoiceStatus.PENDING:
-        console.log('⏰ Aplicando lógica para factura PENDIENTE');
         // Solo reducir stock si está habilitado usando FIFO
         if (shouldAutoDeductInventory) {
           // Obtener almacén principal para el descuento
@@ -1031,9 +962,6 @@ export class InvoicesService {
                   item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
                   manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
                 );
-                console.log(
-                  `✅ Stock FIFO descontado para producto ${item.productId}: ${item.quantity} unidades`,
-                );
               } catch (error) {
                 console.error(
                   `❌ Error descontando stock FIFO para producto ${item.productId}:`,
@@ -1049,12 +977,10 @@ export class InvoicesService {
         break;
 
       case InvoiceStatus.DRAFT:
-        console.log('📝 Aplicando lógica para factura BORRADOR');
         // No reducir stock ni actualizar balances
         break;
 
       default:
-        console.log(`❓ Status desconocido: ${invoice.status}`);
     }
   }
 
@@ -1326,7 +1252,6 @@ export class InvoicesService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    console.log(`🔍 Buscando factura ${id} para organización ${tenantId}`);
 
     const invoice = await this.invoiceRepository.findOne({
       where: { id, organizationId: tenantId },
@@ -1337,18 +1262,13 @@ export class InvoicesService {
       throw new NotFoundException('Factura no encontrada');
     }
 
-    console.log(`✅ Factura encontrada: ${invoice.number}`);
-    console.log(`💰 PaidAmount: ${invoice.paidAmount}`);
-    console.log(`📋 Payments existentes: ${invoice.payments?.length || 0}`);
 
     // Solo procesar facturas que tienen paidAmount > 0 pero no tienen registros de pago
     if (invoice.paidAmount <= 0) {
-      console.log(`❌ La factura no tiene paidAmount > 0`);
       throw new BadRequestException('La factura no tiene pagos registrados en paidAmount');
     }
 
     if (invoice.payments && invoice.payments.length > 0) {
-      console.log(`❌ La factura ya tiene ${invoice.payments.length} registros de pago`);
       throw new BadRequestException('La factura ya tiene registros de pago');
     }
 
@@ -1442,7 +1362,6 @@ export class InvoicesService {
             paymentDto.amount,
             tenantId,
           );
-          console.log(`🏦 Saldo actualizado en cuenta ${paymentDto.bankAccountId}: +$${paymentDto.amount.toLocaleString()}`);
         } catch (error) {
           console.warn(`⚠️ Error actualizando saldo de cuenta: ${error.message}`);
         }
@@ -1538,10 +1457,8 @@ export class InvoicesService {
             });
 
             await manager.save(CreditTransaction, creditTransaction);
-            console.log(`📝 [Invoice→Credit] Pago registrado en historial de crédito ${associatedCredit.id.substring(0, 8)}`);
           }
 
-          console.log(`🔄 [Invoice→Credit] Crédito ${associatedCredit.id.substring(0, 8)} sincronizado. Pagado: $${creditNewPaidAmount}, Saldo: $${creditNewBalanceDue}, Estado: ${creditNewStatus}`);
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al sincronizar crédito asociado:`, syncError.message);
@@ -1614,9 +1531,6 @@ export class InvoicesService {
       balanceToUse = Math.min(availableBalance, invoiceDebt);
     }
 
-    console.log(`💰 [Invoice] Aplicando saldo a favor: $${balanceToUse.toLocaleString()} a factura ${invoice.number}`);
-    console.log(`   Saldo disponible: $${availableBalance.toLocaleString()}`);
-    console.log(`   Deuda de factura: $${invoiceDebt.toLocaleString()}`);
 
     return this.dataSource.transaction(async (manager) => {
       // 1. Usar el saldo del cliente (registra transacción en historial de saldo)
@@ -1724,14 +1638,12 @@ export class InvoicesService {
 
           await manager.save(CreditTransaction, creditTransaction);
 
-          console.log(`🔄 [Invoice→Credit] Crédito sincronizado. Saldo: $${creditNewBalanceDue}`);
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al sincronizar crédito:`, syncError.message);
         // No lanzar error para no afectar la operación principal
       }
 
-      console.log(`✅ [Invoice] Saldo aplicado exitosamente. Nuevo saldo factura: $${newBalanceDue}`);
 
       const updatedInvoice = await this.findOne(invoiceId);
 
@@ -1785,9 +1697,6 @@ export class InvoicesService {
       );
     }
 
-    console.log(`💰 Procesando ${multiPaymentDto.payments.length} pagos para factura ${invoice.number}`);
-    console.log(`   Total pagos: $${totalPaymentAmount.toLocaleString()}`);
-    console.log(`   Saldo pendiente: $${remainingBalance.toLocaleString()}`);
 
     return this.dataSource.transaction(async (manager) => {
       const createdPayments: Payment[] = [];
@@ -1832,14 +1741,12 @@ export class InvoicesService {
               .where('id = :id', { id: paymentItem.bankAccountId })
               .andWhere('organization_id = :orgId', { orgId: tenantId })
               .execute();
-            console.log(`   🏦 Saldo actualizado en cuenta ${paymentItem.bankAccountId}: +$${paymentItem.amount.toLocaleString()}`);
           } catch (error) {
             console.warn(`   ⚠️ Error actualizando saldo de cuenta: ${error.message}`);
             // No bloquear el pago, solo advertir
           }
         }
 
-        console.log(`   ✅ Pago creado: $${paymentItem.amount.toLocaleString()} - ${paymentItem.paymentMethod}`);
       }
 
       // 2. Calcular nuevos montos de la factura
@@ -1874,11 +1781,6 @@ export class InvoicesService {
         .where('id = :id', { id: invoice.customerId })
         .execute();
 
-      console.log(`   💰 Balance del cliente actualizado: -$${effectivePayment.toLocaleString()}`);
-      console.log(`   📊 Factura actualizada:`);
-      console.log(`      - Nuevo monto pagado: $${newPaidAmount.toLocaleString()}`);
-      console.log(`      - Nuevo saldo: $${newBalanceDue.toLocaleString()}`);
-      console.log(`      - Nuevo estado: ${newStatus}`);
 
       // 6. SINCRONIZACIÓN BIDIRECCIONAL: Actualizar crédito existente si lo hay
       // Esto es CRÍTICO para mantener consistencia cuando se paga desde facturas
@@ -1940,10 +1842,8 @@ export class InvoicesService {
             });
 
             await manager.save(CreditTransaction, creditTransaction);
-            console.log(`📝 [Invoice→Credit] Pagos múltiples registrados en historial de crédito ${existingCredit.id.substring(0, 8)}`);
           }
 
-          console.log(`🔄 [Invoice→Credit] Crédito existente ${existingCredit.id.substring(0, 8)} sincronizado. Pagado: $${creditNewPaidAmount}, Saldo: $${creditNewBalanceDue}, Estado: ${creditNewStatus}`);
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al sincronizar crédito existente:`, syncError.message);
@@ -1956,7 +1856,6 @@ export class InvoicesService {
 
       // Caso 1: Pago parcial - crear crédito por el saldo restante
       if (newBalanceDue > 0 && multiPaymentDto.createCreditForRemaining) {
-        console.log(`   💳 Creando crédito por saldo pendiente de $${newBalanceDue.toLocaleString()}`);
 
         try {
           // Calcular fecha de vencimiento (30 días por defecto)
@@ -2006,7 +1905,6 @@ export class InvoicesService {
 
           creditCreated = true;
           creditId = savedCredit.id;
-          console.log(`   ✅ Crédito creado: ${savedCredit.id} por $${newBalanceDue.toLocaleString()}`);
         } catch (error) {
           console.error(`   ❌ Error creando crédito: ${error.message}`);
           // No bloquear el pago, solo advertir
@@ -2016,7 +1914,6 @@ export class InvoicesService {
       // Caso 2: Excedente de pago - crear crédito a favor del cliente
       if (totalPaymentAmount > remainingBalance) {
         const excessAmount = totalPaymentAmount - remainingBalance;
-        console.log(`   💰 Excedente de $${excessAmount.toLocaleString()} - Se creará nota de crédito a favor del cliente`);
         // TODO: Manejar créditos a favor (saldo positivo del cliente)
       }
 
@@ -2132,13 +2029,11 @@ export class InvoicesService {
             status: creditNewStatus,
           });
 
-          console.log(`🔄 [Invoice→Credit] Crédito ${associatedCredit.id.substring(0, 8)} sincronizado tras eliminar pago. Saldo: $${creditNewBalanceDue}`);
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al sincronizar crédito tras eliminar pago:`, syncError.message);
       }
 
-      console.log(`🗑️ Pago eliminado: $${payment.amount.toLocaleString()} de factura ${invoice.number}`);
 
       return this.findOne(invoiceId);
     });
@@ -2190,7 +2085,6 @@ export class InvoicesService {
         invoice.status === InvoiceStatus.PENDING ||
         invoice.status === InvoiceStatus.PARTIALLY_PAID
       ) {
-        console.log(`🔄 Restaurando inventario de factura cancelada: ${invoice.number}`);
 
         // Obtener almacén principal
         const mainWarehouseId = await this.getMainWarehouseId(invoice.organizationId);
@@ -2214,9 +2108,6 @@ export class InvoicesService {
                 },
                 mainWarehouseId,
               );
-              console.log(
-                `✅ Inventario restaurado para producto ${item.productId}: ${item.quantity} unidades`,
-              );
             } catch (error) {
               console.error(
                 `❌ Error restaurando inventario para producto ${item.productId}:`,
@@ -2238,9 +2129,6 @@ export class InvoicesService {
               invoice.customerId,
               invoice.paidAmount,
               'add', // Devolver el crédito al cliente
-            );
-            console.log(
-              `✅ Balance del cliente restaurado: $${invoice.paidAmount}`,
             );
           } catch (error) {
             console.error(`❌ Error restaurando balance del cliente:`, error);
@@ -2269,7 +2157,6 @@ export class InvoicesService {
             status: CreditStatus.CANCELLED,
           });
 
-          console.log(`🔄 [Invoice→Credit] Crédito ${associatedCredit.id.substring(0, 8)} cancelado junto con la factura`);
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al cancelar crédito asociado:`, syncError.message);
@@ -2279,7 +2166,6 @@ export class InvoicesService {
       invoice.status = InvoiceStatus.CANCELLED;
       await manager.save(Invoice, invoice);
 
-      console.log(`✅ Factura ${invoice.number} cancelada exitosamente`);
       return this.findOne(id);
     });
   }
@@ -2454,7 +2340,6 @@ export class InvoicesService {
    * No permite crear facturas si la suscripción está vencida, cancelada o suspendida
    */
   private async validateActiveSubscription(organizationId: string): Promise<void> {
-    console.log(`🔒 Validando suscripción activa para organización: ${organizationId}`);
 
     const canCreateInvoice = await this.subscriptionService.canPerformAction(
       organizationId,
@@ -2481,11 +2366,9 @@ export class InvoicesService {
         errorMessage += 'Por favor, verifica el estado de tu cuenta.';
       }
 
-      console.log(`🚫 Suscripción no válida: ${errorMessage}`);
       throw new BadRequestException(errorMessage);
     }
 
-    console.log('✅ Suscripción activa - Permitido crear factura');
   }
 
   // ========== MÉTODOS DE VALIDACIÓN DE CRÉDITO PROFESIONALES ==========
@@ -2498,10 +2381,6 @@ export class InvoicesService {
     customer: any,
     invoiceDto: CreateInvoiceDto,
   ): Promise<void> {
-    console.log(
-      `🔍 Validando límite de crédito para cliente: ${customer.displayName}`,
-    );
-
     // 1. Validar que el cliente esté activo
     if (customer.status === 'suspended') {
       throw new BadRequestException(
@@ -2521,19 +2400,11 @@ export class InvoicesService {
     // 2. Calcular total estimado de la factura
     const estimatedTotal = this.calculateEstimatedTotal(invoiceDto);
 
-    console.log(`💰 Total estimado de factura: $${estimatedTotal.toLocaleString()}`);
 
     // 3. Validar límite de crédito
     const creditLimit = Number(customer.creditLimit) || 0;
     const currentBalance = Number(customer.currentBalance) || 0;
     const availableCredit = Math.max(0, creditLimit - currentBalance);
-
-    console.log(`📊 Análisis de crédito:
-      - Límite de crédito: $${creditLimit.toLocaleString()}
-      - Saldo actual: $${currentBalance.toLocaleString()}
-      - Crédito disponible: $${availableCredit.toLocaleString()}
-      - Monto solicitado: $${estimatedTotal.toLocaleString()}
-    `);
 
     if (estimatedTotal > availableCredit) {
       const deficit = estimatedTotal - availableCredit;
@@ -2559,7 +2430,6 @@ export class InvoicesService {
       },
     });
 
-    console.log(`📋 Facturas vencidas del cliente: ${overdueInvoices}`);
 
     if (overdueInvoices >= 3) {
       throw new BadRequestException(
@@ -2613,10 +2483,6 @@ export class InvoicesService {
       );
       // Continuar pero alertar
     }
-
-    console.log(
-      `✅ Validación de crédito exitosa. Crédito disponible después: $${(availableCredit - estimatedTotal).toLocaleString()}`,
-    );
   }
 
   /**

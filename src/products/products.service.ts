@@ -136,10 +136,6 @@ export class ProductService {
 
       // 🚀 NUEVA FUNCIONALIDAD: Crear lote inicial si tiene stock
       if (createProductDto.stock && createProductDto.stock > 0) {
-        console.log(
-          `🏗️ Producto creado con stock inicial: ${createProductDto.stock} unidades`,
-        );
-
         try {
           // Obtener el producto completo con precios para determinar costo
           const fullProduct = await queryRunner.manager.findOne(Product, {
@@ -184,10 +180,6 @@ export class ProductService {
             }
           }
 
-          console.log(
-            `💰 Usando costo unitario: $${unitCost} para stock inicial`,
-          );
-
           // Obtener el almacén principal de la organización
           const mainWarehouse = await queryRunner.manager
             .createQueryBuilder()
@@ -208,9 +200,6 @@ export class ProductService {
           }
 
           const warehouseId = mainWarehouse.warehouse_id;
-          console.log(
-            `🏪 Usando almacén principal: ${mainWarehouse.warehouse_name} (${warehouseId})`,
-          );
 
           // Crear lote inicial usando el queryRunner existente
           const batchNumber = await this.generateBatchNumber(
@@ -249,7 +238,6 @@ export class ProductService {
           const savedBatch = (await queryRunner.manager.save(
             initialBatch,
           )) as any;
-          console.log(`✅ Lote inicial creado: ${savedBatch.batchNumber}`);
 
           // Crear movimiento de inventario
           const movementNumber = await this.generateMovementNumber(
@@ -286,9 +274,6 @@ export class ProductService {
           const savedMovement = (await queryRunner.manager.save(
             initialMovement,
           )) as any;
-          console.log(
-            `✅ Movimiento inicial creado: ${savedMovement.movementNumber}`,
-          );
 
           // Crear relación batch-movement
           const batchMovement = queryRunner.manager.create(
@@ -308,7 +293,6 @@ export class ProductService {
           );
 
           await queryRunner.manager.save(batchMovement);
-          console.log(`🎉 Stock inicial configurado completamente`);
         } catch (stockError) {
           console.error(
             `⚠️ Error creando stock inicial (producto creado exitosamente):`,
@@ -577,8 +561,6 @@ export class ProductService {
       await queryRunner.startTransaction();
 
       try {
-        console.log('🔧 ProductService: Actualizando producto con precios...');
-        console.log('📋 Precios recibidos:', updateProductDto.prices);
 
         // Separar precios y datos del producto
         const { prices, ...productData } = updateProductDto;
@@ -592,24 +574,15 @@ export class ProductService {
           where: { product: { id } },
         });
 
-        console.log('📊 Precios actuales encontrados:', currentPrices.length);
 
         // Procesar cada precio en el array de actualización
         for (const priceDto of prices) {
-          console.log(
-            `🏷️ Procesando precio: tipo=${priceDto.type}, id=${priceDto.id || 'NUEVO'}`,
-          );
-
           if (priceDto.id) {
             // ✅ ACTUALIZAR PRECIO EXISTENTE
             const existingPrice = currentPrices.find(
               (p) => p.id === priceDto.id,
             );
             if (existingPrice) {
-              console.log(
-                `   ✅ Actualizando precio existente: ${existingPrice.id}`,
-              );
-
               // Actualizar campos
               existingPrice.type = priceDto.type as PriceType;
               existingPrice.amount = priceDto.amount;
@@ -625,15 +598,9 @@ export class ProductService {
               existingPrice.updatedAt = new Date();
 
               await queryRunner.manager.save(ProductPrice, existingPrice);
-              console.log(`   ✅ Precio actualizado exitosamente`);
-            } else {
-              console.log(
-                `   ⚠️ Precio con ID ${priceDto.id} no encontrado, se ignorará`,
-              );
             }
           } else {
             // ✅ CREAR NUEVO PRECIO
-            console.log(`   🆕 Creando nuevo precio: tipo=${priceDto.type}`);
 
             // Verificar si ya existe un precio del mismo tipo
             const existingTypePrice = currentPrices.find(
@@ -642,9 +609,6 @@ export class ProductService {
             );
 
             if (existingTypePrice) {
-              console.log(
-                `   ⚠️ Ya existe precio del tipo ${priceDto.type}, actualizando en su lugar`,
-              );
               // Actualizar el precio existente del mismo tipo
               existingTypePrice.amount = priceDto.amount;
               existingTypePrice.name = priceDto.name || existingTypePrice.name;
@@ -677,24 +641,16 @@ export class ProductService {
               newPrice.updatedAt = new Date();
 
               await queryRunner.manager.save(ProductPrice, newPrice);
-              console.log(`   ✅ Nuevo precio creado exitosamente`);
             }
           }
         }
 
         await queryRunner.commitTransaction();
-        console.log('✅ ProductService: Transacción completada exitosamente');
 
         // Retornar producto actualizado con precios
         const finalProduct = await this.productRepository.findOne({
           where: { id: updatedProduct.id },
           relations: ['prices', 'category', 'createdBy'],
-        });
-
-        console.log('📊 Producto final con precios:', {
-          id: finalProduct.id,
-          name: finalProduct.name,
-          pricesCount: finalProduct.prices?.length || 0,
         });
 
         return finalProduct;
@@ -712,7 +668,6 @@ export class ProductService {
       }
     } else {
       // ✅ ACTUALIZACIÓN SIMPLE SIN PRECIOS
-      console.log('🔧 ProductService: Actualización simple sin precios');
       Object.assign(product, updateProductDto);
       const savedProduct = await this.productRepository.save(product);
 
@@ -779,14 +734,9 @@ export class ProductService {
   }
 
   async getStats(): Promise<any> {
-    console.log('🔧 ProductService: Obteniendo estadísticas...');
 
     try {
       const stats = await this.productRepository.getProductStats();
-      console.log(
-        '📊 ProductService: Estadísticas recibidas del repositorio:',
-        stats,
-      );
 
       // Calcular porcentaje activo de forma segura
       const activePercentage =
@@ -805,7 +755,6 @@ export class ProductService {
         lowStock: stats.lowStock || 0,
       };
 
-      console.log('✅ ProductService: Estadísticas finales:', result);
       return result;
     } catch (error) {
       console.error('❌ ProductService: Error al obtener estadísticas:', error);
