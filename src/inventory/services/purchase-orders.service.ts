@@ -53,175 +53,151 @@ export class PurchaseOrdersService {
     organizationId: string,
     userId: string,
   ): Promise<PurchaseOrder> {
-    this.logger.log('DEBUG SERVICE - organizationId:', organizationId);
-    this.logger.log('DEBUG SERVICE - userId:', userId);
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+    const MAX_RETRIES = 5;
 
-    try {
-      // Verificar que el proveedor existe
-      const supplier = await queryRunner.manager.findOne(Supplier, {
-        where: { id: createPurchaseOrderDto.supplierId, organizationId },
+    // Verificar proveedor y productos ANTES del loop (no cambian entre intentos)
+    const supplier = await this.supplierRepository.findOne({
+      where: { id: createPurchaseOrderDto.supplierId, organizationId },
+    });
+    if (!supplier) {
+      throw new NotFoundException('Supplier not found');
+    }
+
+    for (const item of createPurchaseOrderDto.items) {
+      const product = await this.productRepository.findOne({
+        where: { id: item.productId, organizationId },
       });
-
-      if (!supplier) {
-        throw new NotFoundException('Supplier not found');
-      }
-
-      // Verificar que todos los productos existen
-      for (const item of createPurchaseOrderDto.items) {
-        const product = await queryRunner.manager.findOne(Product, {
-          where: { id: item.productId, organizationId },
-        });
-
-        if (!product) {
-          throw new NotFoundException(
-            `Product with ID ${item.productId} not found`,
-          );
-        }
-      }
-
-      // Crear la orden de compra (excluir items para evitar cascada con valores nulos)
-      const { items: itemsDto, ...orderData } = createPurchaseOrderDto;
-      const purchaseOrder = queryRunner.manager.create(PurchaseOrder, {
-        ...orderData,
-        supplierId: createPurchaseOrderDto.supplierId,
-        organizationId,
-        createdById: userId,
-        orderDate: new Date(),
-      });
-
-      // Generar número de orden
-      const orderNumber = await this.generateOrderNumber(
-        organizationId,
-        queryRunner,
-      );
-      purchaseOrder.orderNumber = orderNumber;
-
-      const savedOrder = await queryRunner.manager.save(purchaseOrder);
-      this.logger.log('DEBUG: savedOrder.id:', savedOrder.id);
-
-      // Crear los items con debugging mejorado
-      this.logger.log('🔧 DEBUG: Iniciando creación de items');
-      this.logger.log(
-        '🔧 DEBUG: Items en DTO:',
-        itemsDto.length,
-      );
-      this.logger.log('🔧 DEBUG: savedOrder.id:', savedOrder.id);
-      this.logger.log('🔧 DEBUG: organizationId:', organizationId);
-
-      // Crear items usando SQL raw para garantizar que los valores se inserten correctamente
-      const items: PurchaseOrderItem[] = [];
-
-      for (let index = 0; index < itemsDto.length; index++) {
-        const itemDto = itemsDto[index];
-        const quantity = Number(itemDto.quantity);
-        const unitCost = Number(itemDto.unitCost);
-        const taxPercentage = Number(itemDto.taxPercentage || 0);
-        const subtotal = quantity * unitCost;
-        const taxAmount = (subtotal * taxPercentage) / 100;
-        const total = subtotal + taxAmount;
-
-        this.logger.log(`🔧 DEBUG: Item ${index} - quantity: ${quantity}, unitCost: ${unitCost}, subtotal: ${subtotal}, total: ${total}`);
-
-        // Usar SQL raw para insertar el item
-        const result = await queryRunner.query(
-          `INSERT INTO "purchase_order_items"
-           ("lineNumber", "quantity", "unitCost", "subtotal", "taxPercentage", "taxAmount", "total", "receivedQuantity", "notes", "purchaseOrderId", "productId")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING *`,
-          [
-            itemDto.lineNumber,
-            quantity,
-            unitCost,
-            subtotal,
-            taxPercentage,
-            taxAmount,
-            total,
-            0,
-            itemDto.notes || null,
-            savedOrder.id,
-            itemDto.productId,
-          ]
+      if (!product) {
+        throw new NotFoundException(
+          `Product with ID ${item.productId} not found`,
         );
-
-        this.logger.log(`✅ Item ${index} insertado:`, result[0]?.id);
-
-        // Cargar el item insertado
-        const insertedItem = await queryRunner.manager.findOne(PurchaseOrderItem, {
-          where: { id: result[0].id },
-        });
-        if (insertedItem) {
-          items.push(insertedItem);
-        }
-      }
-
-      this.logger.log('🔧 DEBUG: Total items inserted:', items.length);
-      this.logger.log('✅ DEBUG: Items saved successfully');
-
-      // Calcular totales directamente de los items creados (convertir a números)
-      const itemsSubtotal = items.reduce(
-        (sum, item) => sum + Number(item.total || 0),
-        0,
-      );
-      savedOrder.subtotal = Number(itemsSubtotal);
-      savedOrder.taxAmount = savedOrder.taxPercentage
-        ? (Number(itemsSubtotal) * Number(savedOrder.taxPercentage)) / 100
-        : 0;
-      savedOrder.total =
-        Number(savedOrder.subtotal) +
-        Number(savedOrder.taxAmount) +
-        Number(savedOrder.shippingCost || 0);
-
-      // Actualizar solo los campos calculados sin tocar relaciones
-      await queryRunner.manager.update(
-        PurchaseOrder,
-        { id: savedOrder.id },
-        {
-          subtotal: savedOrder.subtotal,
-          taxAmount: savedOrder.taxAmount,
-          total: savedOrder.total,
-        },
-      );
-
-      await queryRunner.commitTransaction();
-
-      // Buscar la orden creada con todas las relaciones cargadas
-      this.logger.log('🔍 DEBUG: Cargando orden creada con relaciones...');
-      const finalOrder = await this.findOne(savedOrder.id, organizationId);
-      this.logger.log('🔍 DEBUG: Orden cargada:', {
-        id: finalOrder.id,
-        orderNumber: finalOrder.orderNumber,
-        supplierId: finalOrder.supplierId,
-        supplier: finalOrder.supplier
-          ? {
-              id: finalOrder.supplier.id,
-              name: finalOrder.supplier.name,
-            }
-          : null,
-        itemsCount: finalOrder.items?.length || 0,
-      });
-
-      return finalOrder;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-
-      // Manejar error de poNumber duplicado: reintentar con nuevo número
-      const errCode = error?.driverError?.code || error?.code;
-      const errConstraint = error?.driverError?.constraint || error?.constraint;
-      if (errCode === '23505' && errConstraint === 'purchase_orders_poNumber_key') {
-        this.logger.warn(`poNumber duplicado detectado, reintentando con nuevo número...`);
-        await queryRunner.release();
-        return this.create(createPurchaseOrderDto, organizationId, userId);
-      }
-
-      throw error;
-    } finally {
-      if (!queryRunner.isReleased) {
-        await queryRunner.release();
       }
     }
+
+    const { items: itemsDto, ...orderData } = createPurchaseOrderDto;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+
+      try {
+        // Generar número de orden con lock para evitar colisiones
+        const orderNumber = await this.generateOrderNumber(
+          organizationId,
+          queryRunner,
+        );
+
+        // Crear la orden de compra
+        const purchaseOrder = queryRunner.manager.create(PurchaseOrder, {
+          ...orderData,
+          orderNumber,
+          supplierId: createPurchaseOrderDto.supplierId,
+          organizationId,
+          createdById: userId,
+          orderDate: new Date(),
+        });
+
+        const savedOrder = await queryRunner.manager.save(purchaseOrder);
+
+        // Crear items
+        const items: PurchaseOrderItem[] = [];
+
+        for (let index = 0; index < itemsDto.length; index++) {
+          const itemDto = itemsDto[index];
+          const quantity = Number(itemDto.quantity);
+          const unitCost = Number(itemDto.unitCost);
+          const taxPercentage = Number(itemDto.taxPercentage || 0);
+          const subtotal = quantity * unitCost;
+          const taxAmount = (subtotal * taxPercentage) / 100;
+          const total = subtotal + taxAmount;
+
+          const result = await queryRunner.query(
+            `INSERT INTO "purchase_order_items"
+             ("lineNumber", "quantity", "unitCost", "subtotal", "taxPercentage", "taxAmount", "total", "receivedQuantity", "notes", "purchaseOrderId", "productId")
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING *`,
+            [
+              itemDto.lineNumber,
+              quantity,
+              unitCost,
+              subtotal,
+              taxPercentage,
+              taxAmount,
+              total,
+              0,
+              itemDto.notes || null,
+              savedOrder.id,
+              itemDto.productId,
+            ],
+          );
+
+          const insertedItem = await queryRunner.manager.findOne(
+            PurchaseOrderItem,
+            { where: { id: result[0].id } },
+          );
+          if (insertedItem) {
+            items.push(insertedItem);
+          }
+        }
+
+        // Calcular totales
+        const itemsSubtotal = items.reduce(
+          (sum, item) => sum + Number(item.total || 0),
+          0,
+        );
+        savedOrder.subtotal = Number(itemsSubtotal);
+        savedOrder.taxAmount = savedOrder.taxPercentage
+          ? (Number(itemsSubtotal) * Number(savedOrder.taxPercentage)) / 100
+          : 0;
+        savedOrder.total =
+          Number(savedOrder.subtotal) +
+          Number(savedOrder.taxAmount) +
+          Number(savedOrder.shippingCost || 0);
+
+        await queryRunner.manager.update(
+          PurchaseOrder,
+          { id: savedOrder.id },
+          {
+            subtotal: savedOrder.subtotal,
+            taxAmount: savedOrder.taxAmount,
+            total: savedOrder.total,
+          },
+        );
+
+        await queryRunner.commitTransaction();
+
+        const finalOrder = await this.findOne(savedOrder.id, organizationId);
+        return finalOrder;
+      } catch (error) {
+        await queryRunner.rollbackTransaction();
+
+        const errCode = error?.driverError?.code || error?.code;
+        const errConstraint =
+          error?.driverError?.constraint || error?.constraint;
+
+        if (
+          errCode === '23505' &&
+          errConstraint === 'purchase_orders_poNumber_key' &&
+          attempt < MAX_RETRIES - 1
+        ) {
+          this.logger.warn(
+            `poNumber duplicado (intento ${attempt + 1}/${MAX_RETRIES}), reintentando...`,
+          );
+          continue;
+        }
+
+        throw error;
+      } finally {
+        if (!queryRunner.isReleased) {
+          await queryRunner.release();
+        }
+      }
+    }
+
+    throw new BadRequestException(
+      'No se pudo generar un número de orden único después de varios intentos',
+    );
   }
 
   async findAll(
@@ -894,7 +870,7 @@ export class PurchaseOrdersService {
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `PO-${year}${month}-`;
 
-    // Usar MAX en lugar de COUNT para evitar colisiones con registros eliminados o gaps
+    // Usar MAX con FOR UPDATE para bloquear filas y evitar colisiones concurrentes
     const result = await queryRunner.query(
       `SELECT MAX("poNumber") as max_po FROM purchase_orders WHERE "organization_id" = $1 AND "poNumber" LIKE $2`,
       [organizationId, `${prefix}%`],

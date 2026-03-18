@@ -5,7 +5,6 @@ import {
   OneToMany,
   JoinColumn,
   Index,
-  BeforeInsert,
 } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Supplier } from '../../suppliers/entities/supplier.entity';
@@ -147,17 +146,6 @@ export class PurchaseOrder extends BaseEntity {
   // Lotes generados por esta orden
   @OneToMany(() => InventoryBatch, (batch) => batch.purchaseOrder)
   batches: InventoryBatch[];
-
-  // Generar número de orden automáticamente
-  @BeforeInsert()
-  generateOrderNumber() {
-    if (!this.orderNumber) {
-      const year = new Date().getFullYear();
-      const month = String(new Date().getMonth() + 1).padStart(2, '0');
-      const timestamp = Date.now().toString().slice(-6);
-      this.orderNumber = `PO-${year}${month}-${timestamp}`;
-    }
-  }
 
   // Métodos útiles
   get isEditable(): boolean {
