@@ -10,26 +10,48 @@ export class PurchaseOrderItem extends BaseEntity {
   @Column({ type: 'int' })
   lineNumber: number; // Número de línea en la orden
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings
+  @Column({
+    type: 'decimal', precision: 10, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   quantity: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 4 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 4,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   unitCost: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   subtotal: number;
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true })
+  @Column({
+    type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   taxPercentage: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, nullable: true })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2, default: 0, nullable: true,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   taxAmount: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   total: number;
 
   // Cantidades recibidas
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   receivedQuantity: number;
 
   // NOTA: pendingQuantity se calcula, no está en DB

@@ -140,18 +140,21 @@ export class PurchaseOrdersService {
         }
 
         // Calcular totales
+        // CRITICAL: Usar item.subtotal (no item.total) para el subtotal de la PO,
+        // y siempre Number() porque TypeORM retorna decimals como strings
         const itemsSubtotal = items.reduce(
-          (sum, item) => sum + Number(item.total || 0),
+          (sum, item) => sum + Number(item.subtotal || 0),
           0,
         );
-        savedOrder.subtotal = Number(itemsSubtotal);
-        savedOrder.taxAmount = savedOrder.taxPercentage
-          ? (Number(itemsSubtotal) * Number(savedOrder.taxPercentage)) / 100
+        const orderTaxPct = Number(savedOrder.taxPercentage) || 0;
+        savedOrder.subtotal = itemsSubtotal;
+        savedOrder.taxAmount = orderTaxPct > 0
+          ? (itemsSubtotal * orderTaxPct) / 100
           : 0;
         savedOrder.total =
-          Number(savedOrder.subtotal) +
+          itemsSubtotal +
           Number(savedOrder.taxAmount) +
-          Number(savedOrder.shippingCost || 0);
+          (Number(savedOrder.shippingCost) || 0);
 
         await queryRunner.manager.update(
           PurchaseOrder,
@@ -400,9 +403,10 @@ export class PurchaseOrdersService {
       },
     });
 
-    // Calcular subtotal
+    // CRITICAL: TypeORM retorna columnas decimal como strings.
+    // Siempre usar Number() para evitar concatenación de strings con +
     const subtotal = items.reduce((sum, item) => {
-      return sum + item.quantity * item.unitCost;
+      return sum + Number(item.quantity) * Number(item.unitCost);
     }, 0);
 
     // Obtener la orden para mantener los porcentajes existentes
@@ -411,8 +415,8 @@ export class PurchaseOrdersService {
     });
 
     if (purchaseOrder) {
-      const taxPercentage = purchaseOrder.taxPercentage || 0;
-      const shippingCost = purchaseOrder.shippingCost || 0;
+      const taxPercentage = Number(purchaseOrder.taxPercentage) || 0;
+      const shippingCost = Number(purchaseOrder.shippingCost) || 0;
 
       const taxAmount = (subtotal * taxPercentage) / 100;
       const total = subtotal + taxAmount + shippingCost;

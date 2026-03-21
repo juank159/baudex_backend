@@ -53,31 +53,35 @@ export class PurchaseOrder extends BaseEntity {
   currency: string;
 
   // Totales
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings
+  @Column({
+    type: 'decimal', precision: 12, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   subtotal: number;
 
   @Column({
-    type: 'decimal',
-    precision: 5,
-    scale: 2,
-    default: 0,
-    nullable: true,
+    type: 'decimal', precision: 5, scale: 2, default: 0, nullable: true,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
   })
   taxPercentage: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   taxAmount: number;
 
   @Column({
-    type: 'decimal',
-    precision: 12,
-    scale: 2,
-    default: 0,
-    nullable: true,
+    type: 'decimal', precision: 12, scale: 2, default: 0, nullable: true,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
   })
   shippingCost: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   total: number;
 
   // Información adicional
@@ -214,6 +218,8 @@ export class PurchaseOrder extends BaseEntity {
   }
 
   // Calcular totales
+  // CRITICAL: TypeORM retorna columnas decimal como strings.
+  // Siempre usar Number() para evitar concatenación con el operador +
   calculateTotals(): void {
     if (!this.items || this.items.length === 0) {
       this.subtotal = 0;
@@ -224,14 +230,14 @@ export class PurchaseOrder extends BaseEntity {
 
     // Calcular subtotal
     this.subtotal = this.items.reduce((sum, item) => {
-      return sum + item.quantity * item.unitCost;
+      return sum + Number(item.quantity) * Number(item.unitCost);
     }, 0);
 
     // Calcular impuestos
-    this.taxAmount = (this.subtotal * (this.taxPercentage || 0)) / 100;
+    this.taxAmount = (this.subtotal * (Number(this.taxPercentage) || 0)) / 100;
 
     // Calcular total
-    this.total = this.subtotal + this.taxAmount + (this.shippingCost || 0);
+    this.total = this.subtotal + this.taxAmount + (Number(this.shippingCost) || 0);
 
     // Redondear valores
     this.subtotal = Math.round(this.subtotal * 100) / 100;

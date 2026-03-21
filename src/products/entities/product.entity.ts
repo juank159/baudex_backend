@@ -192,30 +192,31 @@ export class Product extends BaseEntity {
   status: ProductStatus;
 
   // Stock management
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings (decimal columns)
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   stock: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   minStock: number;
 
   // FIFO Cost for profitability calculations
-  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   cost: number;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   unit?: string;
 
   // Dimensions and weight
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   weight?: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   length?: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   width?: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   height?: number;
 
   // Media
@@ -314,6 +315,7 @@ export class Product extends BaseEntity {
     default: 19,
     name: 'tax_rate',
     comment: 'Tasa de impuesto en porcentaje',
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
   })
   taxRate: number;
 
@@ -367,6 +369,7 @@ export class Product extends BaseEntity {
     default: 0,
     name: 'retention_rate',
     comment: 'Tasa de retención en porcentaje',
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
   })
   retentionRate?: number;
 

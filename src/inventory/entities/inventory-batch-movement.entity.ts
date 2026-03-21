@@ -30,20 +30,21 @@ export class InventoryBatchMovement extends BaseEntity {
   @Index()
   movementDate: Date;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings (decimal columns)
+  @Column({ type: 'decimal', precision: 10, scale: 2, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   quantity: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 4 })
+  @Column({ type: 'decimal', precision: 12, scale: 4, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   unitCost: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   totalCost: number;
 
   // Estado del lote después del movimiento
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   batchQuantityAfter: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   batchValueAfter: number;
 
   @Column({ type: 'text', nullable: true })

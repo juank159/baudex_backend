@@ -34,7 +34,7 @@ export class Expense extends BaseEntity {
   @Column({ type: 'varchar', length: 200 })
   description: string;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   amount: number;
 
   @Column({ type: 'date' })

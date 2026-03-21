@@ -39,29 +39,54 @@ export class InventoryBatch extends BaseEntity {
   expirationDate?: Date;
 
   // Cantidades PEPS
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings
+  @Column({
+    type: 'decimal', precision: 10, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   quantity: number; // Cantidad total del lote (legacy, mantener sincronizado con originalQuantity)
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({
+    type: 'decimal', precision: 10, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   remainingQuantity: number; // Cantidad restante (legacy, mantener sincronizado con currentQuantity)
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   originalQuantity: number; // Cantidad inicial del lote
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   currentQuantity: number; // Cantidad actual disponible
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   reservedQuantity: number; // Cantidad reservada
 
   // Costos PEPS
-  @Column({ type: 'decimal', precision: 12, scale: 4 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 4,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   unitCost: number; // Costo unitario de este lote
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   totalCost: number; // Costo total del lote
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({
+    type: 'decimal', precision: 12, scale: 2,
+    transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
+  })
   remainingValue: number; // Valor restante del lote
 
   @Column({

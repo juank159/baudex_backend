@@ -58,13 +58,14 @@ export class CreditNoteItem extends BaseEntity {
   @Column({ type: 'varchar', length: 500 })
   description: string; // Descripción del item
 
-  @Column({ type: 'decimal', precision: 10, scale: 3, default: 0 })
+  // CRITICAL: transformer ensures TypeORM returns numbers, not strings (decimal columns)
+  @Column({ type: 'decimal', precision: 10, scale: 3, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   quantity: number; // Cantidad que se está acreditando
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'unit_price' })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'unit_price', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   unitPrice: number; // Precio unitario
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   subtotal: number; // Subtotal (cantidad × precio unitario)
 
   @Column({ type: 'varchar', length: 50, nullable: true })
@@ -72,18 +73,18 @@ export class CreditNoteItem extends BaseEntity {
 
   // ==================== COSTOS (para inventario FIFO) ====================
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, name: 'unit_cost' })
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, name: 'unit_cost', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   unitCost: number; // Costo unitario (para restauración de inventario)
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, name: 'total_cost' })
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, name: 'total_cost', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   totalCost: number; // Costo total (cantidad × costo unitario)
 
   // ==================== DESCUENTOS ====================
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, name: 'discount_percentage' })
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, name: 'discount_percentage', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   discountPercentage: number; // Porcentaje de descuento
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'discount_amount' })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'discount_amount', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   discountAmount: number; // Monto de descuento
 
   // ==================== NOTAS ====================

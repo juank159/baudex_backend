@@ -288,19 +288,19 @@ export class Customer extends BaseEntity {
   @JoinColumn({ name: 'organization_id' })
   organization: Organization;
 
-  // ✅ ARREGLO: Configurar transformación para campos decimales
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  // CRITICAL: TypeORM column transformer ensures numbers, not strings from DB
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
   creditLimit: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
   currentBalance: number;
 
   /**
    * Saldo de créditos pendientes del cliente (deudas)
    */
-  @Column({ name: 'credit_balance', type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ name: 'credit_balance', type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
   creditBalance: number;
 
@@ -319,7 +319,7 @@ export class Customer extends BaseEntity {
   @Column({ type: 'timestamptz', nullable: true })
   lastPurchaseAt?: Date;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   @Transform(({ value }) => parseFloat(value), { toPlainOnly: true })
   totalPurchases: number;
 
