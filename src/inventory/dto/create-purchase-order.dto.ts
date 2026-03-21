@@ -42,6 +42,13 @@ export class CreatePurchaseOrderItemDto {
   @Max(100)
   taxPercentage?: number;
 
+  @ApiPropertyOptional({ description: 'Porcentaje de descuento del item' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  discountPercentage?: number;
+
   @ApiPropertyOptional({ description: 'Fecha esperada de entrega' })
   @IsOptional()
   @IsDateString()
