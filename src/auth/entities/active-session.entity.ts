@@ -26,6 +26,10 @@ export class ActiveSession extends BaseEntity {
   @Index()
   jti: string;
 
+  @Column({ type: 'varchar', length: 128, nullable: true, name: 'device_id' })
+  @Index()
+  deviceId: string;
+
   @Column({ type: 'text', nullable: true, name: 'device_info' })
   deviceInfo: string;
 

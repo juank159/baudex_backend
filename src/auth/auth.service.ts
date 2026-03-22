@@ -47,6 +47,7 @@ export class AuthService {
     organizationId?: string,
     deviceInfo?: string,
     ipAddress?: string,
+    deviceId?: string,
   ): Promise<AuthResponse> {
     const {
       email,
@@ -211,7 +212,7 @@ export class AuthService {
     const jti = randomUUID();
     const token = this.getJwtToken({ id: user.id, jti });
 
-    // Registrar sesión (no bloquear registro si falla)
+    // Registrar sesión con deviceId (no bloquear registro si falla)
     try {
       await this.createSession(
         user.id,
@@ -219,6 +220,7 @@ export class AuthService {
         jti,
         deviceInfo,
         ipAddress,
+        deviceId,
       );
       console.log(`📱 Sesión creada para nuevo usuario: ${user.email}`);
     } catch (sessionError) {
@@ -312,16 +314,14 @@ export class AuthService {
     const jti = randomUUID();
     const token = this.getJwtToken({ id: user.id, jti });
 
-    // Registrar sesión (incluye deviceId para match futuro)
-    const enrichedDeviceInfo = deviceId && deviceInfo
-      ? `${deviceInfo} [${deviceId}]`
-      : deviceInfo;
+    // Registrar sesión con deviceId dedicado
     await this.createSession(
       user.id,
       user.organizationId,
       jti,
-      enrichedDeviceInfo,
+      deviceInfo,
       ipAddress,
+      deviceId,
     );
 
     return {
@@ -451,8 +451,32 @@ export class AuthService {
     return this.jwtService.sign(payload);
   }
 
-  async refreshToken(user: User): Promise<{ token: string }> {
-    const token = this.getJwtToken({ id: user.id });
+  async refreshToken(
+    user: User,
+    currentJti?: string,
+    deviceId?: string,
+  ): Promise<{ token: string }> {
+    // Generar nuevo jti para vincular con sesión activa
+    const newJti = randomUUID();
+    const token = this.getJwtToken({ id: user.id, jti: newJti });
+
+    // Si hay jti anterior, actualizar la sesión existente con el nuevo jti
+    if (currentJti) {
+      const session = await this.activeSessionRepository.findOne({
+        where: { jti: currentJti, userId: user.id, isActive: true },
+      });
+
+      if (session) {
+        session.jti = newJti;
+        session.lastActivityAt = new Date();
+        // Actualizar deviceId si no lo tenía (sesiones legacy)
+        if (deviceId && !session.deviceId) {
+          session.deviceId = deviceId;
+        }
+        await this.activeSessionRepository.save(session);
+      }
+    }
+
     return { token };
   }
 
@@ -569,9 +593,8 @@ export class AuthService {
   }
 
   /**
-   * Revocar sesión anterior del mismo dispositivo para evitar duplicados.
-   * Prioridad: deviceId (X-Device-ID header) > deviceInfo (User-Agent).
-   * El deviceId es un UUID único generado por el cliente y persistido localmente.
+   * Revocar sesiones anteriores del mismo dispositivo para evitar duplicados.
+   * Prioridad: device_id (columna dedicada, indexada) > deviceInfo (User-Agent).
    */
   private async revokeExistingDeviceSession(
     userId: string,
@@ -580,21 +603,18 @@ export class AuthService {
   ): Promise<void> {
     let existingSessions: ActiveSession[] = [];
 
-    // Prioridad 1: Buscar por deviceId exacto (más confiable)
+    // Prioridad 1: Match exacto por device_id (columna indexada)
     if (deviceId) {
       existingSessions = await this.activeSessionRepository.find({
         where: {
           userId,
-          deviceInfo: Raw(
-            (alias) => `${alias} LIKE :pattern`,
-            { pattern: `%[${deviceId}]%` },
-          ),
+          deviceId,
           isActive: true,
         },
       });
     }
 
-    // Prioridad 2: Buscar por deviceInfo exacto (User-Agent)
+    // Prioridad 2: Fallback por deviceInfo exacto (User-Agent) para sesiones legacy sin device_id
     if (existingSessions.length === 0 && deviceInfo && deviceInfo !== 'Unknown') {
       existingSessions = await this.activeSessionRepository.find({
         where: {
@@ -638,6 +658,7 @@ export class AuthService {
     jti: string,
     deviceInfo?: string,
     ipAddress?: string,
+    deviceId?: string,
   ): Promise<ActiveSession> {
     // Calcular fecha de expiración basada en JWT_EXPIRES_IN
     const expiresIn = this.configService.get('JWT_EXPIRES_IN', '7d');
@@ -647,6 +668,7 @@ export class AuthService {
       userId,
       organizationId,
       jti,
+      deviceId: deviceId || null,
       deviceInfo: deviceInfo || 'Unknown',
       ipAddress: ipAddress || 'Unknown',
       lastActivityAt: new Date(),

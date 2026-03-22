@@ -44,11 +44,13 @@ export class AuthController {
     const deviceInfo = req?.headers?.['user-agent'] || 'Unknown';
     const ipAddress =
       req?.headers?.['x-forwarded-for'] || req?.ip || 'Unknown';
+    const deviceId = req?.headers?.['x-device-id'] as string | undefined;
     return this.authService.register(
       registerDto,
       tenantId,
       deviceInfo,
       ipAddress,
+      deviceId,
     );
   }
 
@@ -109,8 +111,22 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Refrescar token de acceso' })
   @ApiResponse({ status: 200, description: 'Token refrescado exitosamente' })
-  refreshToken(@GetUser() user: User) {
-    return this.authService.refreshToken(user);
+  refreshToken(@GetUser() user: User, @Req() req?: any) {
+    // Extraer jti del token actual para actualizar la sesión
+    let currentJti: string | undefined;
+    try {
+      const token = req?.headers?.authorization?.replace('Bearer ', '');
+      if (token) {
+        const decoded = JSON.parse(
+          Buffer.from(token.split('.')[1], 'base64').toString(),
+        );
+        currentJti = decoded.jti;
+      }
+    } catch {
+      // Si no se puede decodificar, continuar sin jti
+    }
+    const deviceId = req?.headers?.['x-device-id'] as string | undefined;
+    return this.authService.refreshToken(user, currentJti, deviceId);
   }
 
   @Post('validate-password')
