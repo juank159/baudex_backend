@@ -251,6 +251,7 @@ export class AuthService {
     organizationId?: string,
     deviceInfo?: string,
     ipAddress?: string,
+    deviceId?: string,
   ): Promise<AuthResponse> {
     const { email, password } = loginDto;
 
@@ -297,6 +298,9 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    // Revocar sesión anterior del mismo dispositivo (evita duplicados)
+    await this.revokeExistingDeviceSession(user.id, deviceInfo, deviceId);
+
     // Verificar límite de dispositivos según plan de suscripción
     await this.checkDeviceLimit(user.id, user.organizationId);
 
@@ -308,12 +312,15 @@ export class AuthService {
     const jti = randomUUID();
     const token = this.getJwtToken({ id: user.id, jti });
 
-    // Registrar sesión
+    // Registrar sesión (incluye deviceId para match futuro)
+    const enrichedDeviceInfo = deviceId && deviceInfo
+      ? `${deviceInfo} [${deviceId}]`
+      : deviceInfo;
     await this.createSession(
       user.id,
       user.organizationId,
       jti,
-      deviceInfo,
+      enrichedDeviceInfo,
       ipAddress,
     );
 
@@ -557,6 +564,54 @@ export class AuthService {
       }
       console.log(
         `🧹 ${staleSessions.length} sesiones stale revocadas para usuario ${userId.substring(0, 8)}...`,
+      );
+    }
+  }
+
+  /**
+   * Revocar sesión anterior del mismo dispositivo para evitar duplicados.
+   * Prioridad: deviceId (X-Device-ID header) > deviceInfo (User-Agent).
+   * El deviceId es un UUID único generado por el cliente y persistido localmente.
+   */
+  private async revokeExistingDeviceSession(
+    userId: string,
+    deviceInfo?: string,
+    deviceId?: string,
+  ): Promise<void> {
+    let existingSessions: ActiveSession[] = [];
+
+    // Prioridad 1: Buscar por deviceId exacto (más confiable)
+    if (deviceId) {
+      existingSessions = await this.activeSessionRepository.find({
+        where: {
+          userId,
+          deviceInfo: Raw(
+            (alias) => `${alias} LIKE :pattern`,
+            { pattern: `%[${deviceId}]%` },
+          ),
+          isActive: true,
+        },
+      });
+    }
+
+    // Prioridad 2: Buscar por deviceInfo exacto (User-Agent)
+    if (existingSessions.length === 0 && deviceInfo && deviceInfo !== 'Unknown') {
+      existingSessions = await this.activeSessionRepository.find({
+        where: {
+          userId,
+          deviceInfo,
+          isActive: true,
+        },
+      });
+    }
+
+    if (existingSessions.length > 0) {
+      for (const session of existingSessions) {
+        session.isActive = false;
+        await this.activeSessionRepository.save(session);
+      }
+      console.log(
+        `🔄 ${existingSessions.length} sesión(es) anterior(es) del mismo dispositivo revocada(s) para usuario ${userId.substring(0, 8)}...`,
       );
     }
   }

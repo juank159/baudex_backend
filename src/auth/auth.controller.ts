@@ -68,7 +68,14 @@ export class AuthController {
     const deviceInfo = req?.headers?.['user-agent'] || 'Unknown';
     const ipAddress =
       req?.headers?.['x-forwarded-for'] || req?.ip || 'Unknown';
-    return this.authService.login(loginDto, tenantId, deviceInfo, ipAddress);
+    const deviceId = req?.headers?.['x-device-id'] as string | undefined;
+    return this.authService.login(
+      loginDto,
+      tenantId,
+      deviceInfo,
+      ipAddress,
+      deviceId,
+    );
   }
 
   @Get('profile')
