@@ -297,10 +297,18 @@ export class PurchaseOrdersService {
     // Separar items del resto de datos para actualizar
     const { items, ...purchaseOrderData } = updatePurchaseOrderDto;
 
+    // Filter out undefined values to prevent TypeORM from setting columns to NULL
+    const cleanData: Record<string, any> = { updatedAt: new Date() };
+    for (const [key, value] of Object.entries(purchaseOrderData)) {
+      if (value !== undefined) {
+        cleanData[key] = value;
+      }
+    }
+
     // Actualizar datos principales de la orden
     await this.purchaseOrderRepository.update(
       { id, organizationId },
-      { ...purchaseOrderData, updatedAt: new Date() },
+      cleanData,
     );
 
     // Si hay items, manejarlos por separado

@@ -24,6 +24,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof exceptionResponse === 'string'
           ? exceptionResponse
           : (exceptionResponse as any).message || message;
+    } else if (exception instanceof Error) {
+      // Include actual error message for non-HttpException errors (TypeORM, etc.)
+      message = exception.message || message;
     }
 
     const errorResponse = {
