@@ -17,8 +17,17 @@ export default new DataSource({
   database: configService.get('DB_NAME'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
-  synchronize: false, // Siempre false para migraciones
+  synchronize: false,
   logging: configService.get('NODE_ENV') === 'development',
+  ssl:
+    configService.get('DB_SSL') === 'false'
+      ? false
+      : configService.get('NODE_ENV') === 'production'
+        ? { rejectUnauthorized: false }
+        : false,
+  extra: {
+    options: '-c timezone=UTC',
+  },
 });
 
 // package.json - agregar estos scripts
