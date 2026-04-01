@@ -16,9 +16,11 @@ export const getDatabaseConfig = (
   synchronize: false, // Disabled to use migrations instead
   logging: configService.get<string>('NODE_ENV') === 'development',
   ssl:
-    configService.get<string>('NODE_ENV') === 'production'
-      ? { rejectUnauthorized: false }
-      : false,
+    configService.get<string>('DB_SSL') === 'false'
+      ? false
+      : configService.get<string>('NODE_ENV') === 'production'
+        ? { rejectUnauthorized: false }
+        : false,
   autoLoadEntities: true,
   retryAttempts: 3,
   retryDelay: 3000,
