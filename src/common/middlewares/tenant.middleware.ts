@@ -104,12 +104,20 @@ export class TenantMiddleware implements NestMiddleware {
         tenantSlug = (req.query.tenant as string)?.toLowerCase() || null;
       }
 
-      // MULTITENANT: Para auth endpoints, permitir continuar sin tenant específico
+      // MULTITENANT: Para auth endpoints públicos, permitir continuar sin tenant
       const isAuthEndpoint =
         req.path === '/auth/register' ||
         req.path === '/auth/login' ||
+        req.path === '/auth/verify-email' ||
+        req.path === '/auth/resend-verification' ||
+        req.path === '/auth/forgot-password' ||
+        req.path === '/auth/reset-password' ||
         req.path === '/api/auth/register' ||
-        req.path === '/api/auth/login';
+        req.path === '/api/auth/login' ||
+        req.path === '/api/auth/verify-email' ||
+        req.path === '/api/auth/resend-verification' ||
+        req.path === '/api/auth/forgot-password' ||
+        req.path === '/api/auth/reset-password';
       if (isAuthEndpoint && !tenantSlug && !organizationId) {
         // Permitir auth sin tenant específico - se manejará en el AuthService
         next();
@@ -187,10 +195,18 @@ export class TenantMiddleware implements NestMiddleware {
         req.path.startsWith('/api-docs') ||
         req.path === '/' ||
         req.path.startsWith('/auth/system') ||
+        req.path.startsWith('/auth/verify') ||
+        req.path.startsWith('/auth/resend') ||
+        req.path.startsWith('/auth/forgot') ||
+        req.path.startsWith('/auth/reset') ||
+        req.path.startsWith('/api/auth/verify') ||
+        req.path.startsWith('/api/auth/resend') ||
+        req.path.startsWith('/api/auth/forgot') ||
+        req.path.startsWith('/api/auth/reset') ||
         req.path === '/auth/register' ||
-        req.path === '/api/auth/register' || // MULTITENANT: Permitir registro sin tenant
+        req.path === '/api/auth/register' ||
         req.path === '/auth/login' ||
-        req.path === '/api/auth/login'; // MULTITENANT: Permitir login sin tenant
+        req.path === '/api/auth/login';
 
       if (isSystemRoute) {
         // Para rutas de sistema, no requerir tenant específico

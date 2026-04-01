@@ -21,6 +21,8 @@ import {
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { VerifyEmailDto, ResendVerificationDto } from './dto/verify-email.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/forgot-password.dto';
 import { GetUser } from './decorators/get-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { TenantId } from '../common/decorators/current-tenant.decorator';
@@ -79,6 +81,46 @@ export class AuthController {
       deviceId,
     );
   }
+
+  // ==================== EMAIL VERIFICATION ====================
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verificar email con código de 6 dígitos' })
+  @ApiResponse({ status: 200, description: 'Email verificado' })
+  @ApiResponse({ status: 400, description: 'Código inválido o expirado' })
+  verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reenviar código de verificación de email' })
+  @ApiResponse({ status: 200, description: 'Código reenviado' })
+  resendVerification(@Body() dto: ResendVerificationDto) {
+    return this.authService.resendVerificationCode(dto);
+  }
+
+  // ==================== PASSWORD RECOVERY ====================
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Solicitar código para restablecer contraseña' })
+  @ApiResponse({ status: 200, description: 'Código enviado' })
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Restablecer contraseña con código' })
+  @ApiResponse({ status: 200, description: 'Contraseña restablecida' })
+  @ApiResponse({ status: 400, description: 'Código inválido o expirado' })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
+  }
+
+  // ==================== PROFILE ====================
 
   @Get('profile')
   @UseGuards(AuthGuard())

@@ -26,6 +26,12 @@ import {
   getPlanLimits,
   isUnlimited,
 } from '../subscriptions/config/plan-limits.config';
+import { AppMailerService } from '../mailer/mailer.service';
+import { VerifyEmailDto, ResendVerificationDto } from './dto/verify-email.dto';
+import {
+  ForgotPasswordDto,
+  ResetPasswordDto,
+} from './dto/forgot-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -40,6 +46,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly seedService: SeedService,
     private readonly subscriptionService: SubscriptionService,
+    private readonly appMailerService: AppMailerService,
   ) {}
 
   async register(
@@ -163,6 +170,27 @@ export class AuthService {
 
     await this.userRepository.save(user);
 
+    // Enviar código de verificación de email
+    try {
+      const verificationCode = this.generateSixDigitCode();
+      user.emailVerificationCode = verificationCode;
+      user.emailVerificationExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+      await this.userRepository.save(user);
+
+      await this.appMailerService.sendVerificationCode(
+        user.email,
+        verificationCode,
+        user.firstName,
+      );
+      console.log(`📧 Código de verificación enviado a ${user.email}`);
+    } catch (emailError) {
+      console.error(
+        `⚠️ Error enviando email de verificación a ${user.email}:`,
+        emailError,
+      );
+      // No fallar el registro si hay error en el email
+    }
+
     // GARANTIZADO: Crear almacén principal para la organización
     try {
       await this.seedService.createMainWarehouse(targetOrganizationId);
@@ -241,6 +269,7 @@ export class AuthService {
         role: user.role,
         status: user.status,
         isActive: user.isActive,
+        isEmailVerified: user.isEmailVerified ?? false,
         organizationId: user.organizationId,
         organizationSlug: organization.slug,
         organizationName: organization.name,
@@ -281,6 +310,7 @@ export class AuthService {
         'role',
         'status',
         'organizationId',
+        'isEmailVerified',
       ],
       relations: ['organization'],
     });
@@ -335,6 +365,7 @@ export class AuthService {
         role: user.role,
         status: user.status,
         isActive: user.isActive,
+        isEmailVerified: user.isEmailVerified ?? false,
         organizationId: user.organizationId,
         organizationSlug: user.organization.slug,
         organizationName: user.organization.name,
@@ -838,6 +869,200 @@ export class AuthService {
       valid: true,
       message: 'Contraseña válida',
     };
+  }
+
+  // ==================== EMAIL VERIFICATION ====================
+
+  async verifyEmail(
+    dto: VerifyEmailDto,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.userRepository.findOne({
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: dto.email.trim(),
+        }),
+        status: UserStatus.ACTIVE,
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    if (user.isEmailVerified) {
+      return { success: true, message: 'Email ya está verificado' };
+    }
+
+    if (
+      !user.emailVerificationCode ||
+      !user.emailVerificationExpiresAt ||
+      user.emailVerificationExpiresAt < new Date()
+    ) {
+      throw new BadRequestException(
+        'El código ha expirado. Solicita uno nuevo.',
+      );
+    }
+
+    if (user.emailVerificationCode !== dto.code) {
+      throw new BadRequestException('Código incorrecto');
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationCode = null;
+    user.emailVerificationExpiresAt = null;
+    await this.userRepository.save(user);
+
+    console.log(`✅ Email verificado: ${user.email}`);
+    return { success: true, message: 'Email verificado exitosamente' };
+  }
+
+  async resendVerificationCode(
+    dto: ResendVerificationDto,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.userRepository.findOne({
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: dto.email.trim(),
+        }),
+        status: UserStatus.ACTIVE,
+      },
+    });
+
+    if (!user) {
+      // Por seguridad, no revelar si el email existe
+      return { success: true, message: 'Si el email existe, recibirás un código' };
+    }
+
+    if (user.isEmailVerified) {
+      return { success: true, message: 'Email ya está verificado' };
+    }
+
+    // Rate limit: no reenviar si el código actual tiene menos de 1 minuto
+    if (
+      user.emailVerificationExpiresAt &&
+      user.emailVerificationExpiresAt.getTime() > Date.now() + 9 * 60 * 1000
+    ) {
+      throw new BadRequestException(
+        'Espera al menos 1 minuto antes de solicitar otro código',
+      );
+    }
+
+    const code = this.generateSixDigitCode();
+    user.emailVerificationCode = code;
+    user.emailVerificationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await this.userRepository.save(user);
+
+    await this.appMailerService.sendVerificationCode(
+      user.email,
+      code,
+      user.firstName,
+    );
+
+    console.log(`📧 Código de verificación reenviado a ${user.email}`);
+    return { success: true, message: 'Código enviado exitosamente' };
+  }
+
+  // ==================== PASSWORD RECOVERY ====================
+
+  async forgotPassword(
+    dto: ForgotPasswordDto,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.userRepository.findOne({
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: dto.email.trim(),
+        }),
+        status: UserStatus.ACTIVE,
+      },
+    });
+
+    // Por seguridad, siempre retornar success aunque no exista
+    if (!user) {
+      return {
+        success: true,
+        message: 'Si el email existe, recibirás un código',
+      };
+    }
+
+    // Rate limit: no reenviar si el código actual tiene menos de 1 minuto
+    if (
+      user.passwordResetExpiresAt &&
+      user.passwordResetExpiresAt.getTime() > Date.now() + 9 * 60 * 1000
+    ) {
+      throw new BadRequestException(
+        'Espera al menos 1 minuto antes de solicitar otro código',
+      );
+    }
+
+    const code = this.generateSixDigitCode();
+    user.passwordResetCode = code;
+    user.passwordResetExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await this.userRepository.save(user);
+
+    await this.appMailerService.sendPasswordResetCode(
+      user.email,
+      code,
+      user.firstName,
+    );
+
+    console.log(`📧 Código de reset enviado a ${user.email}`);
+    return { success: true, message: 'Código enviado exitosamente' };
+  }
+
+  async resetPassword(
+    dto: ResetPasswordDto,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.userRepository.findOne({
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, {
+          email: dto.email.trim(),
+        }),
+        status: UserStatus.ACTIVE,
+      },
+      select: ['id', 'email', 'password', 'passwordResetCode', 'passwordResetExpiresAt'],
+    });
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    if (
+      !user.passwordResetCode ||
+      !user.passwordResetExpiresAt ||
+      user.passwordResetExpiresAt < new Date()
+    ) {
+      throw new BadRequestException(
+        'El código ha expirado. Solicita uno nuevo.',
+      );
+    }
+
+    if (user.passwordResetCode !== dto.code) {
+      throw new BadRequestException('Código incorrecto');
+    }
+
+    // Cambiar contraseña
+    await user.setPassword(dto.newPassword);
+    user.passwordResetCode = null;
+    user.passwordResetExpiresAt = null;
+    await this.userRepository.save(user);
+
+    // Revocar todas las sesiones activas por seguridad
+    const sessions = await this.activeSessionRepository.find({
+      where: { userId: user.id, isActive: true },
+    });
+    for (const session of sessions) {
+      session.isActive = false;
+      await this.activeSessionRepository.save(session);
+    }
+
+    console.log(`🔐 Contraseña restablecida para ${user.email}`);
+    return { success: true, message: 'Contraseña restablecida exitosamente' };
+  }
+
+  // ==================== HELPERS ====================
+
+  private generateSixDigitCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
   /**

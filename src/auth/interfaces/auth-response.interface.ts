@@ -11,6 +11,7 @@ export interface AuthResponse {
     role: UserRole;
     status: UserStatus;
     isActive: boolean;
+    isEmailVerified: boolean;
     organizationId: string;
     organizationSlug: string;
     organizationName: string;

@@ -63,6 +63,41 @@ export class User extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   avatar?: string;
 
+  // Email verification
+  @Column({ type: 'boolean', default: false, name: 'is_email_verified' })
+  isEmailVerified: boolean;
+
+  @Column({
+    type: 'varchar',
+    length: 6,
+    nullable: true,
+    name: 'email_verification_code',
+  })
+  emailVerificationCode?: string;
+
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    name: 'email_verification_expires_at',
+  })
+  emailVerificationExpiresAt?: Date;
+
+  // Password reset
+  @Column({
+    type: 'varchar',
+    length: 6,
+    nullable: true,
+    name: 'password_reset_code',
+  })
+  passwordResetCode?: string;
+
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    name: 'password_reset_expires_at',
+  })
+  passwordResetExpiresAt?: Date;
+
   // Relación con organización (multitenant)
   @Column({ type: 'uuid', name: 'organization_id' })
   @Index()
