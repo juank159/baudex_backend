@@ -1040,10 +1040,13 @@ export class AuthService {
       throw new BadRequestException('Código incorrecto');
     }
 
-    // Cambiar contraseña
+    // Cambiar contraseña + marcar email verificado (el usuario probó ownership con el código)
     await user.setPassword(dto.newPassword);
     user.passwordResetCode = null;
     user.passwordResetExpiresAt = null;
+    user.isEmailVerified = true;
+    user.emailVerificationCode = null;
+    user.emailVerificationExpiresAt = null;
     await this.userRepository.save(user);
 
     // Revocar todas las sesiones activas por seguridad
