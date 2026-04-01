@@ -69,15 +69,23 @@ export class TenantMiddleware implements NestMiddleware {
       }
 
       // Estrategia 2: Obtener tenant desde subdominio (solo para dominios reales, no IPs)
+      // Solo usar esta estrategia si el JWT no proporcionó un organizationId
       if (!organizationId) {
         const hostname = req.get('host') || req.hostname;
         if (hostname && hostname.includes('.') && !this.isIPAddress(hostname)) {
-          const subdomain = hostname.split('.')[0];
-          // Excluir subdominios comunes del sistema
-          if (
-            !['www', 'api', 'admin', 'app'].includes(subdomain.toLowerCase())
-          ) {
-            tenantSlug = subdomain.toLowerCase();
+          const parts = hostname.split('.');
+          // Solo extraer subdomain si hay 3+ partes (sub.domain.tld)
+          // Para dominios como "baudex.baudity.tech", "baudex" es el subdominio del servicio, no un tenant
+          if (parts.length > 3) {
+            const subdomain = parts[0];
+            // Excluir subdominios comunes del sistema
+            if (
+              !['www', 'api', 'admin', 'app'].includes(
+                subdomain.toLowerCase(),
+              )
+            ) {
+              tenantSlug = subdomain.toLowerCase();
+            }
           }
         }
       }
