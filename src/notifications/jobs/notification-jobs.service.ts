@@ -155,52 +155,65 @@ export class NotificationJobsService {
     this.logger.log('🔍 [CRON] Iniciando chequeo de stock bajo...');
 
     try {
-      // Obtener productos con stock <= minStock
-      const lowStockProducts = await this.productRepository
-        .createQueryBuilder('product')
-        .where('product.stock <= product.minStock')
-        .andWhere('product.stock > 0')
-        .andWhere('product.deletedAt IS NULL')
+      // Obtener todas las organizaciones activas con primer usuario admin
+      const organizations = await this.organizationRepository
+        .createQueryBuilder('org')
+        .leftJoinAndSelect('org.users', 'user')
+        .where('org.isActive = :isActive', { isActive: true })
         .getMany();
 
       this.logger.log(
-        `📊 Encontrados ${lowStockProducts.length} productos con stock bajo`,
+        `📊 Revisando ${organizations.length} organizaciones activas`,
       );
 
       let totalNotifications = 0;
 
-      for (const product of lowStockProducts) {
-        const deficit = product.minStock - product.stock;
+      for (const org of organizations) {
+        // Obtener productos con stock <= minStock para esta organización
+        const lowStockProducts = await this.productRepository
+          .createQueryBuilder('product')
+          .where('product.organizationId = :orgId', { orgId: org.id })
+          .andWhere('product.stock <= product.minStock')
+          .andWhere('product.stock > 0')
+          .andWhere('product.deletedAt IS NULL')
+          .getMany();
 
-        // Obtener userId de la organización
-        const orgWithUsers = await this.organizationRepository
-          .createQueryBuilder('org')
-          .leftJoinAndSelect('org.users', 'user')
-          .where('org.id = :orgId', { orgId: product.organizationId })
-          .getOne();
+        if (lowStockProducts.length === 0) {
+          this.logger.debug(
+            `✅ Organización ${org.name}: Sin productos con stock bajo`,
+          );
+          continue;
+        }
 
-        const userId =
-          orgWithUsers?.users && orgWithUsers.users.length > 0
-            ? orgWithUsers.users[0].id
-            : product.organizationId;
+        this.logger.log(
+          `⚠️  Organización ${org.name}: ${lowStockProducts.length} productos con stock bajo`,
+        );
 
-        await this.notificationsService.create({
-          organizationId: product.organizationId,
-          userId,
-          type: NotificationType.LOW_STOCK,
-          severity: NotificationSeverity.WARNING,
-          title: `📉 Stock bajo: ${product.name}`,
-          message: `El producto tiene ${product.stock} unidad${product.stock > 1 ? 'es' : ''} (mínimo: ${product.minStock}). Déficit: ${deficit} unidades. Se recomienda generar orden de compra.`,
-          metadata: {
-            productId: product.id,
-            productName: product.name,
-            quantity: product.stock,
-            actionUrl: `/products/${product.id}`,
-            actionLabel: 'Ver Producto',
-          },
-        });
+        // Obtener primer usuario de la organización para notificar
+        const userId = org.users && org.users.length > 0 ? org.users[0].id : org.id;
 
-        totalNotifications++;
+        // Crear notificación por cada producto
+        for (const product of lowStockProducts) {
+          const deficit = product.minStock - product.stock;
+
+          await this.notificationsService.create({
+            organizationId: org.id,
+            userId,
+            type: NotificationType.LOW_STOCK,
+            severity: NotificationSeverity.WARNING,
+            title: `📉 Stock bajo: ${product.name}`,
+            message: `El producto tiene ${product.stock} unidad${product.stock > 1 ? 'es' : ''} (mínimo: ${product.minStock}). Déficit: ${deficit} unidades. Se recomienda generar orden de compra.`,
+            metadata: {
+              productId: product.id,
+              productName: product.name,
+              quantity: product.stock,
+              actionUrl: `/products/${product.id}`,
+              actionLabel: 'Ver Producto',
+            },
+          });
+
+          totalNotifications++;
+        }
       }
 
       this.logger.log(

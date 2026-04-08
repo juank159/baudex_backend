@@ -357,10 +357,11 @@ export class CategoryService {
       );
     }
 
-    // Verificar si la categoría padre existe
+    // Verificar si la categoría padre existe (dentro de la misma organización)
     if (createCategoryDto.parentId) {
+      const tenantIdForParent = this.tenantAwareService.getTenantId();
       const parentCategory = await this.categoryRepository.findOne({
-        where: { id: createCategoryDto.parentId },
+        where: { id: createCategoryDto.parentId, organizationId: tenantIdForParent },
       });
       if (!parentCategory) {
         throw new NotFoundException('Categoría padre no encontrada');
@@ -538,9 +539,10 @@ export class CategoryService {
   async reorderCategories(
     categoryOrders: { id: string; sortOrder: number }[],
   ): Promise<void> {
-    const categories = await this.categoryRepository.findByIds(
-      categoryOrders.map((item) => item.id),
-    );
+    const tenantId = this.tenantAwareService.getTenantId();
+    const categories = await this.categoryRepository.find({
+      where: categoryOrders.map((item) => ({ id: item.id, organizationId: tenantId })),
+    });
 
     for (const orderItem of categoryOrders) {
       const category = categories.find((cat) => cat.id === orderItem.id);
@@ -698,8 +700,9 @@ export class CategoryService {
 
   // Método para obtener el nivel de profundidad de una categoría
   private async getCategoryLevel(categoryId: string): Promise<number> {
+    const tenantId = this.tenantAwareService.getTenantId();
     const category = await this.categoryRepository.findOne({
-      where: { id: categoryId },
+      where: { id: categoryId, organizationId: tenantId },
       relations: ['parent'],
     });
 
@@ -711,7 +714,7 @@ export class CategoryService {
     while (current?.parent) {
       level++;
       current = await this.categoryRepository.findOne({
-        where: { id: current.parent.id },
+        where: { id: current.parent.id, organizationId: tenantId },
         relations: ['parent'],
       });
     }
@@ -723,8 +726,9 @@ export class CategoryService {
     ancestorId: string,
     descendantId: string,
   ): Promise<boolean> {
+    const tenantId = this.tenantAwareService.getTenantId();
     const descendant = await this.categoryRepository.findOne({
-      where: { id: descendantId },
+      where: { id: descendantId, organizationId: tenantId },
       relations: ['parent'],
     });
 

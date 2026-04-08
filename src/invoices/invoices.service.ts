@@ -1129,8 +1129,13 @@ export class InvoicesService {
   }
 
   async findByNumber(number: string): Promise<Invoice> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const invoice = await this.invoiceRepository.findOne({
-      where: { number },
+      where: { number, organizationId: tenantId },
       relations: ['items', 'customer', 'createdBy', 'items.product', 'payments', 'payments.bankAccount'],
     });
 

@@ -738,10 +738,13 @@ export class CreditNotesService {
     invoiceId: string,
     manager: any,
   ): Promise<void> {
+    const tenantId = this.tenantAwareService.getTenantId();
+
     // Buscar todas las notas de crédito en DRAFT para esta factura
     const draftCreditNotes = await manager.find(CreditNote, {
       where: {
         invoiceId,
+        organizationId: tenantId,
         status: CreditNoteStatus.DRAFT,
       },
       relations: ['items'],
@@ -878,6 +881,7 @@ export class CreditNotesService {
       const previousCreditNotes = await manager.find(CreditNote, {
         where: {
           invoiceId: invoice.id,
+          organizationId: invoice.organizationId,
           status: CreditNoteStatus.CONFIRMED
         },
         relations: ['items'],

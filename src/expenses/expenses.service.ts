@@ -416,6 +416,7 @@ export class ExpensesService {
     const startDate = new Date(currentYear, currentMonth - 1, 1);
     const endDate = new Date(currentYear, currentMonth, 0);
 
+    const tenantId = this.tenantService.getTenantId();
     return this.expenseRepository
       .createQueryBuilder('expense')
       .select('category.name', 'categoryName')
@@ -423,7 +424,8 @@ export class ExpensesService {
       .addSelect('SUM(expense.amount)', 'totalAmount')
       .addSelect('COUNT(expense.id)', 'count')
       .leftJoin('expense.category', 'category')
-      .where('expense.date >= :startDate', { startDate })
+      .where('expense.organizationId = :tenantId', { tenantId })
+      .andWhere('expense.date >= :startDate', { startDate })
       .andWhere('expense.date <= :endDate', { endDate })
       .andWhere('expense.status IN (:...statuses)', {
         statuses: [ExpenseStatus.APPROVED, ExpenseStatus.PAID],
@@ -441,12 +443,14 @@ export class ExpensesService {
     startDate.setMonth(startDate.getMonth() - months + 1);
     startDate.setDate(1);
 
+    const tenantId = this.tenantService.getTenantId();
     return this.expenseRepository
       .createQueryBuilder('expense')
       .select("DATE_TRUNC('month', expense.date)", 'month')
       .addSelect('SUM(expense.amount)', 'totalAmount')
       .addSelect('COUNT(expense.id)', 'count')
-      .where('expense.date >= :startDate', { startDate })
+      .where('expense.organizationId = :tenantId', { tenantId })
+      .andWhere('expense.date >= :startDate', { startDate })
       .andWhere('expense.date <= :endDate', { endDate })
       .andWhere('expense.status IN (:...statuses)', {
         statuses: [ExpenseStatus.APPROVED, ExpenseStatus.PAID],

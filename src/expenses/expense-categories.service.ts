@@ -87,10 +87,12 @@ export class ExpenseCategoriesService {
         0,
       );
 
+      const tenantIdForSpent = this.tenantService.getTenantId();
       const monthlySpent = await this.expenseRepository
         .createQueryBuilder('expense')
         .select('SUM(expense.amount)', 'total')
-        .where('expense.categoryId = :categoryId', { categoryId: category.id })
+        .where('expense.organizationId = :tenantId', { tenantId: tenantIdForSpent })
+        .andWhere('expense.categoryId = :categoryId', { categoryId: category.id })
         .andWhere('expense.date >= :startDate', { startDate: startOfMonth })
         .andWhere('expense.date <= :endDate', { endDate: endOfMonth })
         .andWhere('expense.status IN (:...statuses)', {
@@ -129,12 +131,13 @@ export class ExpenseCategoriesService {
   ): Promise<ExpenseCategory> {
     const category = await this.findOne(id);
 
-    // Verificar nombre único si se está actualizando
+    // Verificar nombre único dentro de la organización si se está actualizando
     if (updateCategoryDto.name && updateCategoryDto.name !== category.name) {
+      const tenantId = this.tenantService.getTenantId();
       const existingCategory = await this.categoryRepository.findOne({
-        where: { name: updateCategoryDto.name },
+        where: { name: updateCategoryDto.name, organizationId: tenantId },
       });
-      if (existingCategory) {
+      if (existingCategory && existingCategory.id !== id) {
         throw new ConflictException('Ya existe una categoría con este nombre');
       }
     }
@@ -175,18 +178,22 @@ export class ExpenseCategoriesService {
     totalBudget: number;
     totalSpent: number;
   }> {
-    const total = await this.categoryRepository.count();
+    const tenantId = this.tenantService.getTenantId();
+    const total = await this.categoryRepository.count({
+      where: { organizationId: tenantId },
+    });
     const active = await this.categoryRepository.count({
-      where: { status: ExpenseCategoryStatus.ACTIVE },
+      where: { status: ExpenseCategoryStatus.ACTIVE, organizationId: tenantId },
     });
     const inactive = await this.categoryRepository.count({
-      where: { status: ExpenseCategoryStatus.INACTIVE },
+      where: { status: ExpenseCategoryStatus.INACTIVE, organizationId: tenantId },
     });
 
     const budgetResult = await this.categoryRepository
       .createQueryBuilder('category')
       .select('SUM(category.monthlyBudget)', 'totalBudget')
-      .where('category.status = :status', {
+      .where('category.organizationId = :tenantId', { tenantId })
+      .andWhere('category.status = :status', {
         status: ExpenseCategoryStatus.ACTIVE,
       })
       .getRawOne();
@@ -207,7 +214,8 @@ export class ExpenseCategoriesService {
     const spentResult = await this.expenseRepository
       .createQueryBuilder('expense')
       .select('SUM(expense.amount)', 'totalSpent')
-      .where('expense.date >= :startDate', { startDate: startOfMonth })
+      .where('expense.organizationId = :tenantId', { tenantId })
+      .andWhere('expense.date >= :startDate', { startDate: startOfMonth })
       .andWhere('expense.date <= :endDate', { endDate: endOfMonth })
       .andWhere('expense.status IN (:...statuses)', {
         statuses: [ExpenseStatus.APPROVED, ExpenseStatus.PAID],

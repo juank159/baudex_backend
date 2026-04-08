@@ -316,7 +316,7 @@ export class InventoryService {
 
         // Obtener estado actual del lote para actualizar los campos "after"
         const batch = await queryRunner.manager.findOne(InventoryBatch, {
-          where: { id: batchConsumption.batchId },
+          where: { id: batchConsumption.batchId, organizationId },
         });
 
         if (batch) {
@@ -1475,7 +1475,7 @@ export class InventoryService {
 
           // Obtener estado actual del lote
           const batch = await queryRunner.manager.findOne(InventoryBatch, {
-            where: { id: batchConsumption.batchId },
+            where: { id: batchConsumption.batchId, organizationId },
           });
 
           if (batch) {
@@ -3009,6 +3009,7 @@ export class InventoryService {
     const batches = await queryRunner.manager
       .createQueryBuilder('InventoryBatch', 'batch')
       .where('batch.productId = :productId', { productId })
+      .andWhere('batch.organizationId = :organizationId', { organizationId })
       .andWhere('batch.status = :status', { status: 'active' })
       .andWhere('batch.currentQuantity > 0')
       .orderBy('batch.purchaseDate', 'ASC')
@@ -3724,6 +3725,7 @@ export class InventoryService {
         .innerJoin('bm.inventoryMovement', 'im')
         .where('im.referenceType IN (:...refTypes)', { refTypes: ['invoice', 'invoice_paid'] })
         .andWhere('im.referenceId = :refId', { refId: invoiceItem.invoiceId })
+        .andWhere('im.organizationId = :organizationId', { organizationId })
         .andWhere('bm.invoiceItemId = :itemId', { itemId: invoiceItem.id })
         .andWhere('bm.type = :type', { type: BatchMovementType.CONSUME })
         .orderBy('bm.movementDate', 'DESC') // LIFO: último consumido, primero devuelto
@@ -3824,7 +3826,7 @@ export class InventoryService {
 
         // Obtener el lote original
         const batch = await manager.findOne(InventoryBatch, {
-          where: { id: batchMovement.batchId },
+          where: { id: batchMovement.batchId, organizationId },
         });
 
         if (!batch) {

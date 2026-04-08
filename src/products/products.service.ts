@@ -738,8 +738,13 @@ export class ProductService {
   }
 
   async restore(id: string): Promise<Product> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+
     const product = await this.productRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       withDeleted: true,
     });
 

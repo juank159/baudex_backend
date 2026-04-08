@@ -361,32 +361,52 @@ export class CustomersService {
     updateCustomerDto: UpdateCustomerDto,
   ): Promise<Customer> {
     const customer = await this.findOne(id);
+    const tenantId = customer.organizationId;
 
-    // Verificar email único si se está actualizando
+    // Verificar email único dentro de la organización si se está actualizando
     if (updateCustomerDto.email && updateCustomerDto.email !== customer.email) {
-      const existingEmail = await this.customerRepository.findOne({
-        where: { email: updateCustomerDto.email },
-      });
+      const existingEmail = await this.customerRepository
+        .createQueryBuilder('customer')
+        .where('customer.organizationId = :organizationId', {
+          organizationId: tenantId,
+        })
+        .andWhere('LOWER(customer.email) = LOWER(:email)', {
+          email: updateCustomerDto.email,
+        })
+        .andWhere('customer.id != :id', { id })
+        .andWhere('customer.deletedAt IS NULL')
+        .getOne();
       if (existingEmail) {
-        throw new ConflictException('El email ya está registrado');
+        throw new ConflictException(
+          'El email ya está registrado en esta organización',
+        );
       }
     }
 
-    // Verificar documento único si se está actualizando
+    // Verificar documento único dentro de la organización si se está actualizando
     if (
       updateCustomerDto.documentNumber &&
       (updateCustomerDto.documentNumber !== customer.documentNumber ||
         updateCustomerDto.documentType !== customer.documentType)
     ) {
-      const existingDocument = await this.customerRepository.findOne({
-        where: {
-          documentType: updateCustomerDto.documentType || customer.documentType,
+      const existingDocument = await this.customerRepository
+        .createQueryBuilder('customer')
+        .where('customer.organizationId = :organizationId', {
+          organizationId: tenantId,
+        })
+        .andWhere('customer.documentType = :documentType', {
+          documentType:
+            updateCustomerDto.documentType || customer.documentType,
+        })
+        .andWhere('customer.documentNumber = :documentNumber', {
           documentNumber: updateCustomerDto.documentNumber,
-        },
-      });
+        })
+        .andWhere('customer.id != :id', { id })
+        .andWhere('customer.deletedAt IS NULL')
+        .getOne();
       if (existingDocument) {
         throw new ConflictException(
-          'El número de documento ya está registrado',
+          'El número de documento ya está registrado en esta organización',
         );
       }
     }
