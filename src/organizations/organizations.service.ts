@@ -163,6 +163,15 @@ export class OrganizationsService {
     }
 
     Object.assign(organization, updateOrganizationDto);
+
+    // Sincronizar multiCurrencyEnabled entre settings JSONB y columna top-level
+    if (updateOrganizationDto.settings?.multiCurrencyEnabled !== undefined) {
+      organization.multiCurrencyEnabled = updateOrganizationDto.settings.multiCurrencyEnabled;
+    }
+    if (updateOrganizationDto.multiCurrencyEnabled !== undefined && organization.settings) {
+      organization.settings.multiCurrencyEnabled = updateOrganizationDto.multiCurrencyEnabled;
+    }
+
     return this.organizationRepository.save(organization);
   }
 
