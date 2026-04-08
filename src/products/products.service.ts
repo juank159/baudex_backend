@@ -34,6 +34,16 @@ export class ProductService {
     private readonly tenantAwareService: TenantAwareService,
   ) {}
 
+  /**
+   * Normaliza el nombre del producto: MAYÚSCULAS + sin tildes/acentos
+   */
+  private normalizeName(name: string): string {
+    return name
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+  }
+
   async create(
     createProductDto: CreateProductDto,
     createdById: string,
@@ -42,6 +52,9 @@ export class ProductService {
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
+
+    // Normalizar nombre: MAYÚSCULAS sin acentos
+    createProductDto.name = this.normalizeName(createProductDto.name);
 
     // Verificar si el SKU ya existe en la organización actual
     const repository = this.dataSource.getRepository(Product);
@@ -481,6 +494,11 @@ export class ProductService {
     updateProductDto: UpdateProductDto,
   ): Promise<Product> {
     const product = await this.findOne(id);
+
+    // Normalizar nombre: MAYÚSCULAS sin acentos
+    if (updateProductDto.name) {
+      updateProductDto.name = this.normalizeName(updateProductDto.name);
+    }
 
     // Verificar SKU único si se está actualizando
     if (updateProductDto.sku && updateProductDto.sku !== product.sku) {
