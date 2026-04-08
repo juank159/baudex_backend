@@ -23,12 +23,14 @@ export class DashboardSimpleController {
         throw new Error('Organization ID not found');
       }
 
-      // 🌐 OBTENER TIMEZONE DE LA ORGANIZACIÓN
+      // 🌐 OBTENER TIMEZONE Y CONFIG MULTI-MONEDA DE LA ORGANIZACIÓN
       const [orgRow] = await this.entityManager.query(
-        'SELECT timezone FROM organizations WHERE id = $1',
+        'SELECT timezone, currency, "multiCurrencyEnabled" FROM organizations WHERE id = $1',
         [organizationId],
       );
       const orgTimezone = orgRow?.timezone || 'America/New_York';
+      const orgBaseCurrency = orgRow?.currency || 'COP';
+      const multiCurrencyEnabled = orgRow?.multiCurrencyEnabled || false;
 
       // 📅 NORMALIZAR PARÁMETROS DE FECHA A YYYY-MM-DD
       const startDateStr = query.startDate ? String(query.startDate).substring(0, 10) : null;
@@ -100,8 +102,23 @@ export class DashboardSimpleController {
       const [productResult] = await this.entityManager.query(productsQuery, [organizationId]);
       const [customerResult] = await this.entityManager.query(customersQuery, [organizationId]);
 
+      // 💰 CUENTAS POR COBRAR (facturas pendientes/parcialmente pagadas)
+      const receivableQuery = `
+        SELECT
+          COALESCE(SUM(CAST("balanceDue" AS DECIMAL)), 0) as total_receivable,
+          COUNT(*) as receivable_count
+        FROM invoices
+        WHERE organization_id = $1
+        AND status IN ('pending', 'partially_paid')
+        AND deleted_at IS NULL
+        ${dateFilter}
+      `;
+      const [receivableResult] = await this.entityManager.query(receivableQuery, queryParams);
+
       const totalRevenue = parseFloat(invoiceResult?.total_revenue || '0');
-      
+      const accountsReceivable = parseFloat(receivableResult?.total_receivable || '0');
+      const receivableCount = parseInt(receivableResult?.receivable_count || '0');
+
       const totalExpenses = parseFloat(expenseResult?.total_expenses_amount || '0');
       const totalProfit = totalRevenue - totalExpenses;
       const totalInvoices = parseInt(invoiceResult?.total_invoices || '0');
@@ -155,6 +172,52 @@ export class DashboardSimpleController {
 
       paymentMethodsBreakdown.forEach(pm => {
       });
+
+      // 💱 DESGLOSE POR MONEDA (solo si multiCurrencyEnabled)
+      let currencyBreakdown = null;
+      if (multiCurrencyEnabled) {
+        const currencyParams: any[] = [organizationId, orgBaseCurrency];
+        let currencyDateFilter = '';
+
+        if (startDateStr && endDateStr) {
+          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date
+                                 AND (p."paymentDate" AT TIME ZONE $3)::date <= $5::date`;
+          currencyParams.push(orgTimezone, startDateStr, endDateStr);
+        } else if (startDateStr) {
+          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date`;
+          currencyParams.push(orgTimezone, startDateStr);
+        } else if (endDateStr) {
+          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date <= $3::date`;
+          currencyParams.push(orgTimezone, endDateStr);
+        }
+
+        const currencyQuery = `
+          SELECT
+            COALESCE(p."paymentCurrency", $2) as currency,
+            COUNT(p.id) as count,
+            SUM(p.amount) as total_base_amount,
+            SUM(COALESCE(p."paymentCurrencyAmount", p.amount)) as total_foreign_amount,
+            AVG(COALESCE(p."exchangeRate", 1)) as avg_rate
+          FROM payments p
+          WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          ${currencyDateFilter}
+          GROUP BY COALESCE(p."paymentCurrency", $2)
+          ORDER BY total_base_amount DESC
+        `;
+
+        const currencyRows = await this.entityManager.query(currencyQuery, currencyParams);
+        const totalCurrencyBase = currencyRows.reduce((sum, r) => sum + parseFloat(r.total_base_amount || 0), 0);
+
+        currencyBreakdown = currencyRows.map(row => ({
+          currency: row.currency,
+          count: parseInt(row.count || 0),
+          totalBaseAmount: parseFloat(row.total_base_amount || 0),
+          totalForeignAmount: parseFloat(row.total_foreign_amount || 0),
+          avgRate: parseFloat(row.avg_rate || 1),
+          percentage: totalCurrencyBase > 0 ? (parseFloat(row.total_base_amount || 0) / totalCurrencyBase * 100) : 0,
+        }));
+      }
 
       // 📊 OBTENER DESGLOSE POR TIPO DE INGRESO (Facturas vs Créditos)
       const invoicesIncomeQuery = `
@@ -263,8 +326,13 @@ export class DashboardSimpleController {
         totalProducts,
         profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : '0',
         revenueGrowth: revenueGrowth.toFixed(1),
+        accountsReceivable,
+        receivableCount,
         paymentMethodsBreakdown,
         incomeTypeBreakdown,
+        currencyBreakdown,
+        baseCurrency: orgBaseCurrency,
+        multiCurrencyEnabled,
         monthlyStats: {
           currentMonth: {
             revenue: totalRevenue,
