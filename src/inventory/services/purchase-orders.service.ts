@@ -396,6 +396,17 @@ export class PurchaseOrdersService {
       }
     }
 
+    // Eliminar items que no vinieron en el request (fueron removidos por el usuario)
+    const sentItemIds = itemsDto
+      .filter((item) => item.id)
+      .map((item) => item.id);
+    const itemsToDelete = existingItems.filter(
+      (item) => !sentItemIds.includes(item.id),
+    );
+    if (itemsToDelete.length > 0) {
+      await this.purchaseOrderItemRepository.remove(itemsToDelete);
+    }
+
     // Recalcular totales de la orden
     await this.recalculatePurchaseOrderTotals(purchaseOrderId, organizationId);
   }

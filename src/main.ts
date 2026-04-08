@@ -105,15 +105,34 @@ async function bootstrap() {
       transformOptions: {
         enableImplicitConversion: true,
       },
-      // Mensajes de error en español
+      // Mensajes de error en español (incluye errores anidados para items[])
       exceptionFactory: (errors) => {
-        const messages = errors.map((error) => {
-          const constraints = error.constraints;
-          if (constraints) {
-            return Object.values(constraints).join(', ');
+        const extractMessages = (
+          errs: typeof errors,
+          prefix = '',
+        ): string[] => {
+          const msgs: string[] = [];
+          for (const error of errs) {
+            const prop = prefix
+              ? `${prefix}.${error.property}`
+              : error.property;
+            if (error.constraints) {
+              msgs.push(
+                ...Object.values(error.constraints).map(
+                  (msg) => `${prop}: ${msg}`,
+                ),
+              );
+            }
+            if (error.children && error.children.length > 0) {
+              msgs.push(...extractMessages(error.children, prop));
+            }
           }
-          return 'Error de validación';
-        });
+          return msgs;
+        };
+        const messages = extractMessages(errors);
+        if (messages.length === 0) {
+          return new BadRequestException('Error de validación');
+        }
         return new BadRequestException(messages.join('; '));
       },
     }),
