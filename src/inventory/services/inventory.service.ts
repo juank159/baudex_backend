@@ -937,6 +937,13 @@ export class InventoryService {
     organizationId: string,
     queryRunner: QueryRunner,
   ): Promise<string> {
+    // Serializar generación de números de movimiento por organización
+    // para evitar race conditions con requests concurrentes
+    await queryRunner.query(
+      `SELECT pg_advisory_xact_lock(hashtext($1))`,
+      [`movement_number_${organizationId}`],
+    );
+
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `MOV-${year}${month}-`;
@@ -1032,6 +1039,13 @@ export class InventoryService {
     organizationId: string,
     queryRunner: QueryRunner,
   ): Promise<string> {
+    // Serializar generación de números de lote por organización
+    // para evitar race conditions con requests concurrentes
+    await queryRunner.query(
+      `SELECT pg_advisory_xact_lock(hashtext($1))`,
+      [`batch_number_${organizationId}`],
+    );
+
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `BATCH-${year}${month}-`;
