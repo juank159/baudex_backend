@@ -397,7 +397,15 @@ export class InvoicesService {
         );
       }
 
-      return await manager.save(Invoice, completeInvoice);
+      await manager.save(Invoice, completeInvoice);
+
+      // Recargar con todas las relaciones (incluyendo payments) para la respuesta
+      const fullInvoice = await manager.findOne(Invoice, {
+        where: { id: completeInvoice.id },
+        relations: ['items', 'customer', 'createdBy', 'items.product', 'payments', 'payments.bankAccount'],
+      });
+
+      return fullInvoice || completeInvoice;
     });
   }
 
