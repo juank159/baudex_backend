@@ -393,6 +393,7 @@ export class InvoicesService {
           createInvoiceDto.bankAccountId,
           createdById,
           tenantId,
+          metadata,
         );
       }
 
@@ -445,6 +446,10 @@ export class InvoicesService {
         bankAccountId: paymentData.bankAccountId || null,
         createdById,
         organizationId,
+        // Multi-currency fields
+        paymentCurrency: paymentData.paymentCurrency || null,
+        paymentCurrencyAmount: paymentData.paymentCurrencyAmount || null,
+        exchangeRate: paymentData.exchangeRate || null,
       });
 
       await manager.save(Payment, payment);
@@ -839,6 +844,7 @@ export class InvoicesService {
     bankAccountId?: string,
     createdById?: string,
     organizationId?: string,
+    metadata?: any,
   ): Promise<void> {
     switch (invoice.status) {
       case InvoiceStatus.PAID:
@@ -869,6 +875,10 @@ export class InvoicesService {
             bankAccountId: bankAccountId || null,
             createdById: createdById || invoice.createdById,
             organizationId: organizationId || invoice.organizationId,
+            // Multi-currency fields from metadata
+            paymentCurrency: metadata?.paymentCurrency || null,
+            paymentCurrencyAmount: metadata?.paymentCurrencyAmount || null,
+            exchangeRate: metadata?.exchangeRate || null,
           });
 
           await manager.save(Payment, payment);
