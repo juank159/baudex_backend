@@ -53,10 +53,12 @@ export class DashboardSimpleController {
       }
 
       // Obtener datos reales de facturas CON FILTROS DE FECHA
+      // totalRevenue = total facturado (TODAS las facturas, incluyendo crédito)
       const invoicesQuery = `
         SELECT
           COUNT(*) as total_invoices,
-          COALESCE(SUM(CASE WHEN status IN ('paid', 'partially_paid') THEN CAST("paidAmount" AS DECIMAL) ELSE 0 END), 0) as total_revenue,
+          COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total_revenue,
+          COALESCE(SUM(CAST("paidAmount" AS DECIMAL)), 0) as total_collected,
           COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_invoices,
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_invoices
         FROM invoices
@@ -187,7 +189,7 @@ export class DashboardSimpleController {
           currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date`;
           currencyParams.push(orgTimezone, startDateStr);
         } else if (endDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date <= $3::date`;
+          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date <= $4::date`;
           currencyParams.push(orgTimezone, endDateStr);
         }
 
@@ -221,10 +223,9 @@ export class DashboardSimpleController {
 
       // 📊 OBTENER DESGLOSE POR TIPO DE INGRESO (Facturas vs Créditos)
       const invoicesIncomeQuery = `
-        SELECT COALESCE(SUM("paidAmount"), 0) as total
+        SELECT COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total
         FROM invoices
         WHERE organization_id = $1
-        AND status IN ('paid', 'partially_paid')
         AND deleted_at IS NULL
         ${dateFilter}
       `;
@@ -275,7 +276,7 @@ export class DashboardSimpleController {
         const previousInvoicesQuery = `
           SELECT
             COUNT(*) as total_invoices,
-            COALESCE(SUM(CASE WHEN status IN ('paid', 'partially_paid') THEN CAST("paidAmount" AS DECIMAL) ELSE 0 END), 0) as total_revenue
+            COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total_revenue
           FROM invoices
           WHERE organization_id = $1
           AND deleted_at IS NULL
