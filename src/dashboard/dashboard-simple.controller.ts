@@ -132,20 +132,19 @@ export class DashboardSimpleController {
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
       // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
-      // paymentDate es timestamptz → convertir a timezone del tenant antes de comparar
+      // paymentDate es tipo "date" en la DB → comparación directa sin AT TIME ZONE
       let paymentDateFilter = '';
       const paymentParams: any[] = [organizationId];
 
       if (startDateStr && endDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date
-                              AND (p."paymentDate" AT TIME ZONE $2)::date <= $4::date`;
-        paymentParams.push(orgTimezone, startDateStr, endDateStr);
+        paymentDateFilter = ` AND p."paymentDate" >= $2::date AND p."paymentDate" <= $3::date`;
+        paymentParams.push(startDateStr, endDateStr);
       } else if (startDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date`;
-        paymentParams.push(orgTimezone, startDateStr);
+        paymentDateFilter = ` AND p."paymentDate" >= $2::date`;
+        paymentParams.push(startDateStr);
       } else if (endDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date <= $3::date`;
-        paymentParams.push(orgTimezone, endDateStr);
+        paymentDateFilter = ` AND p."paymentDate" <= $2::date`;
+        paymentParams.push(endDateStr);
       }
 
       const paymentMethodsQuery = `
@@ -182,15 +181,14 @@ export class DashboardSimpleController {
         let currencyDateFilter = '';
 
         if (startDateStr && endDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date
-                                 AND (p."paymentDate" AT TIME ZONE $3)::date <= $5::date`;
-          currencyParams.push(orgTimezone, startDateStr, endDateStr);
+          currencyDateFilter = ` AND p."paymentDate" >= $3::date AND p."paymentDate" <= $4::date`;
+          currencyParams.push(startDateStr, endDateStr);
         } else if (startDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date`;
-          currencyParams.push(orgTimezone, startDateStr);
+          currencyDateFilter = ` AND p."paymentDate" >= $3::date`;
+          currencyParams.push(startDateStr);
         } else if (endDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date <= $4::date`;
-          currencyParams.push(orgTimezone, endDateStr);
+          currencyDateFilter = ` AND p."paymentDate" <= $3::date`;
+          currencyParams.push(endDateStr);
         }
 
         const currencyQuery = `
