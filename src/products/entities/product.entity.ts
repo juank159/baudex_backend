@@ -171,7 +171,7 @@ export class Product extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   sku: string;
 
   @Column({ type: 'varchar', length: 20, nullable: true })

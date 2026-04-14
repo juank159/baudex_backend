@@ -35,7 +35,7 @@ export enum MovementStatus {
 @Index(['productId', 'movementDate'])
 @Index(['organizationId', 'movementDate'])
 export class InventoryMovement extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   movementNumber: string;
 
   @Column({

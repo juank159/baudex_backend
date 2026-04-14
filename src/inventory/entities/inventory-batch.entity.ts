@@ -28,7 +28,7 @@ export enum BatchStatus {
 @Index(['productId', 'purchaseDate'])
 @Index(['organizationId', 'status'])
 export class InventoryBatch extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   batchNumber: string;
 
   @Column({ type: 'timestamptz', name: 'purchase_date' })

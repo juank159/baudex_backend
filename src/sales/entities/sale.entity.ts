@@ -47,7 +47,7 @@ export enum PaymentStatus {
 @Index(['organizationId', 'saleDate'])
 @Index(['customerId', 'status'])
 export class Sale extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   saleNumber: string;
 
   @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })

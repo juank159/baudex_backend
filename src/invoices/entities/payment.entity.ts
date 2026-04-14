@@ -15,7 +15,7 @@ import { BankAccount } from '../../bank-accounts/entities/bank-account.entity';
 @Index('IDX_payments_invoice_organization', ['invoiceId', 'organizationId'])
 @Index('IDX_payments_bank_account', ['bankAccountId'])
 export class Payment extends BaseEntity {
-  @Column({ type: 'varchar', length: 50, unique: true })
+  @Column({ type: 'varchar', length: 50 })
   paymentNumber: string;
 
   @Column({
