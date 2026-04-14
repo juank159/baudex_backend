@@ -164,14 +164,12 @@ export class InventoryService {
         quantity,
         unitCost,
         totalCost: quantity * unitCost,
-        stockAfter: currentStock + quantity,
-        stockValueAfter:
-          (await this.calculateStockValue(
-            productId,
-            organizationId,
-            queryRunner,
-          )) +
-          quantity * unitCost,
+        stockAfter: currentStock,
+        stockValueAfter: await this.calculateStockValue(
+          productId,
+          organizationId,
+          queryRunner,
+        ),
         referenceType: 'purchase_order',
         referenceId: purchaseOrderId,
         warehouseId,
