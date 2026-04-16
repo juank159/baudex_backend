@@ -268,7 +268,7 @@ export class InvoiceItem extends BaseEntity {
   @Column({
     name: 'tax_percentage',
     type: 'float',
-    default: 19,
+    default: 0,
     transformer: {
       to: (value: number) => value,
       from: (value: string | number) =>

@@ -247,8 +247,8 @@ export class InvoicesService {
               }
             } else if (itemDto.temporaryProductId) {
               // ✅ CALCULAR COSTO ESTIMADO PARA PRODUCTOS TEMPORALES
-              // Productos temporales no tienen IVA configurado, usar valor por defecto
-              itemTaxPercentage = createInvoiceDto.taxPercentage || 19;
+              // Productos temporales (sin registrar) NO llevan IVA
+              itemTaxPercentage = 0;
 
               try {
                 const organization = await this.organizationRepository.findOne({
