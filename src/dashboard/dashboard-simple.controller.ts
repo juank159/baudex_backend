@@ -117,6 +117,109 @@ export class DashboardSimpleController {
       `;
       const [receivableResult] = await this.entityManager.query(receivableQuery, queryParams);
 
+      // 🚦 DESGLOSE DE CUENTAS POR COBRAR CON SEMÁFORO
+      // Todas las facturas con saldo pendiente (NO filtra por fecha; la cartera es global),
+      // clasificadas por urgencia usando dueDate vs HOY en la TZ de la organización.
+      //  - current:  dueDate > hoy + 7d
+      //  - dueSoon:  0 <= (dueDate - hoy) <= 7 días
+      //  - overdue:  dueDate < hoy
+      const receivablesBreakdownQuery = `
+        WITH pending AS (
+          SELECT
+            i.id,
+            i."balanceDue"::decimal AS balance_due,
+            i."dueDate",
+            i."customerId",
+            CASE
+              WHEN i."dueDate" IS NULL THEN 'current'
+              WHEN i."dueDate"::date < (NOW() AT TIME ZONE $2)::date THEN 'overdue'
+              WHEN i."dueDate"::date <= (NOW() AT TIME ZONE $2)::date + INTERVAL '7 days' THEN 'dueSoon'
+              ELSE 'current'
+            END AS urgency,
+            CASE
+              WHEN i."dueDate" IS NULL THEN 0
+              ELSE (NOW() AT TIME ZONE $2)::date - i."dueDate"::date
+            END AS days_overdue
+          FROM invoices i
+          WHERE i.organization_id = $1
+            AND i.status IN ('pending', 'partially_paid')
+            AND i."balanceDue" > 0
+            AND i.deleted_at IS NULL
+        )
+        SELECT
+          urgency,
+          COUNT(*)::int AS count,
+          COALESCE(SUM(balance_due), 0)::decimal AS total,
+          COALESCE(MAX(days_overdue), 0)::int AS max_days_overdue
+        FROM pending
+        GROUP BY urgency
+      `;
+      const receivablesBreakdownRows = await this.entityManager.query(
+        receivablesBreakdownQuery,
+        [organizationId, orgTimezone],
+      );
+
+      const emptyBucket = () => ({ count: 0, total: 0, maxDaysOverdue: 0 });
+      const receivablesByUrgency = {
+        current: emptyBucket(),
+        dueSoon: emptyBucket(),
+        overdue: emptyBucket(),
+      };
+      for (const row of receivablesBreakdownRows) {
+        const bucket = receivablesByUrgency[row.urgency as keyof typeof receivablesByUrgency];
+        if (bucket) {
+          bucket.count = parseInt(row.count, 10);
+          bucket.total = parseFloat(row.total);
+          bucket.maxDaysOverdue = parseInt(row.max_days_overdue, 10);
+        }
+      }
+
+      // Top 3 deudores para mostrar en el widget
+      const topDebtorsQuery = `
+        SELECT
+          c.id AS customer_id,
+          COALESCE(NULLIF(TRIM(CONCAT(c."firstName", ' ', c."lastName")), ''), c."companyName", 'Sin nombre') AS customer_name,
+          COUNT(i.id)::int AS invoice_count,
+          COALESCE(SUM(i."balanceDue"::decimal), 0)::decimal AS total_balance,
+          COALESCE(MAX(GREATEST(0, (NOW() AT TIME ZONE $2)::date - i."dueDate"::date)), 0)::int AS max_days_overdue
+        FROM invoices i
+        INNER JOIN customers c ON i."customerId" = c.id
+        WHERE i.organization_id = $1
+          AND i.status IN ('pending', 'partially_paid')
+          AND i."balanceDue" > 0
+          AND i.deleted_at IS NULL
+        GROUP BY c.id, c."firstName", c."lastName", c."companyName"
+        ORDER BY total_balance DESC
+        LIMIT 3
+      `;
+      const topDebtorsRows = await this.entityManager.query(
+        topDebtorsQuery,
+        [organizationId, orgTimezone],
+      );
+      const topDebtors = topDebtorsRows.map((r: any) => ({
+        customerId: r.customer_id,
+        customerName: r.customer_name,
+        invoiceCount: parseInt(r.invoice_count, 10),
+        totalBalance: parseFloat(r.total_balance),
+        maxDaysOverdue: parseInt(r.max_days_overdue, 10),
+      }));
+
+      const receivablesTotal =
+        receivablesByUrgency.current.total +
+        receivablesByUrgency.dueSoon.total +
+        receivablesByUrgency.overdue.total;
+      const receivablesCount =
+        receivablesByUrgency.current.count +
+        receivablesByUrgency.dueSoon.count +
+        receivablesByUrgency.overdue.count;
+
+      const receivables = {
+        total: receivablesTotal,
+        count: receivablesCount,
+        byUrgency: receivablesByUrgency,
+        topDebtors,
+      };
+
       // 💵 INGRESOS POR PAGOS EN FACTURAS ANTIGUAS
       // Pagos recibidos DENTRO del rango de fecha en facturas creadas FUERA del rango.
       // Esto permite que abonos hechos hoy en facturas viejas se reflejen en el dashboard.
@@ -402,6 +505,7 @@ export class DashboardSimpleController {
         revenueGrowth: revenueGrowth.toFixed(1),
         accountsReceivable,
         receivableCount,
+        receivables,
         paymentMethodsBreakdown,
         incomeTypeBreakdown,
         currencyBreakdown,
