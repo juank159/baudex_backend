@@ -151,7 +151,7 @@ export class DashboardSimpleController {
           COUNT(p.id) as count,
           SUM(p.amount) as total_amount
         FROM payments p
-        INNER JOIN invoices i ON p.invoice_id = i.id
+        INNER JOIN invoices i ON p."invoiceId" = i.id
         LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
         WHERE p.organization_id = $1
         AND p.deleted_at IS NULL
@@ -200,7 +200,7 @@ export class DashboardSimpleController {
             SUM(COALESCE(p."paymentCurrencyAmount", p.amount)) as total_foreign_amount,
             AVG(COALESCE(p."exchangeRate", 1)) as avg_rate
           FROM payments p
-          INNER JOIN invoices i ON p.invoice_id = i.id
+          INNER JOIN invoices i ON p."invoiceId" = i.id
           WHERE p.organization_id = $1
           AND p.deleted_at IS NULL
           AND i.deleted_at IS NULL
