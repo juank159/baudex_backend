@@ -79,9 +79,7 @@ export class BankAccountsController {
     @Query('endDate') endDate?: string,
   ) {
     console.log('📊 Bank Accounts Summary - Organization ID:', organizationId);
-    const start = startDate ? new Date(startDate) : undefined;
-    const end = endDate ? new Date(endDate) : undefined;
-    return this.bankAccountsService.getSummary(organizationId, start, end);
+    return this.bankAccountsService.getSummary(organizationId, startDate, endDate);
   }
 
   /**

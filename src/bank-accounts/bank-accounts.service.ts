@@ -387,8 +387,8 @@ export class BankAccountsService {
    */
   async getSummary(
     organizationId: string,
-    startDate?: Date,
-    endDate?: Date,
+    startDate?: string,
+    endDate?: string,
   ): Promise<BankAccountSummary[]> {
     if (!organizationId) {
       throw new BadRequestException('No se pudo determinar la organización');
@@ -418,17 +418,19 @@ export class BankAccountsService {
 
       const totalPaymentsResult = await totalPaymentsQuery.getRawOne();
 
-      // Pagos de facturas en el período
+      // Pagos de facturas en el período (filtrado por fecha de factura, no de pago)
       let periodPaymentsResult: { total: string; count: string } | null = null;
       if (startDate && endDate) {
         const periodPaymentsQuery = this.paymentRepository
           .createQueryBuilder('p')
+          .innerJoin('p.invoice', 'i')
           .select('COALESCE(SUM(p.amount), 0)', 'total')
           .addSelect('COUNT(p.id)', 'count')
           .where('p.bankAccountId = :accountId', { accountId: account.id })
           .andWhere('p.organizationId = :organizationId', { organizationId })
-          .andWhere('p.paymentDate >= :startDate', { startDate })
-          .andWhere('p.paymentDate <= :endDate', { endDate });
+          .andWhere('i.date >= :startDate', { startDate })
+          .andWhere('i.date <= :endDate', { endDate })
+          .andWhere('i.deleted_at IS NULL');
 
         periodPaymentsResult = await periodPaymentsQuery.getRawOne();
       }

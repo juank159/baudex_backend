@@ -132,19 +132,17 @@ export class DashboardSimpleController {
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
       // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
-      // paymentDate es timestamptz → convertir a timezone del tenant antes de comparar con date
-      let paymentDateFilter = '';
-      const paymentParams: any[] = [organizationId, orgTimezone];
-
+      // IMPORTANTE: Filtrar por invoice.date (igual que totalRevenue) para que los totales cuadren.
+      // Antes se filtraba por paymentDate con AT TIME ZONE, lo cual causaba que pagos a UTC midnight
+      // se convirtieran al día anterior en la zona del tenant, excluyéndolos del rango.
+      // Construir filtro de fecha basado en invoice.date (consistente con totalRevenue)
+      let invoiceDateFilter = '';
       if (startDateStr && endDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date AND (p."paymentDate" AT TIME ZONE $2)::date <= $4::date`;
-        paymentParams.push(startDateStr, endDateStr);
+        invoiceDateFilter = ' AND i.date >= $2::date AND i.date <= $3::date';
       } else if (startDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date >= $3::date`;
-        paymentParams.push(startDateStr);
+        invoiceDateFilter = ' AND i.date >= $2::date';
       } else if (endDateStr) {
-        paymentDateFilter = ` AND (p."paymentDate" AT TIME ZONE $2)::date <= $3::date`;
-        paymentParams.push(endDateStr);
+        invoiceDateFilter = ' AND i.date <= $2::date';
       }
 
       const paymentMethodsQuery = `
@@ -153,15 +151,17 @@ export class DashboardSimpleController {
           COUNT(p.id) as count,
           SUM(p.amount) as total_amount
         FROM payments p
+        INNER JOIN invoices i ON p.invoice_id = i.id
         LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
         WHERE p.organization_id = $1
         AND p.deleted_at IS NULL
-        ${paymentDateFilter}
+        AND i.deleted_at IS NULL
+        ${invoiceDateFilter}
         GROUP BY COALESCE(ba.name, p."paymentMethod")
         ORDER BY total_amount DESC
       `;
 
-      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, paymentParams);
+      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, queryParams);
 
       const totalPayments = paymentMethods.reduce((sum, pm) => sum + parseFloat(pm.total_amount || 0), 0);
       const paymentMethodsBreakdown = paymentMethods.map(pm => ({
@@ -175,19 +175,20 @@ export class DashboardSimpleController {
       });
 
       // 💱 DESGLOSE POR MONEDA (solo si multiCurrencyEnabled)
+      // Filtrar por invoice.date (consistente con totalRevenue) para evitar bug de timezone
       let currencyBreakdown = null;
       if (multiCurrencyEnabled) {
-        const currencyParams: any[] = [organizationId, orgBaseCurrency, orgTimezone];
-        let currencyDateFilter = '';
+        let currencyInvoiceDateFilter = '';
+        const currencyParams: any[] = [organizationId, orgBaseCurrency];
 
         if (startDateStr && endDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date AND (p."paymentDate" AT TIME ZONE $3)::date <= $5::date`;
+          currencyInvoiceDateFilter = ' AND i.date >= $3::date AND i.date <= $4::date';
           currencyParams.push(startDateStr, endDateStr);
         } else if (startDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date >= $4::date`;
+          currencyInvoiceDateFilter = ' AND i.date >= $3::date';
           currencyParams.push(startDateStr);
         } else if (endDateStr) {
-          currencyDateFilter = ` AND (p."paymentDate" AT TIME ZONE $3)::date <= $4::date`;
+          currencyInvoiceDateFilter = ' AND i.date <= $3::date';
           currencyParams.push(endDateStr);
         }
 
@@ -199,9 +200,11 @@ export class DashboardSimpleController {
             SUM(COALESCE(p."paymentCurrencyAmount", p.amount)) as total_foreign_amount,
             AVG(COALESCE(p."exchangeRate", 1)) as avg_rate
           FROM payments p
+          INNER JOIN invoices i ON p.invoice_id = i.id
           WHERE p.organization_id = $1
           AND p.deleted_at IS NULL
-          ${currencyDateFilter}
+          AND i.deleted_at IS NULL
+          ${currencyInvoiceDateFilter}
           GROUP BY COALESCE(p."paymentCurrency", $2)
           ORDER BY total_base_amount DESC
         `;
