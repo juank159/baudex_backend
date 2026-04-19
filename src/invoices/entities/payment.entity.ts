@@ -18,6 +18,11 @@ export class Payment extends BaseEntity {
   @Column({ type: 'varchar', length: 50 })
   paymentNumber: string;
 
+  // Clave de idempotencia enviada por el cliente offline. Unique(organizationId, idempotencyKey)
+  // permite reintentos seguros del sync sin crear duplicados.
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'idempotency_key' })
+  idempotencyKey?: string;
+
   @Column({
     type: 'float',
     transformer: {

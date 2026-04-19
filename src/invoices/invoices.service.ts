@@ -1325,6 +1325,20 @@ export class InvoicesService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
+    // Idempotencia: si el cliente ya envió este pago antes, devolver la factura actual sin duplicar.
+    if (paymentDto.idempotencyKey) {
+      const existing = await this.dataSource.getRepository(Payment).findOne({
+        where: {
+          organizationId: tenantId,
+          idempotencyKey: paymentDto.idempotencyKey,
+        },
+      });
+      if (existing) {
+        console.log(`Pago idempotente detectado (key=${paymentDto.idempotencyKey}) — devolviendo factura sin duplicar`);
+        return this.findOne(existing.invoiceId);
+      }
+    }
+
     const invoice = await this.findOne(id);
 
     if (invoice.status === InvoiceStatus.PAID) {
@@ -1353,6 +1367,11 @@ export class InvoicesService {
       }
     }
 
+    // paymentDate es obligatorio en el flow offline-first. Si falta, log warning para detectar bugs de sync.
+    if (!paymentDto.paymentDate) {
+      console.warn(`addPayment invoked without paymentDate (invoice=${id}, createdBy=${createdById}). Falling back to NOW().`);
+    }
+
     return this.dataSource.transaction(async (manager) => {
       // Generar número de pago único
       const paymentNumber = await this.generatePaymentNumber(tenantId);
@@ -1360,6 +1379,7 @@ export class InvoicesService {
       // 1. Crear registro de pago
       const payment = manager.create(Payment, {
         paymentNumber,
+        idempotencyKey: paymentDto.idempotencyKey || null,
         amount: paymentDto.amount,
         paymentMethod: paymentDto.paymentMethod,
         paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
@@ -1375,7 +1395,21 @@ export class InvoicesService {
         exchangeRate: paymentDto.exchangeRate || null,
       });
 
-      await manager.save(Payment, payment);
+      try {
+        await manager.save(Payment, payment);
+      } catch (err: any) {
+        // Carrera: otro request sincronizó el mismo pago en paralelo. Devolver la factura existente.
+        if (err?.code === '23505' && paymentDto.idempotencyKey) {
+          const existing = await manager.findOne(Payment, {
+            where: { organizationId: tenantId, idempotencyKey: paymentDto.idempotencyKey },
+          });
+          if (existing) {
+            console.log(`Pago idempotente detectado en race (key=${paymentDto.idempotencyKey})`);
+            return this.findOne(existing.invoiceId);
+          }
+        }
+        throw err;
+      }
 
       // 🏦 2. Actualizar saldo de la cuenta bancaria si se especificó
       if (paymentDto.bankAccountId) {
@@ -1721,19 +1755,39 @@ export class InvoicesService {
     }
 
 
+    if (!multiPaymentDto.paymentDate) {
+      console.warn(`addMultiplePayments invoked without paymentDate (invoice=${id}, createdBy=${createdById}). Falling back to NOW().`);
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const createdPayments: Payment[] = [];
+      // Solo sumamos a los totales los pagos realmente nuevos. Los idempotentes ya estaban aplicados.
+      let newlyAppliedAmount = 0;
       const paymentDate = multiPaymentDto.paymentDate
         ? new Date(multiPaymentDto.paymentDate)
         : new Date();
 
       // 1. Crear cada registro de pago y actualizar saldo de cuentas bancarias
       for (const paymentItem of multiPaymentDto.payments) {
+        // Idempotencia por ítem: si el cliente ya envió este pago, saltar.
+        if (paymentItem.idempotencyKey) {
+          const existing = await manager.findOne(Payment, {
+            where: { organizationId: tenantId, idempotencyKey: paymentItem.idempotencyKey },
+          });
+          if (existing) {
+            console.log(`Pago idempotente (key=${paymentItem.idempotencyKey}) ya existe — omitiendo en addMultiplePayments`);
+            createdPayments.push(existing);
+            continue;
+          }
+        }
+        newlyAppliedAmount += paymentItem.amount;
+
         // Generar número de pago único para cada pago
         const paymentNumber = await this.generatePaymentNumber(tenantId);
 
         const payment = manager.create(Payment, {
           paymentNumber,
+          idempotencyKey: paymentItem.idempotencyKey || null,
           amount: paymentItem.amount,
           paymentMethod: paymentItem.paymentMethod,
           paymentDate,
@@ -1749,7 +1803,23 @@ export class InvoicesService {
           exchangeRate: paymentItem.exchangeRate || null,
         });
 
-        const savedPayment = await manager.save(Payment, payment);
+        let savedPayment: Payment;
+        try {
+          savedPayment = await manager.save(Payment, payment);
+        } catch (err: any) {
+          if (err?.code === '23505' && paymentItem.idempotencyKey) {
+            const existing = await manager.findOne(Payment, {
+              where: { organizationId: tenantId, idempotencyKey: paymentItem.idempotencyKey },
+            });
+            if (existing) {
+              savedPayment = existing;
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
+          }
+        }
         createdPayments.push(savedPayment);
 
         // 🏦 Actualizar saldo de la cuenta bancaria usando el manager de la transacción
@@ -1773,8 +1843,9 @@ export class InvoicesService {
       }
 
       // 2. Calcular nuevos montos de la factura
-      // Si el pago excede el saldo, solo aplicamos hasta el saldo pendiente
-      const effectivePayment = Math.min(totalPaymentAmount, remainingBalance);
+      // Si el pago excede el saldo, solo aplicamos hasta el saldo pendiente.
+      // Usamos newlyAppliedAmount para evitar doble-contar pagos que ya estaban registrados (idempotentes).
+      const effectivePayment = Math.min(newlyAppliedAmount, remainingBalance);
       const newPaidAmount = invoice.paidAmount + effectivePayment;
       const newBalanceDue = Math.max(0, invoice.total - newPaidAmount);
 

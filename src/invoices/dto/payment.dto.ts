@@ -99,6 +99,14 @@ export class AddPaymentDto {
   @IsNumber({}, { message: 'La tasa de cambio debe ser un número' })
   @Min(0.0001, { message: 'La tasa de cambio debe ser mayor a 0' })
   exchangeRate?: number;
+
+  @ApiPropertyOptional({
+    description: 'Clave de idempotencia (UUID) generada por el cliente offline para evitar duplicados en reintentos de sync',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsString({ message: 'La clave de idempotencia debe ser una cadena' })
+  idempotencyKey?: string;
 }
 
 /**
@@ -175,6 +183,14 @@ export class PaymentItemDto {
   @IsNumber({}, { message: 'La tasa de cambio debe ser un número' })
   @Min(0.0001, { message: 'La tasa de cambio debe ser mayor a 0' })
   exchangeRate?: number;
+
+  @ApiPropertyOptional({
+    description: 'Clave de idempotencia (UUID) del ítem. Cada pago dentro del arreglo debe tener su propia clave.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsString({ message: 'La clave de idempotencia debe ser una cadena' })
+  idempotencyKey?: string;
 }
 
 /**

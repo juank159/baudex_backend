@@ -64,4 +64,12 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsString({ message: 'Las notas deben ser una cadena' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clave de idempotencia (UUID) para evitar pagos duplicados al re-sincronizar',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsString({ message: 'La clave de idempotencia debe ser una cadena' })
+  idempotencyKey?: string;
 }

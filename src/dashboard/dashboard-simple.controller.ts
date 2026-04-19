@@ -120,6 +120,10 @@ export class DashboardSimpleController {
       // 💵 INGRESOS POR PAGOS EN FACTURAS ANTIGUAS
       // Pagos recibidos DENTRO del rango de fecha en facturas creadas FUERA del rango.
       // Esto permite que abonos hechos hoy en facturas viejas se reflejen en el dashboard.
+      // CRÍTICO: paymentDate es timestamptz. Se convierte a la TZ de la organización antes del
+      // cast a ::date para que "hoy" corresponda al día calendario del usuario y no al de UTC.
+      const tzParams: any[] = [...queryParams, orgTimezone];
+      const tzParamIdx = tzParams.length; // $N para el timezone
       let paymentIncomeFromOldInvoices = 0;
       if (startDateStr && endDateStr) {
         const oldInvoicePaymentsQuery = `
@@ -129,10 +133,11 @@ export class DashboardSimpleController {
           WHERE p.organization_id = $1
           AND p.deleted_at IS NULL
           AND i.deleted_at IS NULL
-          AND p."paymentDate"::date >= $2::date AND p."paymentDate"::date <= $3::date
+          AND (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date >= $2::date
+          AND (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date <= $3::date
           AND (i.date < $2::date OR i.date > $3::date)
         `;
-        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, queryParams);
+        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, tzParams);
         paymentIncomeFromOldInvoices = parseFloat(oldPaymentResult?.payment_income || '0');
       } else if (startDateStr) {
         const oldInvoicePaymentsQuery = `
@@ -142,10 +147,10 @@ export class DashboardSimpleController {
           WHERE p.organization_id = $1
           AND p.deleted_at IS NULL
           AND i.deleted_at IS NULL
-          AND p."paymentDate"::date >= $2::date
+          AND (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date >= $2::date
           AND i.date < $2::date
         `;
-        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, queryParams);
+        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, tzParams);
         paymentIncomeFromOldInvoices = parseFloat(oldPaymentResult?.payment_income || '0');
       }
 
@@ -163,22 +168,25 @@ export class DashboardSimpleController {
 
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
-      // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
-      // Filtra por paymentDate para incluir pagos en facturas antiguas recibidos en el rango
-      // (consistente con totalRevenue que ahora incluye paymentIncomeFromOldInvoices)
+      // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre.
+      // paymentDate se convierte a la TZ de la organización antes del cast a ::date para
+      // respetar el día calendario local (evita contar pagos nocturnos como del día siguiente).
       let paymentDateFilter = '';
       if (startDateStr && endDateStr) {
         paymentDateFilter = ` AND (
           (i.date >= $2::date AND i.date <= $3::date)
-          OR (p."paymentDate"::date >= $2::date AND p."paymentDate"::date <= $3::date)
+          OR (
+            (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date >= $2::date
+            AND (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date <= $3::date
+          )
         )`;
       } else if (startDateStr) {
         paymentDateFilter = ` AND (
-          i.date >= $2::date OR p."paymentDate"::date >= $2::date
+          i.date >= $2::date OR (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date >= $2::date
         )`;
       } else if (endDateStr) {
         paymentDateFilter = ` AND (
-          i.date <= $2::date OR p."paymentDate"::date <= $2::date
+          i.date <= $2::date OR (p."paymentDate" AT TIME ZONE $${tzParamIdx})::date <= $2::date
         )`;
       }
 
@@ -198,7 +206,10 @@ export class DashboardSimpleController {
         ORDER BY total_amount DESC
       `;
 
-      const paymentMethods = await this.entityManager.query(paymentMethodsQuery, queryParams);
+      const paymentMethods = await this.entityManager.query(
+        paymentMethodsQuery,
+        paymentDateFilter ? tzParams : queryParams,
+      );
 
       const totalPayments = paymentMethods.reduce((sum, pm) => sum + parseFloat(pm.total_amount || 0), 0);
       const paymentMethodsBreakdown = paymentMethods.map(pm => ({
@@ -212,28 +223,36 @@ export class DashboardSimpleController {
       });
 
       // 💱 DESGLOSE POR MONEDA (solo si multiCurrencyEnabled)
-      // Incluye pagos en facturas antiguas recibidos en el rango (consistente con totalRevenue)
+      // Incluye pagos en facturas antiguas recibidos en el rango (consistente con totalRevenue).
+      // Convierte paymentDate a la TZ de la organización antes del cast a ::date.
       let currencyBreakdown = null;
       if (multiCurrencyEnabled) {
         let currencyDateFilter = '';
         const currencyParams: any[] = [organizationId, orgBaseCurrency];
+        let currencyTzIdx = 0;
 
         if (startDateStr && endDateStr) {
+          currencyParams.push(startDateStr, endDateStr, orgTimezone);
+          currencyTzIdx = currencyParams.length; // $5
           currencyDateFilter = ` AND (
             (i.date >= $3::date AND i.date <= $4::date)
-            OR (p."paymentDate"::date >= $3::date AND p."paymentDate"::date <= $4::date)
+            OR (
+              (p."paymentDate" AT TIME ZONE $${currencyTzIdx})::date >= $3::date
+              AND (p."paymentDate" AT TIME ZONE $${currencyTzIdx})::date <= $4::date
+            )
           )`;
-          currencyParams.push(startDateStr, endDateStr);
         } else if (startDateStr) {
+          currencyParams.push(startDateStr, orgTimezone);
+          currencyTzIdx = currencyParams.length; // $4
           currencyDateFilter = ` AND (
-            i.date >= $3::date OR p."paymentDate"::date >= $3::date
+            i.date >= $3::date OR (p."paymentDate" AT TIME ZONE $${currencyTzIdx})::date >= $3::date
           )`;
-          currencyParams.push(startDateStr);
         } else if (endDateStr) {
+          currencyParams.push(endDateStr, orgTimezone);
+          currencyTzIdx = currencyParams.length; // $4
           currencyDateFilter = ` AND (
-            i.date <= $3::date OR p."paymentDate"::date <= $3::date
+            i.date <= $3::date OR (p."paymentDate" AT TIME ZONE $${currencyTzIdx})::date <= $3::date
           )`;
-          currencyParams.push(endDateStr);
         }
 
         const currencyQuery = `
