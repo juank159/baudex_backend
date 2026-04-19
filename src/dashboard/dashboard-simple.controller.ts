@@ -306,12 +306,21 @@ export class DashboardSimpleController {
       const [invoicesIncomeResult] = await this.entityManager.query(invoicesIncomeQuery, queryParams);
       const [creditsIncomeResult] = await this.entityManager.query(creditsIncomeQuery, queryParams);
 
-      const invoicesIncome = parseFloat(invoicesIncomeResult?.total || '0') + paymentIncomeFromOldInvoices;
+      // Separamos ventas nuevas (facturas del período) de abonos en facturas antiguas
+      // para que la UI pueda mostrar ambos renglones por separado.
+      const newInvoicesIncome = parseFloat(invoicesIncomeResult?.total || '0');
+      const oldInvoicePayments = paymentIncomeFromOldInvoices;
+      const invoicesIncome = newInvoicesIncome + oldInvoicePayments;
       const creditsIncome = parseFloat(creditsIncomeResult?.total || '0');
       const totalIncome = invoicesIncome + creditsIncome;
 
       const incomeTypeBreakdown = {
+        // Mantiene el total combinado para compatibilidad con clientes que ya consumen 'invoices'
         invoices: invoicesIncome,
+        // Ventas facturadas dentro del período
+        newInvoices: newInvoicesIncome,
+        // Abonos recibidos en el período sobre facturas de fechas anteriores
+        paymentsOnOldInvoices: oldInvoicePayments,
         credits: creditsIncome,
         total: totalIncome,
       };
