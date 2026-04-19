@@ -95,10 +95,10 @@ export class DashboardSimpleController {
         AND deleted_at IS NULL
       `;
 
-      
+
       const [invoiceResult] = await this.entityManager.query(invoicesQuery, queryParams);
-      
-      
+
+
       // Para gastos, usar los mismos parámetros de fecha
       const [expenseResult] = await this.entityManager.query(expensesQuery, queryParams);
       const [productResult] = await this.entityManager.query(productsQuery, [organizationId]);
@@ -117,7 +117,39 @@ export class DashboardSimpleController {
       `;
       const [receivableResult] = await this.entityManager.query(receivableQuery, queryParams);
 
-      const totalRevenue = parseFloat(invoiceResult?.total_revenue || '0');
+      // 💵 INGRESOS POR PAGOS EN FACTURAS ANTIGUAS
+      // Pagos recibidos DENTRO del rango de fecha en facturas creadas FUERA del rango.
+      // Esto permite que abonos hechos hoy en facturas viejas se reflejen en el dashboard.
+      let paymentIncomeFromOldInvoices = 0;
+      if (startDateStr && endDateStr) {
+        const oldInvoicePaymentsQuery = `
+          SELECT COALESCE(SUM(p.amount), 0) as payment_income
+          FROM payments p
+          INNER JOIN invoices i ON p."invoiceId" = i.id
+          WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          AND i.deleted_at IS NULL
+          AND p."paymentDate"::date >= $2::date AND p."paymentDate"::date <= $3::date
+          AND (i.date < $2::date OR i.date > $3::date)
+        `;
+        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, queryParams);
+        paymentIncomeFromOldInvoices = parseFloat(oldPaymentResult?.payment_income || '0');
+      } else if (startDateStr) {
+        const oldInvoicePaymentsQuery = `
+          SELECT COALESCE(SUM(p.amount), 0) as payment_income
+          FROM payments p
+          INNER JOIN invoices i ON p."invoiceId" = i.id
+          WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          AND i.deleted_at IS NULL
+          AND p."paymentDate"::date >= $2::date
+          AND i.date < $2::date
+        `;
+        const [oldPaymentResult] = await this.entityManager.query(oldInvoicePaymentsQuery, queryParams);
+        paymentIncomeFromOldInvoices = parseFloat(oldPaymentResult?.payment_income || '0');
+      }
+
+      const totalRevenue = parseFloat(invoiceResult?.total_revenue || '0') + paymentIncomeFromOldInvoices;
       const accountsReceivable = parseFloat(receivableResult?.total_receivable || '0');
       const receivableCount = parseInt(receivableResult?.receivable_count || '0');
 
@@ -132,17 +164,22 @@ export class DashboardSimpleController {
 
       // 💳 OBTENER DESGLOSE POR MÉTODO DE PAGO
       // Agrupa por el nombre del método consolidando cuentas bancarias con el mismo nombre
-      // IMPORTANTE: Filtrar por invoice.date (igual que totalRevenue) para que los totales cuadren.
-      // Antes se filtraba por paymentDate con AT TIME ZONE, lo cual causaba que pagos a UTC midnight
-      // se convirtieran al día anterior en la zona del tenant, excluyéndolos del rango.
-      // Construir filtro de fecha basado en invoice.date (consistente con totalRevenue)
-      let invoiceDateFilter = '';
+      // Filtra por paymentDate para incluir pagos en facturas antiguas recibidos en el rango
+      // (consistente con totalRevenue que ahora incluye paymentIncomeFromOldInvoices)
+      let paymentDateFilter = '';
       if (startDateStr && endDateStr) {
-        invoiceDateFilter = ' AND i.date >= $2::date AND i.date <= $3::date';
+        paymentDateFilter = ` AND (
+          (i.date >= $2::date AND i.date <= $3::date)
+          OR (p."paymentDate"::date >= $2::date AND p."paymentDate"::date <= $3::date)
+        )`;
       } else if (startDateStr) {
-        invoiceDateFilter = ' AND i.date >= $2::date';
+        paymentDateFilter = ` AND (
+          i.date >= $2::date OR p."paymentDate"::date >= $2::date
+        )`;
       } else if (endDateStr) {
-        invoiceDateFilter = ' AND i.date <= $2::date';
+        paymentDateFilter = ` AND (
+          i.date <= $2::date OR p."paymentDate"::date <= $2::date
+        )`;
       }
 
       const paymentMethodsQuery = `
@@ -156,7 +193,7 @@ export class DashboardSimpleController {
         WHERE p.organization_id = $1
         AND p.deleted_at IS NULL
         AND i.deleted_at IS NULL
-        ${invoiceDateFilter}
+        ${paymentDateFilter}
         GROUP BY COALESCE(ba.name, p."paymentMethod")
         ORDER BY total_amount DESC
       `;
@@ -175,20 +212,27 @@ export class DashboardSimpleController {
       });
 
       // 💱 DESGLOSE POR MONEDA (solo si multiCurrencyEnabled)
-      // Filtrar por invoice.date (consistente con totalRevenue) para evitar bug de timezone
+      // Incluye pagos en facturas antiguas recibidos en el rango (consistente con totalRevenue)
       let currencyBreakdown = null;
       if (multiCurrencyEnabled) {
-        let currencyInvoiceDateFilter = '';
+        let currencyDateFilter = '';
         const currencyParams: any[] = [organizationId, orgBaseCurrency];
 
         if (startDateStr && endDateStr) {
-          currencyInvoiceDateFilter = ' AND i.date >= $3::date AND i.date <= $4::date';
+          currencyDateFilter = ` AND (
+            (i.date >= $3::date AND i.date <= $4::date)
+            OR (p."paymentDate"::date >= $3::date AND p."paymentDate"::date <= $4::date)
+          )`;
           currencyParams.push(startDateStr, endDateStr);
         } else if (startDateStr) {
-          currencyInvoiceDateFilter = ' AND i.date >= $3::date';
+          currencyDateFilter = ` AND (
+            i.date >= $3::date OR p."paymentDate"::date >= $3::date
+          )`;
           currencyParams.push(startDateStr);
         } else if (endDateStr) {
-          currencyInvoiceDateFilter = ' AND i.date <= $3::date';
+          currencyDateFilter = ` AND (
+            i.date <= $3::date OR p."paymentDate"::date <= $3::date
+          )`;
           currencyParams.push(endDateStr);
         }
 
@@ -204,7 +248,7 @@ export class DashboardSimpleController {
           WHERE p.organization_id = $1
           AND p.deleted_at IS NULL
           AND i.deleted_at IS NULL
-          ${currencyInvoiceDateFilter}
+          ${currencyDateFilter}
           GROUP BY COALESCE(p."paymentCurrency", $2)
           ORDER BY total_base_amount DESC
         `;
@@ -243,7 +287,7 @@ export class DashboardSimpleController {
       const [invoicesIncomeResult] = await this.entityManager.query(invoicesIncomeQuery, queryParams);
       const [creditsIncomeResult] = await this.entityManager.query(creditsIncomeQuery, queryParams);
 
-      const invoicesIncome = parseFloat(invoicesIncomeResult?.total || '0');
+      const invoicesIncome = parseFloat(invoicesIncomeResult?.total || '0') + paymentIncomeFromOldInvoices;
       const creditsIncome = parseFloat(creditsIncomeResult?.total || '0');
       const totalIncome = invoicesIncome + creditsIncome;
 
