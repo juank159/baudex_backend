@@ -43,6 +43,7 @@ export class ExpensesService {
 
     const expenseData = {
       ...createExpenseDto,
+      name: createExpenseDto.description,
       date: createExpenseDto.date
         ? new Date(createExpenseDto.date)
         : new Date(),
@@ -215,6 +216,10 @@ export class ExpensesService {
     }
 
     Object.assign(expense, updateExpenseDto);
+
+    if (updateExpenseDto.description) {
+      expense.name = updateExpenseDto.description;
+    }
 
     if (updateExpenseDto.date) {
       expense.date = new Date(updateExpenseDto.date);

@@ -31,6 +31,9 @@ export enum PaymentMethod {
 
 @Entity('expenses')
 export class Expense extends BaseEntity {
+  @Column({ type: 'varchar', length: 255 })
+  name: string;
+
   @Column({ type: 'varchar', length: 200 })
   description: string;
 
