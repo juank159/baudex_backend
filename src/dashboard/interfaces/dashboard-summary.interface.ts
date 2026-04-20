@@ -68,6 +68,25 @@ export interface TrendPoint {
   expenses: number;
 }
 
+/**
+ * Resumen de caja (flujo de efectivo del período).
+ * Separa los 3 orígenes de "dinero que entró" para reportar con criterio contable:
+ *  - `salesCollected` → ingreso por ventas (cobros de factura)
+ *  - `loanPayments`   → recuperación de cartera (abonos a préstamos directos)
+ *  - `customerDeposits` → anticipos (pasivo: lo debes al cliente hasta que se use)
+ * El total es la caja real del período. Mostrar sumado puede inflar ventas,
+ * por eso se entrega desagregado.
+ */
+export interface CashFlowSummary {
+  salesCollected: number;
+  salesCollectedCount: number;
+  loanPayments: number;
+  loanPaymentsCount: number;
+  customerDeposits: number;
+  customerDepositsCount: number;
+  totalCashIn: number;
+}
+
 export interface DashboardSummaryResponse {
   // Cobrado en caja (cash basis) — la métrica principal para el usuario.
   totalCollected: number;
@@ -98,6 +117,9 @@ export interface DashboardSummaryResponse {
 
   // Datos reales (no fabricados) para gráfica de tendencia.
   trend: TrendPoint[];
+
+  // Flujo de caja: ventas + préstamos + anticipos, desagregados.
+  cashFlow: CashFlowSummary;
 
   // ─── Campos legacy (DEPRECATED — serán removidos en versión siguiente) ───
   /** @deprecated usar grossProfit/netProfit. Aquí solo como totalRevenue-totalExpenses. */

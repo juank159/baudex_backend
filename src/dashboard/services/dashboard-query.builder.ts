@@ -247,6 +247,40 @@ export class DashboardQueryBuilder {
     `;
   }
 
+  // ───────── Abonos a préstamos directos (créditos sin factura) ─────────
+  // Cobros del período sobre créditos donde customer_credits.invoice_id IS NULL
+  // (el usuario les dice "créditos directos" o "préstamos").
+  // NO son ventas nuevas, son recuperación de cartera.
+  static directLoanPayments(): string {
+    return `
+      SELECT COALESCE(SUM(cp.amount), 0)::numeric AS total,
+             COUNT(cp.id)::int                    AS count
+      FROM credit_payments cp
+      INNER JOIN customer_credits cc ON cp.credit_id = cc.id
+      WHERE cp.organization_id = $1
+        AND cp.deleted_at IS NULL
+        AND cc.deleted_at IS NULL
+        AND cc.invoice_id IS NULL
+        AND cp.payment_date >= $2
+        AND cp.payment_date <  $3
+    `;
+  }
+
+  // ───────── Depósitos a saldo a favor del cliente (anticipos) ─────────
+  // Movimientos de client_balance_transactions tipo 'deposit' en el período.
+  // NO son ingresos (son pasivos: se le debe al cliente), pero SÍ son caja.
+  static customerDeposits(): string {
+    return `
+      SELECT COALESCE(SUM(bt.amount), 0)::numeric AS total,
+             COUNT(bt.id)::int                    AS count
+      FROM client_balance_transactions bt
+      WHERE bt.organization_id = $1
+        AND bt.type = 'deposit'
+        AND bt.created_at >= $2
+        AND bt.created_at <  $3
+    `;
+  }
+
   // ───────── Período anterior (mismo rango de días desplazado hacia atrás) ─────────
   static previousPeriodRevenue(): string {
     return `

@@ -5,6 +5,7 @@ import { EntityManager } from 'typeorm';
 import { ProfitabilityService } from '../../common/services/profitability.service';
 import { DashboardQueryBuilder } from './dashboard-query.builder';
 import {
+  CashFlowSummary,
   DashboardSummaryResponse,
   IncomeTypeBreakdown,
   PaymentMethodBreakdown,
@@ -56,6 +57,8 @@ export class DashboardService {
       trendRows,
       profitability,
       previousRevenue,
+      loanPaymentsAgg,
+      depositsAgg,
     ] = await Promise.all([
       this.q(DashboardQueryBuilder.invoiceAggregates(), [organizationId, startDateStr, endDateStr]),
       this.q(DashboardQueryBuilder.expenseAggregate(), [organizationId, startDateStr, endDateStr]),
@@ -81,6 +84,8 @@ export class DashboardService {
       ]),
       this.profitability.getProfitabilityStats(organizationId, startDateStr, endDateStr).catch(() => null),
       this.getPreviousRevenue(organizationId, org.timezone, startDateStr, endDateStr),
+      this.q(DashboardQueryBuilder.directLoanPayments(), [organizationId, startUtc, endUtcExclusive]),
+      this.q(DashboardQueryBuilder.customerDeposits(), [organizationId, startUtc, endUtcExclusive]),
     ]);
 
     // Parseo y composición del response
@@ -132,6 +137,22 @@ export class DashboardService {
       expenses: num(r.expenses),
     }));
 
+    const loanPayments = num(loanPaymentsAgg[0]?.total);
+    const loanPaymentsCount = Number(loanPaymentsAgg[0]?.count ?? 0);
+    const customerDeposits = num(depositsAgg[0]?.total);
+    const customerDepositsCount = Number(depositsAgg[0]?.count ?? 0);
+    const salesCount = Number(collectedAgg[0]?.payment_count ?? 0);
+
+    const cashFlow: CashFlowSummary = {
+      salesCollected: totalCollected,
+      salesCollectedCount: salesCount,
+      loanPayments,
+      loanPaymentsCount,
+      customerDeposits,
+      customerDepositsCount,
+      totalCashIn: totalCollected + loanPayments + customerDeposits,
+    };
+
     // ─── Shims legacy para no romper clientes que aún no se actualizan ───
     const totalRevenueLegacy = totalBilled + paymentsOnOld;
     const totalProfitLegacy = totalRevenueLegacy - totalExpenses;
@@ -182,6 +203,7 @@ export class DashboardService {
       multiCurrencyEnabled: org.multiCurrencyEnabled,
 
       trend,
+      cashFlow,
 
       // Legacy shims
       totalProfit: totalProfitLegacy,
