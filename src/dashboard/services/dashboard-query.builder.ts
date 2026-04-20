@@ -1,3 +1,5 @@
+import { toUtcAtTenantMidnight } from '../../common/utils/timezone-range.util';
+
 /**
  * Queries SQL del dashboard, aisladas del service para facilitar testing y revisión.
  *
@@ -9,45 +11,9 @@
  */
 
 export class DashboardQueryBuilder {
-  /**
-   * Convierte un rango de fechas locales (YYYY-MM-DD en TZ de la org)
-   * a un rango de timestamps UTC que cubren todo el día local.
-   *
-   * Ej: '2026-04-19' en 'America/Bogota' →
-   *     [2026-04-19T05:00:00Z, 2026-04-20T05:00:00Z)
-   */
+  /** @deprecated Usar `toUtcAtTenantMidnight` del util compartido. */
   static toUtcRange(dateStr: string, orgTimezone: string): Date {
-    // Construimos el offset de la TZ usando Intl API. Es preciso, sin libs extras.
-    const local = new Date(`${dateStr}T00:00:00`);
-    const tzOffsetMs = this.getTimezoneOffsetMs(local, orgTimezone);
-    return new Date(local.getTime() - tzOffsetMs);
-  }
-
-  /** Milisegundos de offset entre UTC y la TZ dada para una fecha concreta. */
-  private static getTimezoneOffsetMs(utcDate: Date, tz: string): number {
-    const tzFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-    const parts = tzFormatter.formatToParts(utcDate).reduce<Record<string, string>>((acc, p) => {
-      if (p.type !== 'literal') acc[p.type] = p.value;
-      return acc;
-    }, {});
-    const asIfUtc = Date.UTC(
-      Number(parts.year),
-      Number(parts.month) - 1,
-      Number(parts.day),
-      Number(parts.hour === '24' ? '00' : parts.hour),
-      Number(parts.minute),
-      Number(parts.second),
-    );
-    return asIfUtc - utcDate.getTime();
+    return toUtcAtTenantMidnight(dateStr, orgTimezone);
   }
 
   // ───────── Invoices (facturadas) ─────────

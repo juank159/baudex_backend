@@ -13,6 +13,12 @@ import { BankAccountQueryDto } from './dto/bank-account-query.dto';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
 import { Payment } from '../invoices/entities/payment.entity';
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
+import {
+  addOneDay,
+  toUtcAtTenantMidnight,
+} from '../common/utils/timezone-range.util';
+import { InjectEntityManager } from '@nestjs/typeorm';
+import { EntityManager } from 'typeorm';
 
 export interface BankAccountSummary {
   id: string;
@@ -22,12 +28,20 @@ export interface BankAccountSummary {
   type: string;
   icon?: string;
   currentBalance: number;
+
+  // Histórico: TODOS los pagos recibidos por esta cuenta (sin filtro de fecha).
   totalReceived: number;
-  totalReceivedPeriod: number;
   paymentCount: number;
-  paymentCountPeriod: number;
-  creditPaymentCount: number;
   creditPaymentTotal: number;
+  creditPaymentCount: number;
+
+  // Período: solo pagos cuya paymentDate cae dentro del rango consultado
+  // en la TZ de la organización. Si no hay rango, estos campos son 0.
+  totalReceivedPeriod: number;
+  paymentCountPeriod: number;
+  creditPaymentTotalPeriod: number;
+  creditPaymentCountPeriod: number;
+
   isDefault: boolean;
   isActive: boolean;
 }
@@ -42,6 +56,7 @@ export class BankAccountsService {
     @InjectRepository(CreditPayment)
     private readonly creditPaymentRepository: Repository<CreditPayment>,
     private readonly tenantAwareService: TenantAwareService,
+    @InjectEntityManager() private readonly em: EntityManager,
   ) {}
 
   /**
@@ -394,62 +409,85 @@ export class BankAccountsService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    console.log(`💰 Obteniendo resumen de cuentas para organización: ${organizationId}`);
+    // TZ de la organización — necesaria para convertir el rango local del
+    // usuario a timestamps UTC y poder filtrar paymentDate correctamente.
+    const [orgRow] = await this.em.query(
+      'SELECT timezone FROM organizations WHERE id = $1',
+      [organizationId],
+    );
+    const orgTimezone: string = orgRow?.timezone || 'America/New_York';
 
-    // Obtener todas las cuentas activas
+    // Rango UTC derivado del rango local del tenant (si viene).
+    let startUtc: Date | null = null;
+    let endUtcExclusive: Date | null = null;
+    if (startDate && endDate) {
+      startUtc = toUtcAtTenantMidnight(startDate, orgTimezone);
+      endUtcExclusive = addOneDay(toUtcAtTenantMidnight(endDate, orgTimezone));
+    }
+
     const accounts = await this.bankAccountRepository.find({
       where: { organizationId, isActive: true },
       order: { isDefault: 'DESC', sortOrder: 'ASC', name: 'ASC' },
     });
 
-    console.log(`💰 Cuentas encontradas: ${accounts.length}`);
-
-    // Construir resumen para cada cuenta
     const summaries: BankAccountSummary[] = [];
 
     for (const account of accounts) {
-      // Total de pagos de facturas (histórico)
-      const totalPaymentsQuery = this.paymentRepository
-        .createQueryBuilder('p')
-        .select('COALESCE(SUM(p.amount), 0)', 'total')
-        .addSelect('COUNT(p.id)', 'count')
-        .where('p.bankAccountId = :accountId', { accountId: account.id })
-        .andWhere('p.organizationId = :organizationId', { organizationId });
-
-      const totalPaymentsResult = await totalPaymentsQuery.getRawOne();
-
-      // Pagos de facturas en el período (filtrado por fecha de factura, no de pago)
-      let periodPaymentsResult: { total: string; count: string } | null = null;
-      if (startDate && endDate) {
-        const periodPaymentsQuery = this.paymentRepository
+      // Todas las sub-queries de la cuenta en paralelo.
+      const [
+        totalPaymentsResult,
+        periodPaymentsResult,
+        totalCreditsResult,
+        periodCreditsResult,
+      ] = await Promise.all([
+        // Histórico: pagos de facturas
+        this.paymentRepository
           .createQueryBuilder('p')
-          .innerJoin('p.invoice', 'i')
           .select('COALESCE(SUM(p.amount), 0)', 'total')
           .addSelect('COUNT(p.id)', 'count')
           .where('p.bankAccountId = :accountId', { accountId: account.id })
           .andWhere('p.organizationId = :organizationId', { organizationId })
-          .andWhere('i.date >= :startDate', { startDate })
-          .andWhere('i.date <= :endDate', { endDate })
-          .andWhere('i.deleted_at IS NULL');
+          .getRawOne<{ total: string; count: string }>(),
 
-        periodPaymentsResult = await periodPaymentsQuery.getRawOne();
-      }
+        // Período: pagos cuya paymentDate cae en el rango (TZ-aware).
+        // Antes filtraba por i.date (accrual-by-invoice) lo cual no reflejaba
+        // cobros de hoy sobre facturas viejas. Ahora es cash basis real.
+        startUtc && endUtcExclusive
+          ? this.paymentRepository
+              .createQueryBuilder('p')
+              .select('COALESCE(SUM(p.amount), 0)', 'total')
+              .addSelect('COUNT(p.id)', 'count')
+              .where('p.bankAccountId = :accountId', { accountId: account.id })
+              .andWhere('p.organizationId = :organizationId', { organizationId })
+              .andWhere('p.paymentDate >= :startUtc', { startUtc })
+              .andWhere('p.paymentDate <  :endUtcExclusive', { endUtcExclusive })
+              .getRawOne<{ total: string; count: string }>()
+          : Promise.resolve(null),
 
-      // Total de pagos de créditos (histórico)
-      let creditPaymentsResult: { total: string; count: string } | null = null;
-      try {
-        const creditPaymentsQuery = this.creditPaymentRepository
+        // Histórico: pagos de créditos
+        this.creditPaymentRepository
           .createQueryBuilder('cp')
           .select('COALESCE(SUM(cp.amount), 0)', 'total')
           .addSelect('COUNT(cp.id)', 'count')
           .where('cp.bankAccountId = :accountId', { accountId: account.id })
-          .andWhere('cp.organizationId = :organizationId', { organizationId });
+          .andWhere('cp.organizationId = :organizationId', { organizationId })
+          .getRawOne<{ total: string; count: string }>()
+          .catch(() => null),
 
-        creditPaymentsResult = await creditPaymentsQuery.getRawOne();
-      } catch (e) {
-        // Si la tabla de créditos no existe o hay error, continuar
-        console.log('Credit payments query error (ignored):', e.message);
-      }
+        // Período: pagos de créditos en el rango (TZ-aware, mismo criterio que payments).
+        startUtc && endUtcExclusive
+          ? this.creditPaymentRepository
+              .createQueryBuilder('cp')
+              .select('COALESCE(SUM(cp.amount), 0)', 'total')
+              .addSelect('COUNT(cp.id)', 'count')
+              .where('cp.bankAccountId = :accountId', { accountId: account.id })
+              .andWhere('cp.organizationId = :organizationId', { organizationId })
+              .andWhere('cp.paymentDate >= :startUtc', { startUtc })
+              .andWhere('cp.paymentDate <  :endUtcExclusive', { endUtcExclusive })
+              .getRawOne<{ total: string; count: string }>()
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
 
       summaries.push({
         id: account.id,
@@ -459,18 +497,22 @@ export class BankAccountsService {
         type: account.type,
         icon: account.icon,
         currentBalance: Number(account.currentBalance) || 0,
+
         totalReceived: parseFloat(totalPaymentsResult?.total || '0'),
-        totalReceivedPeriod: parseFloat(periodPaymentsResult?.total || '0'),
         paymentCount: parseInt(totalPaymentsResult?.count || '0', 10),
+        creditPaymentTotal: parseFloat(totalCreditsResult?.total || '0'),
+        creditPaymentCount: parseInt(totalCreditsResult?.count || '0', 10),
+
+        totalReceivedPeriod: parseFloat(periodPaymentsResult?.total || '0'),
         paymentCountPeriod: parseInt(periodPaymentsResult?.count || '0', 10),
-        creditPaymentCount: parseInt(creditPaymentsResult?.count || '0', 10),
-        creditPaymentTotal: parseFloat(creditPaymentsResult?.total || '0'),
+        creditPaymentTotalPeriod: parseFloat(periodCreditsResult?.total || '0'),
+        creditPaymentCountPeriod: parseInt(periodCreditsResult?.count || '0', 10),
+
         isDefault: account.isDefault,
         isActive: account.isActive,
       });
     }
 
-    console.log(`💰 Resumen generado para ${summaries.length} cuentas`);
     return summaries;
   }
 
