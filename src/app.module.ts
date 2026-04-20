@@ -6,7 +6,6 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { CommonModule } from './common/common.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
-import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { OrganizationsModule } from './organizations/organizations.module';
 import { CategoryModule } from './categories/categories.module';
@@ -17,16 +16,7 @@ import { CustomersModule } from './customers/customers.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { DashboardModule } from './dashboard/dashboard.module';
-import { TestController } from './test.controller';
-import { DashboardSimpleController } from './dashboard/dashboard-simple.controller';
-import { ProfitabilityProxyController } from './profitability-proxy.controller';
 import { HealthController } from './health/health.controller';
-import { Organization } from './organizations/entities/organization.entity';
-import { ProfitabilityService } from './common/services/profitability.service';
-import { Sale } from './sales/entities/sale.entity';
-import { SaleItem } from './sales/entities/sale-item.entity';
-import { Invoice } from './invoices/entities/invoice.entity';
-import { InvoiceItem } from './invoices/entities/invoice-item.entity';
 import { SubscriptionModule } from './common/modules/subscription.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -53,9 +43,6 @@ import { AppMailerModule } from './mailer/mailer.module';
 
     // Módulo de base de datos separado
     DatabaseModule,
-
-    // TypeORM para el middleware de tenant y servicios globales
-    TypeOrmModule.forFeature([Organization, Sale, SaleItem, Invoice, InvoiceItem]),
 
     // Módulo común con servicios utilitarios
     CommonModule,
@@ -100,8 +87,8 @@ import { AppMailerModule } from './mailer/mailer.module';
     // Módulo de Email (SMTP)
     AppMailerModule,
   ],
-  controllers: [AppController, TestController, DashboardSimpleController, ProfitabilityProxyController, HealthController],
-  providers: [AppService, ProfitabilityService],
+  controllers: [AppController, HealthController],
+  providers: [AppService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
