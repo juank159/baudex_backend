@@ -10,6 +10,8 @@ import { Product } from '../products/entities/product.entity';
 import { BankAccount } from '../bank-accounts/entities/bank-account.entity';
 
 import { DashboardSimpleController } from './dashboard-simple.controller';
+import { DashboardService } from './services/dashboard.service';
+import { DashboardActivityService } from './services/dashboard-activity.service';
 import { ProfitabilityService } from '../common/services/profitability.service';
 
 @Module({
@@ -25,7 +27,7 @@ import { ProfitabilityService } from '../common/services/profitability.service';
     ]),
   ],
   controllers: [DashboardSimpleController],
-  providers: [ProfitabilityService],
-  exports: [ProfitabilityService],
+  providers: [DashboardService, DashboardActivityService, ProfitabilityService],
+  exports: [DashboardService, ProfitabilityService],
 })
 export class DashboardModule {}
