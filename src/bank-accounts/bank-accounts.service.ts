@@ -464,24 +464,34 @@ export class BankAccountsService {
               .getRawOne<{ total: string; count: string }>()
           : Promise.resolve(null),
 
-        // Histórico: pagos de créditos
+        // Histórico: abonos a préstamos directos (créditos sin factura).
+        // IMPORTANTE: filtramos por cc.invoice_id IS NULL para evitar doble conteo.
+        // Cuando se abona a una factura-crédito, el backend crea registros
+        // sincronizados en `payments` Y `credit_payments` (ver customer-credits.service
+        // y invoices.service). Si sumáramos todos los credit_payments, contaríamos
+        // dos veces los abonos a facturas-crédito. Solo los préstamos directos
+        // (invoice_id NULL) NO tienen contraparte en payments.
         this.creditPaymentRepository
           .createQueryBuilder('cp')
+          .innerJoin('cp.credit', 'cc')
           .select('COALESCE(SUM(cp.amount), 0)', 'total')
           .addSelect('COUNT(cp.id)', 'count')
           .where('cp.bankAccountId = :accountId', { accountId: account.id })
           .andWhere('cp.organizationId = :organizationId', { organizationId })
+          .andWhere('cc.invoiceId IS NULL')
           .getRawOne<{ total: string; count: string }>()
           .catch(() => null),
 
-        // Período: pagos de créditos en el rango (TZ-aware, mismo criterio que payments).
+        // Período: abonos a préstamos directos en el rango (TZ-aware).
         startUtc && endUtcExclusive
           ? this.creditPaymentRepository
               .createQueryBuilder('cp')
+              .innerJoin('cp.credit', 'cc')
               .select('COALESCE(SUM(cp.amount), 0)', 'total')
               .addSelect('COUNT(cp.id)', 'count')
               .where('cp.bankAccountId = :accountId', { accountId: account.id })
               .andWhere('cp.organizationId = :organizationId', { organizationId })
+              .andWhere('cc.invoiceId IS NULL')
               .andWhere('cp.paymentDate >= :startUtc', { startUtc })
               .andWhere('cp.paymentDate <  :endUtcExclusive', { endUtcExclusive })
               .getRawOne<{ total: string; count: string }>()
