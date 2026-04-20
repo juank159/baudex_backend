@@ -98,4 +98,21 @@ export interface DashboardSummaryResponse {
 
   // Datos reales (no fabricados) para gráfica de tendencia.
   trend: TrendPoint[];
+
+  // ─── Campos legacy (DEPRECATED — serán removidos en versión siguiente) ───
+  /** @deprecated usar grossProfit/netProfit. Aquí solo como totalRevenue-totalExpenses. */
+  totalProfit: number;
+  /** @deprecated usar grossMarginPercentage (con COGS). Aquí como string p/ compat. */
+  profitMargin: string;
+  /** @deprecated usar receivables.total */
+  accountsReceivable: number;
+  /** @deprecated usar receivables.count */
+  receivableCount: number;
+  /** @deprecated usar trend */
+  monthlyStats: {
+    currentMonth: { revenue: number; expenses: number; profit: number; invoicesCount: number };
+    previousMonth: { revenue: number; expenses: number; profit: number; invoicesCount: number };
+  };
+  /** @deprecated usar trend */
+  chartData: { revenue: number[]; expenses: number[]; profit: number[] };
 }

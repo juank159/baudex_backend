@@ -132,10 +132,33 @@ export class DashboardService {
       expenses: num(r.expenses),
     }));
 
+    // ─── Shims legacy para no romper clientes que aún no se actualizan ───
+    const totalRevenueLegacy = totalBilled + paymentsOnOld;
+    const totalProfitLegacy = totalRevenueLegacy - totalExpenses;
+    const profitMarginLegacy = totalRevenueLegacy > 0
+      ? round1((totalProfitLegacy / totalRevenueLegacy) * 100).toFixed(1)
+      : '0';
+    const monthlyStats = {
+      currentMonth: {
+        revenue: totalRevenueLegacy,
+        expenses: totalExpenses,
+        profit: totalProfitLegacy,
+        invoicesCount: Number(invoiceAgg[0]?.total_invoices ?? 0),
+      },
+      previousMonth: {
+        revenue: previousRevenue,
+        expenses: 0,
+        profit: previousRevenue,
+        invoicesCount: 0,
+      },
+    };
+    // chartData queda como array vacío — frontend debe migrar a `trend`.
+    const chartData = { revenue: [], expenses: [], profit: [] };
+
     return {
       totalCollected,
-      totalBilled: totalBilled + paymentsOnOld, // congruente con versión anterior
-      totalRevenue: totalBilled + paymentsOnOld,
+      totalBilled: totalRevenueLegacy,
+      totalRevenue: totalRevenueLegacy,
       totalExpenses,
       totalCOGS,
       grossProfit,
@@ -159,6 +182,14 @@ export class DashboardService {
       multiCurrencyEnabled: org.multiCurrencyEnabled,
 
       trend,
+
+      // Legacy shims
+      totalProfit: totalProfitLegacy,
+      profitMargin: profitMarginLegacy,
+      accountsReceivable: receivables.total,
+      receivableCount: receivables.count,
+      monthlyStats,
+      chartData,
     };
   }
 
