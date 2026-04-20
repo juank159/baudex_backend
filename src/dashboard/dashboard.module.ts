@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { Sale } from '../sales/entities/sale.entity';
+import { SaleItem } from '../sales/entities/sale-item.entity';
 import { Invoice } from '../invoices/entities/invoice.entity';
 import { InvoiceItem } from '../invoices/entities/invoice-item.entity';
 import { Payment } from '../invoices/entities/payment.entity';
@@ -17,6 +19,9 @@ import { ProfitabilityService } from '../common/services/profitability.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      // Sale y SaleItem son requeridos por ProfitabilityService (inyección en constructor).
+      Sale,
+      SaleItem,
       Invoice,
       InvoiceItem,
       Payment,
