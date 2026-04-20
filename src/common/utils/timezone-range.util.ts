@@ -19,6 +19,46 @@ export function addOneDay(d: Date): Date {
   return new Date(d.getTime() + 24 * 60 * 60 * 1000);
 }
 
+/**
+ * Retorna la hora local (0-23) según la timezone dada. Se usa en los
+ * cronjobs multi-tenant: el cron dispara cada hora UTC, y el handler
+ * filtra qué tenants deben procesarse comparando su hora local vs la
+ * hora objetivo (ej. 8am local).
+ *
+ * Ej: a las 13:00 UTC, getHourInTimezone('America/Bogota') → 8.
+ *     a las 17:00 UTC, getHourInTimezone('America/Caracas') → 13.
+ */
+export function getHourInTimezone(timezone: string, at: Date = new Date()): number {
+  try {
+    const formatted = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      hour12: false,
+    }).format(at);
+    const n = parseInt(formatted, 10);
+    // Algunos runtimes retornan "24" para medianoche; normalizamos a 0.
+    return Number.isFinite(n) ? (n === 24 ? 0 : n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Retorna el día de la semana local (0=domingo, 6=sábado) en la TZ dada. */
+export function getWeekdayInTimezone(timezone: string, at: Date = new Date()): number {
+  try {
+    const name = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+    }).format(at);
+    const map: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    return map[name] ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Milisegundos de offset entre UTC y la TZ dada para una fecha concreta. */
 function getTimezoneOffsetMs(utcDate: Date, tz: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {

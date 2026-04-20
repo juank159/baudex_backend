@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan, LessThanOrEqual } from 'typeorm';
 import { NotificationsService } from '../notifications.service';
@@ -11,10 +11,17 @@ import { Organization } from '../../organizations/entities/organization.entity';
 import { Product } from '../../products/entities/product.entity';
 import { InventoryBatch } from '../../inventory/entities/inventory-batch.entity';
 import { Invoice } from '../../invoices/entities/invoice.entity';
+import { getHourInTimezone } from '../../common/utils/timezone-range.util';
 
 /**
  * 🕐 NOTIFICATION JOBS SERVICE
- * Chequeos automáticos programados para generar notificaciones
+ *
+ * Los chequeos user-facing corren cada hora UTC y filtran internamente por
+ * hora local de cada organización — así un tenant en Caracas recibe su
+ * notificación a las 8am hora Caracas, no a las 8am Bogotá.
+ *
+ * Los jobs de limpieza (housekeeping de tablas) siguen corriendo una vez
+ * al día en UTC sin importar la TZ de cada tenant.
  */
 @Injectable()
 export class NotificationJobsService {
@@ -38,31 +45,34 @@ export class NotificationJobsService {
 
   /**
    * 🔴 JOB 1: PRODUCTOS POR VENCER (FEFO)
-   * Ejecuta: Todos los días a las 8:00 AM
-   * Zona horaria: America/Bogota (GMT-5)
+   * Se dispara cada hora UTC. Procesa cada organización solo cuando en su
+   * timezone local son las 8:00 AM.
    */
-  @Cron('0 8 * * *', {
-    name: 'check-expiring-products',
-    timeZone: 'America/Bogota',
-  })
-  async checkExpiringProducts() {
-    this.logger.log('🔍 [CRON] Iniciando chequeo de productos por vencer...');
+  private static readonly EXPIRING_PRODUCTS_HOUR_LOCAL = 8;
 
+  @Cron('0 * * * *', { name: 'check-expiring-products' })
+  async checkExpiringProducts() {
     try {
-      // Obtener todas las organizaciones activas con primer usuario admin
       const organizations = await this.organizationRepository
         .createQueryBuilder('org')
         .leftJoinAndSelect('org.users', 'user')
         .where('org.isActive = :isActive', { isActive: true })
         .getMany();
 
+      const dueNow = organizations.filter(
+        (o) =>
+          getHourInTimezone(o.timezone || 'UTC') ===
+          NotificationJobsService.EXPIRING_PRODUCTS_HOUR_LOCAL,
+      );
+      if (dueNow.length === 0) return;
+
       this.logger.log(
-        `📊 Revisando ${organizations.length} organizaciones activas`,
+        `🔍 [CRON] Productos por vencer — ${dueNow.length}/${organizations.length} orgs en hora 8am local`,
       );
 
       let totalNotifications = 0;
 
-      for (const org of organizations) {
+      for (const org of dueNow) {
         // Obtener productos FEFO con lotes próximos a vencer (próximos 7 días)
         const expiringDate = new Date();
         expiringDate.setDate(expiringDate.getDate() + 7);
@@ -145,30 +155,33 @@ export class NotificationJobsService {
 
   /**
    * 🔴 JOB 2: STOCK BAJO
-   * Ejecuta: Todos los días a las 9:00 AM
+   * Se dispara cada hora UTC; procesa solo orgs donde son las 9:00 locales.
    */
-  @Cron('0 9 * * *', {
-    name: 'check-low-stock',
-    timeZone: 'America/Bogota',
-  })
-  async checkLowStock() {
-    this.logger.log('🔍 [CRON] Iniciando chequeo de stock bajo...');
+  private static readonly LOW_STOCK_HOUR_LOCAL = 9;
 
+  @Cron('0 * * * *', { name: 'check-low-stock' })
+  async checkLowStock() {
     try {
-      // Obtener todas las organizaciones activas con primer usuario admin
       const organizations = await this.organizationRepository
         .createQueryBuilder('org')
         .leftJoinAndSelect('org.users', 'user')
         .where('org.isActive = :isActive', { isActive: true })
         .getMany();
 
+      const dueNow = organizations.filter(
+        (o) =>
+          getHourInTimezone(o.timezone || 'UTC') ===
+          NotificationJobsService.LOW_STOCK_HOUR_LOCAL,
+      );
+      if (dueNow.length === 0) return;
+
       this.logger.log(
-        `📊 Revisando ${organizations.length} organizaciones activas`,
+        `🔍 [CRON] Stock bajo — ${dueNow.length}/${organizations.length} orgs en hora 9am local`,
       );
 
       let totalNotifications = 0;
 
-      for (const org of organizations) {
+      for (const org of dueNow) {
         // Obtener productos con stock <= minStock para esta organización
         const lowStockProducts = await this.productRepository
           .createQueryBuilder('product')
@@ -229,21 +242,33 @@ export class NotificationJobsService {
 
   /**
    * 🔴 JOB 3: FACTURAS VENCIDAS
-   * Ejecuta: Todos los días a las 10:00 AM
+   * Se dispara cada hora UTC; procesa solo orgs donde son las 10:00 locales.
    */
-  @Cron('0 10 * * *', {
-    name: 'check-overdue-invoices',
-    timeZone: 'America/Bogota',
-  })
-  async checkOverdueInvoices() {
-    this.logger.log('🔍 [CRON] Iniciando chequeo de facturas vencidas...');
+  private static readonly OVERDUE_INVOICES_HOUR_LOCAL = 10;
 
+  @Cron('0 * * * *', { name: 'check-overdue-invoices' })
+  async checkOverdueInvoices() {
     try {
-      // Obtener facturas vencidas (dueDate < hoy y status != paid)
+      const organizations = await this.organizationRepository
+        .createQueryBuilder('org')
+        .leftJoinAndSelect('org.users', 'user')
+        .where('org.isActive = :isActive', { isActive: true })
+        .getMany();
+
+      const dueNow = organizations.filter(
+        (o) =>
+          getHourInTimezone(o.timezone || 'UTC') ===
+          NotificationJobsService.OVERDUE_INVOICES_HOUR_LOCAL,
+      );
+      if (dueNow.length === 0) return;
+      const orgIds = dueNow.map((o) => o.id);
+
+      // Solo facturas de las orgs que están en hora 10am local ahora.
       const overdueInvoices = await this.invoiceRepository
         .createQueryBuilder('invoice')
         .leftJoinAndSelect('invoice.customer', 'customer')
-        .where('invoice.dueDate < :today', { today: new Date() })
+        .where('invoice.organizationId IN (:...orgIds)', { orgIds })
+        .andWhere('invoice.dueDate < :today', { today: new Date() })
         .andWhere('invoice.status IN (:...statuses)', {
           statuses: ['pending', 'overdue'],
         })
@@ -252,7 +277,7 @@ export class NotificationJobsService {
         .getMany();
 
       this.logger.log(
-        `📊 Encontradas ${overdueInvoices.length} facturas vencidas`,
+        `🔍 [CRON] Facturas vencidas — ${dueNow.length}/${organizations.length} orgs a las 10am local; ${overdueInvoices.length} facturas a procesar`,
       );
 
       let totalNotifications = 0;
@@ -315,12 +340,9 @@ export class NotificationJobsService {
 
   /**
    * 🧹 JOB 4: LIMPIAR NOTIFICACIONES EXPIRADAS
-   * Ejecuta: Todos los días a las 2:00 AM
+   * Housekeeping global. Corre a las 2:00 AM UTC independiente del tenant.
    */
-  @Cron('0 2 * * *', {
-    name: 'clean-expired-notifications',
-    timeZone: 'America/Bogota',
-  })
+  @Cron('0 2 * * *', { name: 'clean-expired-notifications' })
   async cleanExpiredNotifications() {
     this.logger.log('🧹 [CRON] Limpiando notificaciones expiradas...');
 
@@ -338,12 +360,9 @@ export class NotificationJobsService {
 
   /**
    * 🧹 JOB 5: LIMPIAR NOTIFICACIONES ANTIGUAS (30+ días)
-   * Ejecuta: Todos los domingos a las 3:00 AM
+   * Housekeeping global. Corre domingos a las 3:00 AM UTC.
    */
-  @Cron('0 3 * * 0', {
-    name: 'clean-old-notifications',
-    timeZone: 'America/Bogota',
-  })
+  @Cron('0 3 * * 0', { name: 'clean-old-notifications' })
   async cleanOldNotifications() {
     this.logger.log('🧹 [CRON] Limpiando notificaciones antiguas (30+ días)...');
 
