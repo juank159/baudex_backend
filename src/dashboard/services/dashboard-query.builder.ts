@@ -266,6 +266,29 @@ export class DashboardQueryBuilder {
     `;
   }
 
+  // ───────── Desglose de abonos a préstamos por cuenta/método ─────────
+  // Mismo filtro que directLoanPayments, pero agrupado. Útil para saber
+  // "los 200K de préstamos, ¿en qué cuenta/medio se recibieron?".
+  static directLoanPaymentsByMethod(): string {
+    return `
+      SELECT
+        COALESCE(ba.name, cp.payment_method, 'Sin especificar') AS method,
+        COUNT(cp.id)::int                                       AS count,
+        SUM(cp.amount)::numeric                                 AS total
+      FROM credit_payments cp
+      INNER JOIN customer_credits cc ON cp.credit_id = cc.id
+      LEFT JOIN bank_accounts ba ON cp.bank_account_id = ba.id
+      WHERE cp.organization_id = $1
+        AND cp.deleted_at IS NULL
+        AND cc.deleted_at IS NULL
+        AND cc.invoice_id IS NULL
+        AND cp.payment_date >= $2
+        AND cp.payment_date <  $3
+      GROUP BY COALESCE(ba.name, cp.payment_method, 'Sin especificar')
+      ORDER BY total DESC
+    `;
+  }
+
   // ───────── Depósitos a saldo a favor del cliente (anticipos) ─────────
   // Movimientos de client_balance_transactions tipo 'deposit' en el período.
   // NO son ingresos (son pasivos: se le debe al cliente), pero SÍ son caja.
@@ -278,6 +301,24 @@ export class DashboardQueryBuilder {
         AND bt.type = 'deposit'
         AND bt.created_at >= $2
         AND bt.created_at <  $3
+    `;
+  }
+
+  // ───────── Desglose de anticipos por método ─────────
+  // client_balance_transactions no tiene bank_account_id, solo paymentMethod.
+  static customerDepositsByMethod(): string {
+    return `
+      SELECT
+        COALESCE(bt.payment_method, 'Sin especificar') AS method,
+        COUNT(bt.id)::int                              AS count,
+        SUM(bt.amount)::numeric                        AS total
+      FROM client_balance_transactions bt
+      WHERE bt.organization_id = $1
+        AND bt.type = 'deposit'
+        AND bt.created_at >= $2
+        AND bt.created_at <  $3
+      GROUP BY COALESCE(bt.payment_method, 'Sin especificar')
+      ORDER BY total DESC
     `;
   }
 

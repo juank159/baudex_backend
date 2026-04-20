@@ -77,6 +77,13 @@ export interface TrendPoint {
  * El total es la caja real del período. Mostrar sumado puede inflar ventas,
  * por eso se entrega desagregado.
  */
+/** Fila de desglose por cuenta bancaria o método de pago. */
+export interface CashFlowMethodRow {
+  method: string;   // Nombre de cuenta (Nequi, Daviplata…) o método crudo (cash…) o 'Sin especificar'
+  count: number;
+  total: number;
+}
+
 export interface CashFlowSummary {
   salesCollected: number;
   salesCollectedCount: number;
@@ -85,6 +92,10 @@ export interface CashFlowSummary {
   customerDeposits: number;
   customerDepositsCount: number;
   totalCashIn: number;
+
+  // Desgloses por cuenta/método para responder "¿dónde entró esa plata?".
+  loanPaymentsBreakdown: CashFlowMethodRow[];
+  customerDepositsBreakdown: CashFlowMethodRow[];
 }
 
 export interface DashboardSummaryResponse {

@@ -5,6 +5,7 @@ import { EntityManager } from 'typeorm';
 import { ProfitabilityService } from '../../common/services/profitability.service';
 import { DashboardQueryBuilder } from './dashboard-query.builder';
 import {
+  CashFlowMethodRow,
   CashFlowSummary,
   DashboardSummaryResponse,
   IncomeTypeBreakdown,
@@ -59,6 +60,8 @@ export class DashboardService {
       previousRevenue,
       loanPaymentsAgg,
       depositsAgg,
+      loanPaymentsByMethodRows,
+      depositsByMethodRows,
     ] = await Promise.all([
       this.q(DashboardQueryBuilder.invoiceAggregates(), [organizationId, startDateStr, endDateStr]),
       this.q(DashboardQueryBuilder.expenseAggregate(), [organizationId, startDateStr, endDateStr]),
@@ -86,6 +89,8 @@ export class DashboardService {
       this.getPreviousRevenue(organizationId, org.timezone, startDateStr, endDateStr),
       this.q(DashboardQueryBuilder.directLoanPayments(), [organizationId, startUtc, endUtcExclusive]),
       this.q(DashboardQueryBuilder.customerDeposits(), [organizationId, startUtc, endUtcExclusive]),
+      this.q(DashboardQueryBuilder.directLoanPaymentsByMethod(), [organizationId, startUtc, endUtcExclusive]),
+      this.q(DashboardQueryBuilder.customerDepositsByMethod(), [organizationId, startUtc, endUtcExclusive]),
     ]);
 
     // Parseo y composición del response
@@ -143,6 +148,12 @@ export class DashboardService {
     const customerDepositsCount = Number(depositsAgg[0]?.count ?? 0);
     const salesCount = Number(collectedAgg[0]?.payment_count ?? 0);
 
+    const toMethodRow = (r: any): CashFlowMethodRow => ({
+      method: r.method || 'Sin especificar',
+      count: Number(r.count ?? 0),
+      total: num(r.total),
+    });
+
     const cashFlow: CashFlowSummary = {
       salesCollected: totalCollected,
       salesCollectedCount: salesCount,
@@ -151,6 +162,8 @@ export class DashboardService {
       customerDeposits,
       customerDepositsCount,
       totalCashIn: totalCollected + loanPayments + customerDeposits,
+      loanPaymentsBreakdown: loanPaymentsByMethodRows.map(toMethodRow),
+      customerDepositsBreakdown: depositsByMethodRows.map(toMethodRow),
     };
 
     // ─── Shims legacy para no romper clientes que aún no se actualizan ───
