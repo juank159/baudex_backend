@@ -138,7 +138,7 @@ export class DashboardSimpleController {
             END AS urgency,
             CASE
               WHEN i."dueDate" IS NULL THEN 0
-              ELSE (NOW() AT TIME ZONE $2)::date - i."dueDate"::date
+              ELSE GREATEST(0, (NOW() AT TIME ZONE $2)::date - i."dueDate"::date)
             END AS days_overdue
           FROM invoices i
           WHERE i.organization_id = $1
