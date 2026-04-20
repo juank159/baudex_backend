@@ -11,6 +11,8 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "smoke:di": "node scripts/smoke-di.js",
+    "predeploy": "npm run build && npm run smoke:di",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Pre-push hook: valida que el backend arranca (DI OK) antes de permitir el push.
+# Para activarlo una sola vez por máquina:
+#   git -C /Users/mac/Documents/baudex/backend config core.hooksPath .githooks
+#
+# Si necesitas saltarlo en una emergencia: git push --no-verify
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] compilando backend..."
+npm run --silent build
+
+echo "[pre-push] validando Dependency Injection..."
+npm run --silent smoke:di
+
+echo "[pre-push] OK — push permitido."
