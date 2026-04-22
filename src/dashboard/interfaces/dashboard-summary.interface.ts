@@ -132,6 +132,10 @@ export interface DashboardSummaryResponse {
   // Flujo de caja: ventas + préstamos + anticipos, desagregados.
   cashFlow: CashFlowSummary;
 
+  // Compras del período agrupadas por moneda (null = organizaciones sin
+  // multi-moneda habilitada, para evitar queries innecesarias).
+  purchaseCurrencyBreakdown: CurrencyBreakdown[] | null;
+
   // ─── Campos legacy (DEPRECATED — serán removidos en versión siguiente) ───
   /** @deprecated usar grossProfit/netProfit. Aquí solo como totalRevenue-totalExpenses. */
   totalProfit: number;

@@ -72,6 +72,19 @@ export class PurchaseOrdersService {
       }
     }
 
+    // Validación multi-moneda: si se envía purchaseCurrency, los 3 campos
+    // deben venir juntos (patrón idéntico al de payments).
+    if (createPurchaseOrderDto.purchaseCurrency) {
+      if (
+        !createPurchaseOrderDto.purchaseCurrencyAmount ||
+        !createPurchaseOrderDto.exchangeRate
+      ) {
+        throw new BadRequestException(
+          'Cuando se especifica purchaseCurrency, purchaseCurrencyAmount y exchangeRate son requeridos',
+        );
+      }
+    }
+
     const { items: itemsDto, ...orderData } = createPurchaseOrderDto;
     const MAX_RETRIES = 3;
 

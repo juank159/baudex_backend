@@ -60,6 +60,24 @@ export class UpdatePurchaseOrderDto {
   @IsOptional()
   metadata?: Record<string, any>;
 
+  // ─── Multi-moneda ──────────────────────────────────────────────
+  @ApiPropertyOptional({ description: 'Código de moneda (null = base)' })
+  @IsOptional()
+  @IsString()
+  purchaseCurrency?: string;
+
+  @ApiPropertyOptional({ description: 'Monto total en moneda extranjera' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  purchaseCurrencyAmount?: number;
+
+  @ApiPropertyOptional({ description: 'Tasa de cambio (1 extranjera = X base)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  exchangeRate?: number;
+
   @ApiPropertyOptional({
     description: 'Items de la orden para actualizar',
     type: [UpdatePurchaseOrderItemDto],

@@ -62,6 +62,7 @@ export class DashboardService {
       depositsAgg,
       loanPaymentsByMethodRows,
       depositsByMethodRows,
+      purchaseCurrencyRows,
     ] = await Promise.all([
       this.q(DashboardQueryBuilder.invoiceAggregates(), [organizationId, startDateStr, endDateStr]),
       this.q(DashboardQueryBuilder.expenseAggregate(), [organizationId, startDateStr, endDateStr]),
@@ -91,6 +92,11 @@ export class DashboardService {
       this.q(DashboardQueryBuilder.customerDeposits(), [organizationId, startUtc, endUtcExclusive]),
       this.q(DashboardQueryBuilder.directLoanPaymentsByMethod(), [organizationId, startUtc, endUtcExclusive]),
       this.q(DashboardQueryBuilder.customerDepositsByMethod(), [organizationId, startUtc, endUtcExclusive]),
+      org.multiCurrencyEnabled
+        ? this.q(DashboardQueryBuilder.purchaseCurrencyBreakdown(), [
+            organizationId, org.baseCurrency, startUtc, endUtcExclusive,
+          ])
+        : Promise.resolve([] as any[]),
     ]);
 
     // Parseo y composición del response
@@ -126,6 +132,23 @@ export class DashboardService {
           totalForeignAmount: num(r.total_foreign_amount),
           avgRate: num(r.avg_rate) || 1,
           percentage: totalCurrencyBase > 0 ? (num(r.total_base_amount) / totalCurrencyBase) * 100 : 0,
+        }))
+      : null;
+
+    // Desglose de COMPRAS por moneda (misma estructura que pagos).
+    const totalPurchaseBase = purchaseCurrencyRows.reduce(
+      (s, r) => s + num(r.total_base_amount),
+      0,
+    );
+    const purchaseCurrencyBreakdown = org.multiCurrencyEnabled
+      ? purchaseCurrencyRows.map(r => ({
+          currency: r.currency,
+          count: Number(r.count ?? 0),
+          totalBaseAmount: num(r.total_base_amount),
+          totalForeignAmount: num(r.total_foreign_amount),
+          avgRate: num(r.avg_rate) || 1,
+          percentage:
+            totalPurchaseBase > 0 ? (num(r.total_base_amount) / totalPurchaseBase) * 100 : 0,
         }))
       : null;
 
@@ -209,6 +232,7 @@ export class DashboardService {
 
       paymentMethodsBreakdown,
       currencyBreakdown,
+      purchaseCurrencyBreakdown,
       incomeTypeBreakdown,
       receivables,
 

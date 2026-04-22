@@ -304,6 +304,32 @@ export class DashboardQueryBuilder {
     `;
   }
 
+  // ───────── Desglose de COMPRAS por moneda ─────────
+  // Análogo a currencyBreakdown() pero sobre purchase_orders. Solo considera
+  // órdenes con status no cancelado dentro del rango local del usuario.
+  // Usa orderDate (timestamptz) con rango UTC precalculado — índice
+  // (organization_id, orderDate).
+  //
+  // Params: $1 organizationId, $2 baseCurrency, $3 startUtc, $4 endUtcExclusive
+  static purchaseCurrencyBreakdown(): string {
+    return `
+      SELECT
+        COALESCE(po."purchaseCurrency", $2)                         AS currency,
+        COUNT(po.id)::int                                           AS count,
+        SUM(po.total)::numeric                                      AS total_base_amount,
+        SUM(COALESCE(po."purchaseCurrencyAmount", po.total))::numeric AS total_foreign_amount,
+        AVG(COALESCE(po."exchangeRate", 1))::numeric                AS avg_rate
+      FROM purchase_orders po
+      WHERE po.organization_id = $1
+        AND po.deleted_at IS NULL
+        AND po.status <> 'cancelled'
+        AND po."date" >= $3
+        AND po."date" <  $4
+      GROUP BY COALESCE(po."purchaseCurrency", $2)
+      ORDER BY total_base_amount DESC
+    `;
+  }
+
   // ───────── Desglose de anticipos por método ─────────
   // client_balance_transactions no tiene bank_account_id, solo paymentMethod.
   static customerDepositsByMethod(): string {

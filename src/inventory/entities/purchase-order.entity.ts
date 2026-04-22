@@ -84,6 +84,36 @@ export class PurchaseOrder extends BaseEntity {
   })
   total: number;
 
+  // Multi-moneda: código de la moneda en que se hizo la compra (null = moneda
+  // base de la organización). Patrón idéntico al de Payments.
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  purchaseCurrency?: string;
+
+  // Multi-moneda: total en la moneda extranjera (lo que el usuario realmente pagó).
+  // `total` sigue siendo la verdad contable en moneda base.
+  @Column({
+    type: 'float',
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        value != null ? (typeof value === 'string' ? parseFloat(value) : value) : null,
+    },
+  })
+  purchaseCurrencyAmount?: number;
+
+  // Multi-moneda: tasa de cambio (1 moneda extranjera = X moneda base).
+  @Column({
+    type: 'float',
+    nullable: true,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string | number) =>
+        value != null ? (typeof value === 'string' ? parseFloat(value) : value) : null,
+    },
+  })
+  exchangeRate?: number;
+
   // Información adicional
   @Column({ type: 'text', nullable: true })
   notes?: string;

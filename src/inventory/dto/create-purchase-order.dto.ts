@@ -137,6 +137,37 @@ export class CreatePurchaseOrderDto {
   @IsOptional()
   metadata?: Record<string, any>;
 
+  // ─── Multi-moneda (opcional) ────────────────────────────────────────────
+  // Si la compra se hizo en otra moneda que la base de la organización,
+  // enviar los 3 campos. El `total` del DTO debe venir ya en moneda base
+  // (el frontend calcula total = purchaseCurrencyAmount * exchangeRate).
+  @ApiPropertyOptional({
+    description: 'Código de moneda de la compra (null = base de la organización)',
+    example: 'USD',
+  })
+  @IsOptional()
+  @IsString()
+  purchaseCurrency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Monto total en la moneda de la compra (antes de convertir a base)',
+    example: 2500.0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  purchaseCurrencyAmount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Tasa: 1 moneda extranjera = X moneda base. Ej: 1 USD = 4000 COP → 4000',
+    example: 4000,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  exchangeRate?: number;
+
   @ApiProperty({
     description: 'Items de la orden',
     type: [CreatePurchaseOrderItemDto],
