@@ -377,6 +377,13 @@ export class CreateInvoiceItemDto {
   @IsUUID('4', { message: 'El ID del producto debe ser un UUID válido' })
   productId?: string;
 
+  // Presentación de venta (Fase 3, opcional)
+  // Si viene, `quantity` representa cuántas presentaciones (ej: 2 cartones)
+  // y el descuento de stock se calcula como quantity × factor de la presentación.
+  @IsOptional()
+  @IsUUID('4', { message: 'El ID de la presentación debe ser un UUID válido' })
+  presentationId?: string;
+
   // ✅ INDICADOR DE PRODUCTO TEMPORAL
   @IsOptional()
   @IsBoolean({ message: 'isTemporary debe ser un valor booleano' })

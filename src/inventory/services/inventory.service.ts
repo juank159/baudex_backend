@@ -346,6 +346,131 @@ export class InventoryService {
   }
 
   /**
+   * Registra una merma (desperdicio) de inventario.
+   *
+   * Consume stock vía FIFO (igual que una venta) pero crea un
+   * `InventoryMovement` tipo `WASTE` para que reportes y auditoría puedan
+   * distinguirlo de ventas reales. La cantidad se descuenta en unidad base.
+   * No genera precio de venta — solo costo (lo que se está perdiendo).
+   *
+   * Casos típicos: queso que mermó por pérdida de agua, producto vencido,
+   * roturas, derrames, errores de corte.
+   */
+  async registerWaste(
+    productId: string,
+    quantity: number,
+    reason: string,
+    organizationId: string,
+    userId: string,
+    warehouseId?: string,
+    metadata?: any,
+  ): Promise<{
+    movement: InventoryMovement;
+    fifoResult: FifoConsumptionResult;
+  }> {
+    if (quantity <= 0) {
+      throw new BadRequestException('La cantidad de merma debe ser mayor a 0');
+    }
+    if (!reason || reason.trim().length === 0) {
+      throw new BadRequestException('La razón de la merma es obligatoria');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const availableStock = await this.getAvailableStock(
+        productId,
+        organizationId,
+        queryRunner,
+      );
+      if (availableStock < quantity) {
+        throw new BadRequestException(
+          `Stock insuficiente para registrar merma. Disponible: ${availableStock}, Solicitado: ${quantity}`,
+        );
+      }
+
+      const fifoResult = await this.consumeStockDynamic(
+        productId,
+        quantity,
+        organizationId,
+        queryRunner,
+      );
+
+      const currentStock = await this.getCurrentStock(
+        productId,
+        organizationId,
+        queryRunner,
+      );
+
+      const movement = queryRunner.manager.create(InventoryMovement, {
+        movementNumber: await this.generateMovementNumber(
+          organizationId,
+          queryRunner,
+        ),
+        type: MovementType.WASTE,
+        status: MovementStatus.CONFIRMED,
+        productId,
+        organizationId,
+        performedById: userId,
+        quantity: -quantity,
+        unitCost: fifoResult.averageCost,
+        totalCost: fifoResult.totalCost,
+        unitPrice: 0,
+        totalPrice: 0,
+        stockAfter: currentStock,
+        stockValueAfter: await this.calculateStockValue(
+          productId,
+          organizationId,
+          queryRunner,
+        ),
+        referenceType: 'waste',
+        warehouseId,
+        notes: reason,
+        metadata,
+      });
+
+      const savedMovement = await queryRunner.manager.save(movement);
+
+      for (const batchConsumption of fifoResult.batches) {
+        const batchMovement = queryRunner.manager.create(
+          InventoryBatchMovement,
+          {
+            type: BatchMovementType.CONSUME,
+            batchId: batchConsumption.batchId,
+            movementId: savedMovement.id,
+            organizationId,
+            quantity: -batchConsumption.quantityConsumed,
+            unitCost: batchConsumption.unitCost,
+            totalCost: batchConsumption.totalCost,
+            batchQuantityAfter: 0,
+            batchValueAfter: 0,
+          },
+        );
+        const batch = await queryRunner.manager.findOne(InventoryBatch, {
+          where: { id: batchConsumption.batchId, organizationId },
+        });
+        if (batch) {
+          batchMovement.batchQuantityAfter = batch.currentQuantity;
+          batchMovement.batchValueAfter = batch.remainingValue;
+        }
+        await queryRunner.manager.save(batchMovement);
+      }
+
+      await this.updateProductStock(productId, organizationId, queryRunner);
+
+      await queryRunner.commitTransaction();
+      return { movement: savedMovement, fifoResult };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
    * Consumir stock usando lógica FIFO
    */
   private async consumeStockFifo(

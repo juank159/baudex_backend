@@ -25,6 +25,7 @@ import {
 } from '../common/dto/pagination-response.dto';
 import { CustomersService } from '../customers/customers.service';
 import { ProductService } from '../products/products.service';
+import { ProductPresentation } from '../products/entities/product-presentation.entity';
 import { TemporaryProductService } from '../products/temporary-product.service';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
 import { UserPreferencesService } from '../users/user-preferences.service';
@@ -188,6 +189,29 @@ export class InvoicesService {
         timeZone: orgTimezone,
       }); // "YYYY-MM-DD" en timezone del tenant
 
+      // Pre-resolver presentaciones (Fase 3): si un item viene con
+      // presentationId, validar que existe y que pertenece al producto. Snapshot
+      // del factor para preservar integridad histórica si la presentación cambia.
+      const presentationByIndex = await Promise.all(
+        processedItems.map(async (itemDto) => {
+          if (!itemDto.presentationId || !itemDto.productId) return null;
+          const pres = await manager.findOne(ProductPresentation, {
+            where: { id: itemDto.presentationId },
+          });
+          if (!pres) {
+            throw new BadRequestException(
+              `Presentación ${itemDto.presentationId} no encontrada`,
+            );
+          }
+          if (pres.productId !== itemDto.productId) {
+            throw new BadRequestException(
+              `La presentación ${pres.id} no pertenece al producto ${itemDto.productId}`,
+            );
+          }
+          return pres;
+        }),
+      );
+
       // Crear factura
       const invoice = manager.create(Invoice, {
         number: createInvoiceDto.number,
@@ -207,10 +231,15 @@ export class InvoicesService {
 
         // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES Y CÁLCULO FIFO
         items: await Promise.all(
-          processedItems.map(async (itemDto) => {
+          processedItems.map(async (itemDto, idx) => {
             let unitCost = 0;
             let totalCost = 0;
             let itemTaxPercentage = 0; // ✅ IVA del item basado en el producto
+
+            const presentation = presentationByIndex[idx];
+            const factor = presentation?.factor ?? 1;
+            // baseQuantity = lo que se descuenta del stock (en unidad base)
+            const baseQuantity = Number(itemDto.quantity) * factor;
 
             // ✅ CALCULAR COSTO FIFO PARA PRODUCTOS REGISTRADOS
             if (itemDto.productId) {
@@ -232,13 +261,19 @@ export class InvoicesService {
                   itemTaxPercentage = 0;
                 }
 
+                // FIFO se calcula sobre la cantidad real descontada (unidad base).
+                // unitCost del item se reescala a "costo por presentación" para que
+                // quantity × unitCost = totalCost se siga manteniendo.
                 const fifoCost = await this.inventoryService.calculateFifoCost(
                   itemDto.productId,
-                  itemDto.quantity,
+                  baseQuantity,
                   tenantId,
                 );
-                unitCost = fifoCost.unitCost;
                 totalCost = fifoCost.totalCost;
+                unitCost =
+                  Number(itemDto.quantity) > 0
+                    ? totalCost / Number(itemDto.quantity)
+                    : fifoCost.unitCost;
               } catch (error) {
                 console.warn(
                   `⚠️ No se pudo calcular FIFO para producto ${itemDto.productId}: ${error.message}`,
@@ -289,6 +324,9 @@ export class InvoicesService {
               totalCost,
               // ✅ USAR EL IVA DEL PRODUCTO INDIVIDUAL (NO global de la factura)
               taxPercentage: itemTaxPercentage,
+              // Presentación de venta (Fase 3) — null si no aplica
+              presentationId: itemDto.presentationId,
+              presentationFactor: presentation?.factor,
             });
           }),
         ),
@@ -571,7 +609,7 @@ export class InvoicesService {
           try {
             await this.inventoryService.registerSale(
               item.productId,
-              item.quantity,
+              item.baseQuantity,
               item.unitPrice,
               organizationId,
               createdById,
@@ -918,7 +956,7 @@ export class InvoicesService {
               try {
                 await this.inventoryService.registerSale(
                   item.productId,
-                  item.quantity,
+                  item.baseQuantity,
                   item.unitPrice,
                   invoice.organizationId,
                   invoice.createdById,
@@ -966,7 +1004,7 @@ export class InvoicesService {
               try {
                 await this.inventoryService.registerSale(
                   item.productId,
-                  item.quantity,
+                  item.baseQuantity,
                   item.unitPrice,
                   invoice.organizationId,
                   invoice.createdById,
