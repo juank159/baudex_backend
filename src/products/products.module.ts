@@ -42,10 +42,12 @@ import { ProductRepository } from './repositories/product.repository';
 import { CategoryModule } from 'src/categories/categories.module';
 import { AuthModule } from '../auth/auth.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { InventoryModule } from '../inventory/inventory.module';
 
 import { ProductController } from './products.controller';
 import { ProductPriceController } from './product-price.controller';
 import { ProductPresentationController } from './product-presentation.controller';
+import { ProductWasteController } from './product-waste.controller';
 import { ProductAdminController } from './product-admin.controller';
 import { ProductService } from './products.service';
 import { ProductPriceService } from './product-price.service';
@@ -65,11 +67,13 @@ import { UsersModule } from 'src/users/users.module';
     UsersModule,
     AuthModule,
     SubscriptionsModule,
+    InventoryModule,
   ],
   controllers: [
     ProductController,
     ProductPriceController,
     ProductPresentationController,
+    ProductWasteController,
     ProductAdminController,
   ],
   providers: [

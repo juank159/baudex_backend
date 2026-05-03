@@ -170,6 +170,7 @@ import {
 import { BaseEntity } from '../../common/entities/base.entity';
 import { Invoice } from './invoice.entity';
 import { Product } from '../../products/entities/product.entity';
+import { ProductPresentation } from '../../products/entities/product-presentation.entity';
 import { TemporaryProduct } from '../../products/entities/temporary-product.entity';
 
 @Entity('invoice_items')
@@ -297,6 +298,48 @@ export class InvoiceItem extends BaseEntity {
 
   @ManyToOne(() => TemporaryProduct, { onDelete: 'SET NULL', nullable: true })
   temporaryProduct?: TemporaryProduct;
+
+  // ========== PRESENTACIÓN DE VENTA (opcional, Fase 3) ==========
+  // Si viene, este item se vendió en una presentación específica (cartón, kilo,
+  // cajetilla...) y `quantity` es cuántas presentaciones se vendieron. El stock
+  // se descuenta multiplicando por `presentationFactor` (snapshot del factor en
+  // el momento de la venta — preserva integridad histórica si la presentación
+  // luego cambia).
+  @Column({ type: 'uuid', nullable: true, name: 'presentation_id' })
+  presentationId?: string;
+
+  @ManyToOne(() => ProductPresentation, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'presentation_id' })
+  presentation?: ProductPresentation;
+
+  @Column({
+    type: 'decimal',
+    precision: 14,
+    scale: 4,
+    nullable: true,
+    name: 'presentation_factor',
+    transformer: {
+      to: (value: number | undefined) => value,
+      from: (value: string | number | null) =>
+        value === null || value === undefined
+          ? null
+          : typeof value === 'string'
+            ? parseFloat(value)
+            : value,
+    },
+  })
+  presentationFactor?: number;
+
+  /**
+   * Cantidad en unidad base (lo que se descuenta del stock).
+   * Si no hay presentación, equivale a `quantity` (factor = 1).
+   */
+  get baseQuantity(): number {
+    const qty = Number(this.quantity) || 0;
+    const factor = Number(this.presentationFactor) || 1;
+    return qty * factor;
+  }
+  // ========== FIN PRESENTACIÓN DE VENTA ==========
 
   // ✅ GETTER PARA OBTENER EL PRODUCTO (REGISTRADO O TEMPORAL)
   get associatedProduct(): Product | TemporaryProduct | null {
