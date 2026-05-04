@@ -2224,10 +2224,13 @@ export class InvoicesService {
         for (const item of invoice.items) {
           if (item.productId) {
             try {
-              // Registrar devolución de venta (reversa de venta)
+              // Registrar devolución de venta (reversa de venta).
+              // Usa baseQuantity para devolver al stock la cantidad real
+              // descontada al vender (cuando el item tenía presentación,
+              // el descuento fue quantity × factor en unidad base).
               await this.inventoryService.registerSaleReturn(
                 item.productId,
-                item.quantity,
+                item.baseQuantity,
                 item.unitCost || 0, // Usar el costo original de la venta
                 invoice.organizationId,
                 invoice.createdById,
