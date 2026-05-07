@@ -115,17 +115,17 @@ export class CreateBankAccountMovementsTable1778200000000 implements MigrationIn
             isNullable: true,
           },
           {
-            name: 'createdAt',
+            name: 'created_at',
             type: 'timestamptz',
             default: 'CURRENT_TIMESTAMP',
           },
           {
-            name: 'updatedAt',
+            name: 'updated_at',
             type: 'timestamptz',
             default: 'CURRENT_TIMESTAMP',
           },
           {
-            name: 'deletedAt',
+            name: 'deleted_at',
             type: 'timestamptz',
             isNullable: true,
           },
