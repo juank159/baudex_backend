@@ -10,8 +10,8 @@ import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } f
  * Reemplaza el cálculo on-the-fly que antes hacía `getTransactions()`
  * combinando Payment + CreditPayment.
  */
-export class CreateBankAccountMovementsTable1767000000000 implements MigrationInterface {
-  name = 'CreateBankAccountMovementsTable1767000000000';
+export class CreateBankAccountMovementsTable1778200000000 implements MigrationInterface {
+  name = 'CreateBankAccountMovementsTable1778200000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Enum de tipo de movimiento
