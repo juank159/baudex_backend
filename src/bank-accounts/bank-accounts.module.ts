@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BankAccountsService } from './bank-accounts.service';
 import { BankAccountsController } from './bank-accounts.controller';
 import { BankAccount } from './entities/bank-account.entity';
+import { BankAccountMovement } from './entities/bank-account-movement.entity';
 import { Payment } from '../invoices/entities/payment.entity';
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
 import { AuthModule } from '../auth/auth.module';
@@ -11,7 +12,7 @@ import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([BankAccount, Payment, CreditPayment]),
+    TypeOrmModule.forFeature([BankAccount, BankAccountMovement, Payment, CreditPayment]),
     forwardRef(() => AuthModule),
     CommonModule,
   ],
