@@ -830,8 +830,6 @@ export class BankAccountsService {
       // - Si !allowOverdraft, condicionamos el UPDATE a que el resultado
       //   sea >= 0. Si la condición falla, NO actualiza fila → detectamos
       //   saldo insuficiente.
-      // - RETURNING devuelve el saldo final (necesario para snapshot del
-      //   movement) sin tener que hacer SELECT extra.
       const qb = mgr
         .getRepository(BankAccount)
         .createQueryBuilder()
@@ -846,16 +844,15 @@ export class BankAccountsService {
       if (!allowOverdraft && delta < 0) {
         qb.andWhere('current_balance + :delta >= 0', { delta });
       }
-      const result = await qb.returning(['current_balance', 'name']).execute();
+      const result = await qb.execute();
 
       // Si no actualizó nada → la cuenta no existe O el saldo era insuficiente
       const affected = result.affected ?? 0;
-      const raw = (result.raw as Array<{ current_balance: any; name: string }>) ?? [];
-      if (affected === 0 || raw.length === 0) {
+      if (affected === 0) {
         console.error(
           `❌ recordMovement UPDATE no afectó filas: ` +
             `accountId=${params.bankAccountId} org=${params.organizationId} ` +
-            `delta=${delta} type=${params.type} affected=${affected} raw_length=${raw.length}`,
+            `delta=${delta} type=${params.type} affected=${affected}`,
         );
         // Distinguir entre "cuenta no existe" y "saldo insuficiente"
         const exists = await mgr
@@ -878,11 +875,28 @@ export class BankAccountsService {
         );
       }
 
-      const finalBalance =
-        typeof raw[0].current_balance === 'string'
-          ? parseFloat(raw[0].current_balance)
-          : Number(raw[0].current_balance);
-      const accountName = raw[0].name;
+      // 3. Leer el saldo final con SELECT explícito.
+      // Antes usábamos RETURNING + raw[0].current_balance, pero TypeORM no
+      // estandariza los nombres del raw entre dialectos/versiones y a veces
+      // dejaba `undefined → NaN` en balance_after. Un SELECT extra cuesta
+      // un round-trip pero garantiza consistencia (y el transformer del
+      // entity convierte string → number automáticamente).
+      const updatedAccount = await mgr
+        .getRepository(BankAccount)
+        .findOne({
+          where: {
+            id: params.bankAccountId,
+            organizationId: params.organizationId,
+          },
+        });
+      if (!updatedAccount) {
+        // Edge case: alguien borró la cuenta entre el UPDATE y el SELECT.
+        throw new NotFoundException(
+          `Cuenta bancaria desapareció durante la operación: ${params.bankAccountId}`,
+        );
+      }
+      const finalBalance = Number(updatedAccount.currentBalance) || 0;
+      const accountName = updatedAccount.name;
 
       // 3. Crear movement con snapshot del saldo final
       const movement = mgr.getRepository(BankAccountMovement).create({
