@@ -809,57 +809,80 @@ export class BankAccountsService {
     }
 
     const exec = async (mgr: EntityManager): Promise<BankAccountMovement> => {
-      // 1. Lock pesimista de la cuenta para evitar races
-      const account = await mgr
-        .getRepository(BankAccount)
-        .createQueryBuilder('ba')
-        .setLock('pessimistic_write')
-        .where('ba.id = :id', { id: params.bankAccountId })
-        .andWhere('ba.organizationId = :org', {
-          org: params.organizationId,
-        })
-        .getOne();
-
-      if (!account) {
-        throw new NotFoundException('Cuenta bancaria no encontrada');
-      }
-
-      const previousBalance = Number(account.currentBalance) || 0;
+      // 1. Calcular el delta (signo según tipo). Sin lock pesimista para
+      // evitar deadlocks cuando este método se llama desde otra
+      // transacción ya abierta (invoices, credit-payments, etc.).
       const isInflow = BankAccountMovement.isInflow(params.type);
       const isOutflow = BankAccountMovement.isOutflow(params.type);
-      // ADJUSTMENT y otros pueden venir con signo dirigido por metadata; por
-      // simplicidad: si no es inflow ni outflow conocido, asumir que el
-      // monto es la entrada literal (positivo suma).
       let delta = params.amount;
       if (isOutflow) delta = -params.amount;
       else if (!isInflow) {
-        // Tipo desconocido o ADJUSTMENT: leer signo de metadata.direction si
-        // se especifica; default sumar.
+        // ADJUSTMENT u otros: leer signo de metadata.direction
         if (params.metadata?.direction === 'subtract') {
           delta = -params.amount;
         }
       }
 
-      const newBalance = previousBalance + delta;
       const allowOverdraft = params.allowOverdraft ?? false;
-      if (!allowOverdraft && newBalance < 0) {
+
+      // 2. UPDATE atómico SQL.
+      // - `current_balance + delta` es atómico a nivel de fila en Postgres.
+      // - Si !allowOverdraft, condicionamos el UPDATE a que el resultado
+      //   sea >= 0. Si la condición falla, NO actualiza fila → detectamos
+      //   saldo insuficiente.
+      // - RETURNING devuelve el saldo final (necesario para snapshot del
+      //   movement) sin tener que hacer SELECT extra.
+      const qb = mgr
+        .getRepository(BankAccount)
+        .createQueryBuilder()
+        .update(BankAccount)
+        .set({
+          currentBalance: () => `current_balance + ${delta}`,
+        })
+        .where('id = :id', { id: params.bankAccountId })
+        .andWhere('organization_id = :org', {
+          org: params.organizationId,
+        });
+      if (!allowOverdraft && delta < 0) {
+        qb.andWhere('current_balance + :delta >= 0', { delta });
+      }
+      const result = await qb.returning(['current_balance', 'name']).execute();
+
+      // Si no actualizó nada → la cuenta no existe O el saldo era insuficiente
+      const affected = result.affected ?? 0;
+      const raw = (result.raw as Array<{ current_balance: any; name: string }>) ?? [];
+      if (affected === 0 || raw.length === 0) {
+        // Distinguir entre "cuenta no existe" y "saldo insuficiente"
+        const exists = await mgr
+          .getRepository(BankAccount)
+          .findOne({
+            where: {
+              id: params.bankAccountId,
+              organizationId: params.organizationId,
+            },
+          });
+        if (!exists) {
+          throw new NotFoundException('Cuenta bancaria no encontrada');
+        }
         throw new BadRequestException(
-          `Saldo insuficiente en "${account.name}". Saldo actual: ` +
-            `$${previousBalance.toLocaleString()}, intenta retirar: ` +
-            `$${params.amount.toLocaleString()}`,
+          `Saldo insuficiente en "${exists.name}". Saldo actual: ` +
+            `$${Number(exists.currentBalance).toLocaleString()}, ` +
+            `intenta retirar: $${params.amount.toLocaleString()}`,
         );
       }
 
-      // 2. Actualizar saldo
-      account.currentBalance = Math.round(newBalance * 100) / 100;
-      await mgr.getRepository(BankAccount).save(account);
+      const finalBalance =
+        typeof raw[0].current_balance === 'string'
+          ? parseFloat(raw[0].current_balance)
+          : Number(raw[0].current_balance);
+      const accountName = raw[0].name;
 
-      // 3. Crear movement con snapshot del saldo
+      // 3. Crear movement con snapshot del saldo final
       const movement = mgr.getRepository(BankAccountMovement).create({
         bankAccountId: params.bankAccountId,
         type: params.type,
         amount: params.amount,
-        balanceAfter: account.currentBalance,
+        balanceAfter: finalBalance,
         movementDate: params.movementDate ?? new Date(),
         description: params.description,
         referenceType: params.referenceType,
@@ -874,8 +897,7 @@ export class BankAccountsService {
 
       console.log(
         `📒 Movement ${params.type} $${params.amount.toLocaleString()} → ` +
-          `${account.name}: $${previousBalance.toLocaleString()} → ` +
-          `$${account.currentBalance.toLocaleString()}`,
+          `${accountName}: $${finalBalance.toLocaleString()}`,
       );
 
       return saved;
