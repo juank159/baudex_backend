@@ -42,6 +42,7 @@ import { CustomerCredit, CreditStatus } from '../customer-credits/entities/custo
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
 import { CreditTransaction, CreditTransactionType } from '../customer-credits/entities/credit-transaction.entity';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
+import { BankAccountMovementType } from '../bank-accounts/entities/bank-account-movement.entity';
 import { ClientBalanceService } from '../customer-credits/client-balance.service';
 import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
@@ -501,20 +502,40 @@ export class InvoicesService {
       await manager.save(Payment, payment);
 
 
-      // 🏦 Actualizar saldo de cuenta bancaria usando el manager de la transacción
+      // 🏦 Actualizar saldo de cuenta bancaria + registrar movement.
+      // Usa el bankAccountsService para que cada pago genere un
+      // BankAccountMovement auditable (tabla bank_account_movements).
+      // Pasa el `manager` para que el movement se registre en la misma
+      // transacción que el payment (atómico: si falla movement, falla payment).
       if (paymentData.bankAccountId) {
         try {
-          await manager
-            .createQueryBuilder()
-            .update('BankAccount')
-            .set({
-              currentBalance: () => `current_balance + ${amount}`,
-            })
-            .where('id = :id', { id: paymentData.bankAccountId })
-            .andWhere('organization_id = :orgId', { orgId: organizationId })
-            .execute();
-        } catch (error) {
-          console.warn(`   ⚠️ Error actualizando saldo de cuenta: ${error.message}`);
+          await this.bankAccountsService.updateBalanceById(
+            paymentData.bankAccountId,
+            amount,
+            organizationId,
+            {
+              type: BankAccountMovementType.INVOICE_PAYMENT,
+              description:
+                `Pago factura ${invoice.number}` +
+                (paymentData.bankAccountName
+                  ? ` vía ${paymentData.bankAccountName}`
+                  : ''),
+              referenceType: 'invoice',
+              referenceId: invoice.id,
+              createdById,
+              allowOverdraft: true,
+              manager,
+            },
+          );
+        } catch (error: any) {
+          console.error(
+            `❌ Error actualizando saldo en pago múltiple: ` +
+              `${error?.message || error}\n` +
+              `  bankAccountId=${paymentData.bankAccountId} ` +
+              `amount=${amount} invoiceId=${invoice.id}`,
+          );
+          if (error?.stack) console.error(error.stack);
+          throw error;
         }
       }
     }
@@ -934,11 +955,36 @@ export class InvoicesService {
             try {
               await this.bankAccountsService.updateBalanceById(
                 bankAccountId,
-                remainingToPay, // ✅ CORREGIDO: Solo actualizar con el monto real pagado
+                remainingToPay,
                 organizationId || invoice.organizationId,
+                {
+                  type: BankAccountMovementType.INVOICE_PAYMENT,
+                  description: `Pago factura ${invoice.number}`,
+                  referenceType: 'invoice',
+                  referenceId: invoice.id,
+                  createdById: createdById || invoice.createdById,
+                  // Permitir sobregiro porque es un INGRESO — un payment
+                  // jamás puede dejar la cuenta negativa.
+                  allowOverdraft: true,
+                  // Pasar el manager de la transacción de invoices para
+                  // que recordMovement use ESA transacción y no abra otra
+                  // (evita posibles conflictos con setLock o aislamiento).
+                  manager,
+                },
               );
-            } catch (error) {
-              console.warn(`⚠️ Error actualizando saldo de cuenta: ${error.message}`);
+            } catch (error: any) {
+              console.error(
+                `❌ Error actualizando saldo de cuenta bancaria: ` +
+                  `${error?.message || error}\n` +
+                  `  bankAccountId=${bankAccountId} ` +
+                  `amount=${remainingToPay} ` +
+                  `invoiceId=${invoice.id}`,
+              );
+              if (error?.stack) console.error(error.stack);
+              // Re-lanzar para que la transacción haga rollback del payment
+              // si la actualización del saldo falla. Mejor que dejar
+              // estado inconsistente (payment registrado, saldo no movido).
+              throw error;
             }
           }
         } else {

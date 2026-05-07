@@ -852,6 +852,11 @@ export class BankAccountsService {
       const affected = result.affected ?? 0;
       const raw = (result.raw as Array<{ current_balance: any; name: string }>) ?? [];
       if (affected === 0 || raw.length === 0) {
+        console.error(
+          `❌ recordMovement UPDATE no afectó filas: ` +
+            `accountId=${params.bankAccountId} org=${params.organizationId} ` +
+            `delta=${delta} type=${params.type} affected=${affected} raw_length=${raw.length}`,
+        );
         // Distinguir entre "cuenta no existe" y "saldo insuficiente"
         const exists = await mgr
           .getRepository(BankAccount)
@@ -862,7 +867,9 @@ export class BankAccountsService {
             },
           });
         if (!exists) {
-          throw new NotFoundException('Cuenta bancaria no encontrada');
+          throw new NotFoundException(
+            `Cuenta bancaria no encontrada: ${params.bankAccountId} (org: ${params.organizationId})`,
+          );
         }
         throw new BadRequestException(
           `Saldo insuficiente en "${exists.name}". Saldo actual: ` +
@@ -904,9 +911,18 @@ export class BankAccountsService {
     };
 
     if (params.manager) {
+      // Composer con transacción externa: usar su manager
       return await exec(params.manager);
     }
-    return await this.em.transaction(exec);
+    // Sin transacción externa: ejecutar directamente con `em`.
+    // El UPDATE atómico (current_balance + delta) NO necesita transacción
+    // explícita — es self-contained a nivel de fila en Postgres. Y el INSERT
+    // del movement subsiguiente, si falla, queda inconsistente PERO no
+    // bloquea (vs antes con tx interna que podía deadlockar contra externas).
+    // Si en el futuro necesitamos atomicidad estricta para callers sin
+    // manager, agregar aquí un wrapping con `this.em.transaction` PERO
+    // verificar primero que no exista una transacción externa ya abierta.
+    return await exec(this.em);
   }
 
   /**
