@@ -106,10 +106,16 @@ export interface DashboardSummaryResponse {
   totalRevenue: number; // alias de totalBilled para compat
   totalExpenses: number;
   totalCOGS: number;
-  grossProfit: number;           // totalCollected - totalCOGS
+  // Phase 1B: notas de crédito aplicadas en el período + ingreso neto real
+  // (totalCollected - creditNotesTotal). Refleja el dinero que SE QUEDÓ
+  // efectivamente la empresa, descontando devoluciones / saldos a favor.
+  creditNotesTotal: number;
+  creditNotesCount: number;
+  netRevenue: number;            // totalCollected - creditNotesTotal
+  grossProfit: number;           // netRevenue - totalCOGS  (cambió: ahora sobre netRevenue)
   netProfit: number;             // grossProfit - totalExpenses
-  grossMarginPercentage: number; // sobre totalCollected, 1 decimal
-  netMarginPercentage: number;   // sobre totalCollected, 1 decimal
+  grossMarginPercentage: number; // sobre netRevenue, 1 decimal
+  netMarginPercentage: number;   // sobre netRevenue, 1 decimal
 
   totalInvoices: number;
   paidInvoices: number;

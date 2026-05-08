@@ -145,6 +145,26 @@ export class DashboardQueryBuilder {
     `;
   }
 
+  // ───────── Notas de crédito APLICADAS en el período ─────────
+  // Solo cuenta las que efectivamente disminuyeron ingresos (status='applied').
+  // Usamos appliedAt::date en TZ del tenant, NO date (este último es de
+  // emisión y puede ser mucho antes que la aplicación).
+  // Una NC aplicada a una factura ya pagada significa devolver dinero o
+  // saldo a favor, así que sí impacta el ingreso neto del período.
+  static creditNotesApplied(): string {
+    return `
+      SELECT
+        COALESCE(SUM(total), 0)::numeric AS total,
+        COUNT(*)::int                    AS count
+      FROM credit_notes
+      WHERE organization_id = $1
+        AND deleted_at IS NULL
+        AND status = 'applied'
+        AND (applied_at AT TIME ZONE $4)::date >= $2::date
+        AND (applied_at AT TIME ZONE $4)::date <= $3::date
+    `;
+  }
+
   // ───────── Receivables (cartera global con semáforo) ─────────
   // Calcula urgencia usando (NOW AT TIME ZONE orgTz)::date vs dueDate::date.
   static receivablesByUrgency(): string {
