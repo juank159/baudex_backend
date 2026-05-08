@@ -145,12 +145,13 @@ export class DashboardQueryBuilder {
     `;
   }
 
-  // ───────── Notas de crédito APLICADAS en el período ─────────
-  // Solo cuenta las que efectivamente disminuyeron ingresos (status='applied').
-  // Usamos appliedAt::date en TZ del tenant, NO date (este último es de
-  // emisión y puede ser mucho antes que la aplicación).
-  // Una NC aplicada a una factura ya pagada significa devolver dinero o
-  // saldo a favor, así que sí impacta el ingreso neto del período.
+  // ───────── Notas de crédito CONFIRMADAS (=aplicadas) en el período ─────────
+  // El enum solo tiene draft/confirmed/cancelled — cuando se confirma se
+  // aplica simultáneamente al balance del cliente / factura. Por eso
+  // `status='confirmed'` ES la NC efectiva (no existe un 'applied' aparte).
+  // Usamos applied_at::date en TZ del tenant cuando existe; si no, fallback
+  // a date (fecha de emisión) para no perder NCs viejas que se confirmaron
+  // antes de que el campo applied_at fuera populado.
   static creditNotesApplied(): string {
     return `
       SELECT
@@ -159,9 +160,16 @@ export class DashboardQueryBuilder {
       FROM credit_notes
       WHERE organization_id = $1
         AND deleted_at IS NULL
-        AND status = 'applied'
-        AND (applied_at AT TIME ZONE $4)::date >= $2::date
-        AND (applied_at AT TIME ZONE $4)::date <= $3::date
+        AND status = 'confirmed'
+        AND (
+          (applied_at IS NOT NULL
+            AND (applied_at AT TIME ZONE $4)::date >= $2::date
+            AND (applied_at AT TIME ZONE $4)::date <= $3::date)
+          OR
+          (applied_at IS NULL
+            AND (date AT TIME ZONE $4)::date >= $2::date
+            AND (date AT TIME ZONE $4)::date <= $3::date)
+        )
     `;
   }
 
