@@ -15,6 +15,7 @@ import {
   PaymentMethod,
   ExpenseStatus,
   ExpenseType,
+  ExpensePaidFrom,
 } from '../entities/expense.entity';
 
 export class CreateExpenseDto {
@@ -91,4 +92,18 @@ export class CreateExpenseDto {
     message: 'El estado debe ser draft, pending, approved, rejected o paid',
   })
   status?: ExpenseStatus = ExpenseStatus.APPROVED;
+
+  /**
+   * Origen del pago (caja del día / banco / caja chica / aporte dueño).
+   * Si es `bank_account`, es OBLIGATORIO enviar también `bankAccountId`.
+   */
+  @IsOptional()
+  @IsEnum(ExpensePaidFrom, {
+    message: 'paidFrom debe ser cash_register, bank_account, petty_cash u owner_capital',
+  })
+  paidFrom?: ExpensePaidFrom;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'bankAccountId debe ser un UUID válido' })
+  bankAccountId?: string;
 }

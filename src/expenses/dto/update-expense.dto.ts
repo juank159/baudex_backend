@@ -15,6 +15,7 @@ import {
   ExpenseStatus,
   PaymentMethod,
   ExpenseType,
+  ExpensePaidFrom,
 } from '../entities/expense.entity';
 
 export class UpdateExpenseDto {
@@ -94,4 +95,14 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsUUID('4', { message: 'El ID de la categoría debe ser un UUID válido' })
   categoryId?: string;
+
+  @IsOptional()
+  @IsEnum(ExpensePaidFrom, {
+    message: 'paidFrom debe ser cash_register, bank_account, petty_cash u owner_capital',
+  })
+  paidFrom?: ExpensePaidFrom;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'bankAccountId debe ser un UUID válido' })
+  bankAccountId?: string;
 }

@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Expense } from './entities/expense.entity';
 import { ExpenseCategory } from './entities/expense-category.entity';
 import { AuthModule } from '../auth/auth.module';
+import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
 import { ExpensesController } from './expenses.controller';
 import { ExpenseCategoriesController } from './expense-categories.controller';
 import { ExpensesService } from './expenses.service';
@@ -15,6 +16,7 @@ import { FileUploadService } from '../common/services/file-upload.service';
   imports: [
     TypeOrmModule.forFeature([Expense, ExpenseCategory]),
     forwardRef(() => AuthModule),
+    BankAccountsModule,
   ],
   controllers: [ExpensesController, ExpenseCategoriesController],
   providers: [

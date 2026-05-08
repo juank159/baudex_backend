@@ -9,7 +9,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { ExpenseCategoriesService } from './expense-categories.service';
-import { Expense, ExpenseStatus } from './entities/expense.entity';
+import {
+  Expense,
+  ExpenseStatus,
+  ExpensePaidFrom,
+} from './entities/expense.entity';
+import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
+import { BankAccountMovementType } from '../bank-accounts/entities/bank-account-movement.entity';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { ExpenseQueryDto } from './dto/expense-query.dto';
 import {
@@ -32,7 +38,55 @@ export class ExpensesService {
     private readonly categoriesService: ExpenseCategoriesService,
     private readonly tenantService: TenantAwareService,
     private readonly fileUploadService: FileUploadService,
+    private readonly bankAccountsService: BankAccountsService,
   ) {}
+
+  /**
+   * Cuando un gasto pasa a `paid` y su `paidFrom` es `bank_account`,
+   * descontamos el saldo de la cuenta y generamos un movement auditable
+   * `expense_payment`. Para los otros `paidFrom` (cash_register, petty_cash,
+   * owner_capital) no tocamos cuentas — esos flujos se cubren en Phase 2
+   * (caja registradora) y reportes de capital.
+   *
+   * Validaciones:
+   * - Si paidFrom es bank_account pero no viene bankAccountId → error.
+   * - Si la cuenta no existe o no tiene saldo → error (no allowOverdraft).
+   *
+   * Idempotencia: usa `referenceType='expense'` + `referenceId=expense.id`,
+   * así que si por error se llama 2 veces podemos detectar duplicados con
+   * un SELECT antes de insertar (TODO si surge en producción).
+   */
+  private async processExpensePayment(expense: Expense): Promise<void> {
+    if (!expense.paidFrom) return;
+    if (expense.paidFrom !== ExpensePaidFrom.BANK_ACCOUNT) {
+      // cash_register / petty_cash / owner_capital: por ahora solo guardamos
+      // el origen como metadata. La integración con caja registradora
+      // (Phase 2) consumirá este campo.
+      return;
+    }
+    if (!expense.bankAccountId) {
+      throw new BadRequestException(
+        'Para paidFrom=bank_account es obligatorio enviar bankAccountId',
+      );
+    }
+    await this.bankAccountsService.updateBalanceById(
+      expense.bankAccountId,
+      -expense.amount,
+      expense.organizationId,
+      {
+        type: BankAccountMovementType.EXPENSE_PAYMENT,
+        description:
+          expense.vendor != null && expense.vendor !== ''
+            ? `Gasto: ${expense.description} (${expense.vendor})`
+            : `Gasto: ${expense.description}`,
+        referenceType: 'expense',
+        referenceId: expense.id,
+        createdById: expense.createdById,
+        // Sin overdraft: no permitir que un gasto deje saldo negativo.
+        allowOverdraft: false,
+      },
+    );
+  }
 
   async create(
     createExpenseDto: CreateExpenseDto,
@@ -55,7 +109,14 @@ export class ExpensesService {
       ...expenseData,
       organizationId: this.tenantService.getTenantId()!,
     });
-    return this.expenseRepository.save(expense);
+    const saved = await this.expenseRepository.save(expense);
+
+    // Si el gasto se crea ya como `paid` y tiene paidFrom=bank_account,
+    // procesamos el pago: descontar saldo + generar movement.
+    if (saved.status === ExpenseStatus.PAID) {
+      await this.processExpensePayment(saved);
+    }
+    return saved;
   }
 
   async findAll(
@@ -291,7 +352,10 @@ export class ExpensesService {
     return this.expenseRepository.save(expense);
   }
 
-  async markAsPaid(id: string): Promise<Expense> {
+  async markAsPaid(
+    id: string,
+    payload?: { paidFrom?: ExpensePaidFrom; bankAccountId?: string },
+  ): Promise<Expense> {
     const expense = await this.findOne(id);
 
     if (expense.status !== ExpenseStatus.APPROVED) {
@@ -300,8 +364,18 @@ export class ExpensesService {
       );
     }
 
+    // Permitir definir/sobrescribir paidFrom + bankAccountId al pagar.
+    if (payload?.paidFrom != null) {
+      expense.paidFrom = payload.paidFrom;
+    }
+    if (payload?.bankAccountId != null) {
+      expense.bankAccountId = payload.bankAccountId;
+    }
+
     expense.status = ExpenseStatus.PAID;
-    return this.expenseRepository.save(expense);
+    const saved = await this.expenseRepository.save(expense);
+    await this.processExpensePayment(saved);
+    return saved;
   }
 
   async softDelete(id: string): Promise<{ message: string }> {

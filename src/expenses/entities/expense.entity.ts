@@ -29,6 +29,22 @@ export enum PaymentMethod {
   OTHER = 'other',
 }
 
+/**
+ * Origen del pago de un gasto. Permite saber DE DÓNDE salió el dinero
+ * (banco, caja del día, caja chica, aporte del dueño).
+ *
+ * - CASH_REGISTER: pagado con la caja del día (turno actual abierto).
+ * - BANK_ACCOUNT: pagado desde una cuenta bancaria (requiere bankAccountId).
+ * - PETTY_CASH: pagado con caja chica (fondo separado de la operación diaria).
+ * - OWNER_CAPITAL: dueño/socio paga de su bolsillo (no afecta caja del negocio).
+ */
+export enum ExpensePaidFrom {
+  CASH_REGISTER = 'cash_register',
+  BANK_ACCOUNT = 'bank_account',
+  PETTY_CASH = 'petty_cash',
+  OWNER_CAPITAL = 'owner_capital',
+}
+
 @Entity('expenses')
 export class Expense extends BaseEntity {
   @Column({ type: 'varchar', length: 255 })
@@ -63,6 +79,29 @@ export class Expense extends BaseEntity {
     default: PaymentMethod.CASH,
   })
   paymentMethod: PaymentMethod;
+
+  /**
+   * Fuente del dinero con el que se pagó el gasto. Se asigna cuando el
+   * gasto se marca como `paid`. Si es `BANK_ACCOUNT`, debe venir también
+   * `bankAccountId`. El service descuenta del saldo de la cuenta y genera
+   * un movement auditable `expense_payment`.
+   */
+  @Column({
+    type: 'enum',
+    enum: ExpensePaidFrom,
+    name: 'paid_from',
+    nullable: true,
+  })
+  paidFrom?: ExpensePaidFrom;
+
+  /**
+   * Cuenta bancaria desde la que se pagó (cuando paidFrom = BANK_ACCOUNT).
+   * Sin FK formal para no acoplar tan fuerte; la consistencia se valida
+   * en el service.
+   */
+  @Column({ type: 'uuid', name: 'bank_account_id', nullable: true })
+  @Index()
+  bankAccountId?: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   vendor?: string; // Proveedor o beneficiario
