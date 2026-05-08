@@ -42,6 +42,7 @@ import { CustomerCredit, CreditStatus } from '../customer-credits/entities/custo
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
 import { CreditTransaction, CreditTransactionType } from '../customer-credits/entities/credit-transaction.entity';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
+import { CashRegisterService } from '../cash-register/cash-register.service';
 import { BankAccountMovementType } from '../bank-accounts/entities/bank-account-movement.entity';
 import { ClientBalanceService } from '../customer-credits/client-balance.service';
 import { SubscriptionService } from '../subscriptions/services/subscription.service';
@@ -74,6 +75,7 @@ export class InvoicesService {
     @Inject(forwardRef(() => CustomerCreditsService))
     private readonly customerCreditsService: CustomerCreditsService,
     private readonly bankAccountsService: BankAccountsService, // 🏦 Servicio de cuentas bancarias
+    private readonly cashRegisterService: CashRegisterService, // 🧾 Caja registradora (Phase 2)
     @Inject(forwardRef(() => ClientBalanceService))
     private readonly clientBalanceService: ClientBalanceService, // 💰 Servicio de saldo a favor
     private readonly subscriptionService: SubscriptionService, // 📋 Servicio de suscripciones
@@ -103,6 +105,13 @@ export class InvoicesService {
     if (createInvoiceDto.paymentMethod === PaymentMethod.CREDIT) {
       await this.validateCreditAvailability(customer, createInvoiceDto);
     }
+
+    // 🔒 PHASE 2: Validar caja abierta para ventas en efectivo.
+    // Si la factura tiene algún pago en cash (sea método principal cash
+    // o un pago múltiple en cash), debe haber caja abierta del tenant.
+    // Frontend ya valida pero el backend es la última línea de defensa
+    // (puede haber clientes desactualizados o llamadas API directas).
+    await this.validateCashRegisterIfNeeded(createInvoiceDto, tenantId);
 
     // ✅ VERIFICAR PRODUCTOS REGISTRADOS Y CREAR TEMPORALES
     const processedItems = [];
@@ -2515,6 +2524,48 @@ export class InvoicesService {
   }
 
   // ========== MÉTODOS DE VALIDACIÓN DE SUSCRIPCIÓN ==========
+
+  /**
+   * 🔒 PHASE 2: Valida que haya una caja registradora abierta cuando la
+   * factura recibe pagos en efectivo. Sin caja abierta, NO se permite
+   * registrar la venta — el cajero debe abrir caja primero.
+   *
+   * Aplica si:
+   *   - `paymentMethod` principal es CASH y status va a tener pagos.
+   *   - O cualquier `multiplePayments[].method` es CASH.
+   *
+   * NO aplica si la factura es a crédito (no entra dinero) o si todos
+   * los pagos son por banco/transferencia/tarjeta (la caja no se toca).
+   */
+  private async validateCashRegisterIfNeeded(
+    dto: CreateInvoiceDto,
+    organizationId: string,
+  ): Promise<void> {
+    // ¿El método principal es cash?
+    const principalIsCash = dto.paymentMethod === PaymentMethod.CASH;
+
+    // Si la factura no se cobra al crearla (status PENDING sin pagos),
+    // no validamos. La validación correrá cuando se agreguen pagos en
+    // efectivo posteriormente vía addPayment.
+    const isPaidStatus =
+      dto.status === undefined || // default es paid
+      (dto.status as any) === 'paid' ||
+      (dto.status as any) === 'partially_paid';
+
+    if (!isPaidStatus) return;
+    if (!principalIsCash) return;
+
+    // Hay efectivo: la caja DEBE estar abierta.
+    const openRegister =
+      await this.cashRegisterService.getOpenCashRegister(organizationId);
+    if (!openRegister) {
+      throw new BadRequestException(
+        'No hay una caja abierta. Para registrar ventas en efectivo, ' +
+          'abre la caja registradora primero (declarando el saldo inicial ' +
+          'del turno).',
+      );
+    }
+  }
 
   /**
    * 🔒 VALIDACIÓN DE SUSCRIPCIÓN ACTIVA

@@ -5,6 +5,7 @@ import { Expense } from './entities/expense.entity';
 import { ExpenseCategory } from './entities/expense-category.entity';
 import { AuthModule } from '../auth/auth.module';
 import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
+import { CashRegisterModule } from '../cash-register/cash-register.module';
 import { ExpensesController } from './expenses.controller';
 import { ExpenseCategoriesController } from './expense-categories.controller';
 import { ExpensesService } from './expenses.service';
@@ -17,6 +18,7 @@ import { FileUploadService } from '../common/services/file-upload.service';
     TypeOrmModule.forFeature([Expense, ExpenseCategory]),
     forwardRef(() => AuthModule),
     BankAccountsModule,
+    CashRegisterModule,
   ],
   controllers: [ExpensesController, ExpenseCategoriesController],
   providers: [

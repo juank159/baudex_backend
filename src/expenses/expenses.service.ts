@@ -16,6 +16,7 @@ import {
 } from './entities/expense.entity';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
 import { BankAccountMovementType } from '../bank-accounts/entities/bank-account-movement.entity';
+import { CashRegisterService } from '../cash-register/cash-register.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { ExpenseQueryDto } from './dto/expense-query.dto';
 import {
@@ -39,6 +40,7 @@ export class ExpensesService {
     private readonly tenantService: TenantAwareService,
     private readonly fileUploadService: FileUploadService,
     private readonly bankAccountsService: BankAccountsService,
+    private readonly cashRegisterService: CashRegisterService,
   ) {}
 
   /**
@@ -58,10 +60,28 @@ export class ExpensesService {
    */
   private async processExpensePayment(expense: Expense): Promise<void> {
     if (!expense.paidFrom) return;
+
+    // Phase 2: si el gasto se paga con caja del día, validar que haya
+    // una caja abierta del tenant. Sin caja abierta, no se puede pagar.
+    // El cierre de caja capturará automáticamente este gasto vía la
+    // query SQL del rango open→close.
+    if (expense.paidFrom === ExpensePaidFrom.CASH_REGISTER) {
+      const open = await this.cashRegisterService.getOpenCashRegister(
+        expense.organizationId,
+      );
+      if (!open) {
+        throw new BadRequestException(
+          'No hay una caja abierta. Para pagar este gasto con la caja del ' +
+            'día abre la caja registradora primero, o cambia el origen del ' +
+            'pago a cuenta bancaria / caja chica / aporte del dueño.',
+        );
+      }
+      return; // OK, caja abierta; el cierre lo contabilizará
+    }
+
     if (expense.paidFrom !== ExpensePaidFrom.BANK_ACCOUNT) {
-      // cash_register / petty_cash / owner_capital: por ahora solo guardamos
-      // el origen como metadata. La integración con caja registradora
-      // (Phase 2) consumirá este campo.
+      // petty_cash / owner_capital: por ahora solo guardamos
+      // el origen como metadata. No hay impacto en saldos del sistema.
       return;
     }
     if (!expense.bankAccountId) {
