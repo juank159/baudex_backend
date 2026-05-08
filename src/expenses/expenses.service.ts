@@ -95,6 +95,19 @@ export class ExpensesService {
     // Verificar que la categoría existe
     await this.categoriesService.findOne(createExpenseDto.categoryId);
 
+    // Si declara paidFrom, el gasto YA salió de algún lado: marcarlo como
+    // pagado automáticamente (a menos que explícitamente se haya elegido
+    // draft/pending para diferir el pago).
+    let resolvedStatus = createExpenseDto.status || ExpenseStatus.APPROVED;
+    if (createExpenseDto.paidFrom != null) {
+      if (
+        resolvedStatus !== ExpenseStatus.DRAFT &&
+        resolvedStatus !== ExpenseStatus.PENDING
+      ) {
+        resolvedStatus = ExpenseStatus.PAID;
+      }
+    }
+
     const expenseData = {
       ...createExpenseDto,
       name: createExpenseDto.description,
@@ -102,7 +115,7 @@ export class ExpensesService {
         ? new Date(createExpenseDto.date)
         : new Date(),
       createdById,
-      status: createExpenseDto.status || ExpenseStatus.APPROVED,
+      status: resolvedStatus,
     };
 
     const expense = this.expenseRepository.create({
