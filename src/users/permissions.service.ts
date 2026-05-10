@@ -47,6 +47,8 @@ export class PermissionsService {
     PermissionModuleCode.BANK_ACCOUNTS,
     PermissionModuleCode.CASH_REGISTER,
     PermissionModuleCode.REPORTS,
+    PermissionModuleCode.SETTINGS,
+    PermissionModuleCode.EMPLOYEES,
   ];
 
   /**
@@ -172,12 +174,19 @@ export class PermissionsService {
     role: UserRole,
   ): ModulePermissionDto {
     if (role === UserRole.MANAGER) {
-      // Manager por defecto puede todo. Admin puede restringir.
+      // Manager por defecto puede ver y editar la mayoría, pero NO eliminar
+      // en módulos sensibles (cuentas bancarias, configuración global,
+      // empleados — eso queda solo para admin).
+      const adminOnlyDelete = new Set<PermissionModuleCode>([
+        PermissionModuleCode.BANK_ACCOUNTS,
+        PermissionModuleCode.SETTINGS,
+        PermissionModuleCode.EMPLOYEES,
+      ]);
       return {
         moduleCode: module,
         canView: true,
         canEdit: true,
-        canDelete: module !== PermissionModuleCode.BANK_ACCOUNTS, // sensible
+        canDelete: !adminOnlyDelete.has(module),
       };
     }
     // USER: solo lectura básica.

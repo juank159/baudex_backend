@@ -27,6 +27,8 @@ export enum PermissionModuleCode {
   BANK_ACCOUNTS = 'bank_accounts',
   CASH_REGISTER = 'cash_register',
   REPORTS = 'reports',
+  SETTINGS = 'settings', // Módulos de configuración (org, impresoras, etc.)
+  EMPLOYEES = 'employees', // Gestión del equipo
 }
 
 /**
