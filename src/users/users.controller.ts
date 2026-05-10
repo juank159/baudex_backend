@@ -16,7 +16,9 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { UsersService } from './users.service';
+import { PermissionsService } from './permissions.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { SetPermissionsDto } from './dto/set-permissions.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserQueryDto } from './dto/user-query.dto';
@@ -30,7 +32,10 @@ import { User, UserRole } from './entities/user.entity';
 @Controller('users')
 @UseGuards(AuthGuard())
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly permissionsService: PermissionsService,
+  ) {}
 
   // ==================== ENDPOINTS DE CREACIÓN ====================
 
@@ -214,5 +219,47 @@ export class UsersController {
       available: isAvailable,
       message: isAvailable ? 'Email disponible' : 'Email ya está en uso',
     };
+  }
+
+  // ==================== PERMISOS GRANULARES ====================
+
+  /**
+   * Permisos del usuario logueado actualmente. Útil para que el frontend
+   * cachee al login y filtre el drawer y los botones de acción.
+   */
+  @Get('me/permissions')
+  async getMyPermissions(@GetUser() user: User) {
+    return this.permissionsService.getEffectivePermissions(user.id);
+  }
+
+  /**
+   * Permisos efectivos de un empleado del tenant. Solo admin/manager
+   * pueden consultar.
+   */
+  @Get(':id/permissions')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  getUserPermissions(@Param('id', ParseUUIDPipe) id: string) {
+    return this.permissionsService.getEffectivePermissions(id);
+  }
+
+  /**
+   * Reemplaza el set de permisos del empleado. Solo admin puede cambiar
+   * permisos (manager NO puede dar más permisos a otros).
+   */
+  @Patch(':id/permissions')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  setUserPermissions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetPermissionsDto,
+    @GetUser() caller: User,
+  ) {
+    if (id === caller.id) {
+      throw new ForbiddenException(
+        'No puedes editar tus propios permisos. Pide a otro admin que lo haga.',
+      );
+    }
+    return this.permissionsService.setPermissions(id, dto.permissions);
   }
 }
