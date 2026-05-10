@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
@@ -1078,5 +1079,191 @@ export class BankAccountsService {
       .getMany();
 
     return { items, total, page, limit };
+  }
+
+  // ==================== AUDITORÍA ====================
+
+  /**
+   * Audita las cuentas bancarias del tenant: compara `currentBalance` con
+   * el balance "esperado" reconstruido desde los movimientos. Devuelve
+   * SOLO las cuentas con discrepancia para que el admin decida si las
+   * recalcula. Las cuentas sin movimientos comparan contra `openingBalance`.
+   *
+   * Esta operación es READ-ONLY y barata: una sola query por cuenta.
+   */
+  async auditAccounts(): Promise<
+    Array<{
+      bankAccountId: string;
+      accountName: string;
+      storedBalance: number;
+      computedBalance: number;
+      difference: number;
+      movementCount: number;
+      lastMovementDate: Date | null;
+    }>
+  > {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new UnauthorizedException('Contexto de tenant no disponible');
+    }
+
+    const accounts = await this.bankAccountRepository.find({
+      where: { organizationId: tenantId },
+    });
+
+    const results: Array<{
+      bankAccountId: string;
+      accountName: string;
+      storedBalance: number;
+      computedBalance: number;
+      difference: number;
+      movementCount: number;
+      lastMovementDate: Date | null;
+    }> = [];
+
+    for (const account of accounts) {
+      // El saldo se reconstruye desde 0: el saldo inicial es un movimiento
+      // de tipo INITIAL_BALANCE, así que 0 + sum(movimientos) = balance real.
+      const computed = await this._computeBalanceFromMovements(account.id, 0);
+      const stored = Number(account.currentBalance) || 0;
+      const diff = +(stored - computed.balance).toFixed(2);
+      // Solo reportamos las que tienen diferencia significativa (>= 1 centavo)
+      if (Math.abs(diff) >= 0.01) {
+        results.push({
+          bankAccountId: account.id,
+          accountName: account.name,
+          storedBalance: stored,
+          computedBalance: +computed.balance.toFixed(2),
+          difference: diff,
+          movementCount: computed.count,
+          lastMovementDate: computed.lastDate,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Recalcula el balance de UNA cuenta basado en los movimientos. Reescribe
+   * `balanceAfter` de cada movimiento (cronológicamente) y actualiza
+   * `currentBalance` de la cuenta. Operación atómica.
+   */
+  async recalculateBalance(
+    accountId: string,
+  ): Promise<{
+    bankAccountId: string;
+    previousBalance: number;
+    newBalance: number;
+    movementCount: number;
+  }> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new UnauthorizedException('Contexto de tenant no disponible');
+    }
+
+    const account = await this.bankAccountRepository.findOne({
+      where: { id: accountId, organizationId: tenantId },
+    });
+    if (!account) {
+      throw new NotFoundException('Cuenta bancaria no encontrada');
+    }
+
+    const previousBalance = Number(account.currentBalance) || 0;
+
+    const movements = await this.movementRepository.find({
+      where: {
+        bankAccountId: account.id,
+        organizationId: tenantId,
+      },
+      order: {
+        movementDate: 'ASC',
+        createdAt: 'ASC',
+      },
+    });
+
+    // Reconstruir balanceAfter en cascada desde 0. El saldo inicial es
+    // un movimiento INITIAL_BALANCE que se suma como inflow normal.
+    let running = 0;
+    for (const mv of movements) {
+      if (BankAccountMovement.isInflow(mv.type)) {
+        running += Number(mv.amount) || 0;
+      } else if (BankAccountMovement.isOutflow(mv.type)) {
+        running -= Number(mv.amount) || 0;
+      } else {
+        // ADJUSTMENT: si el balanceAfter previo era válido, conservarlo
+        // (un ajuste manual no debería perder su signo). Si no, sumar.
+        const previousAfter = Number(mv.balanceAfter);
+        if (!Number.isNaN(previousAfter) && previousAfter !== 0) {
+          running = previousAfter;
+        } else {
+          running += Number(mv.amount) || 0;
+        }
+      }
+      mv.balanceAfter = +running.toFixed(2);
+    }
+
+    // Persistir todo en una transacción.
+    await this.movementRepository.manager.transaction(async (em) => {
+      if (movements.length > 0) {
+        await em.save(BankAccountMovement, movements);
+      }
+      account.currentBalance = +running.toFixed(2);
+      await em.save(BankAccount, account);
+    });
+
+    return {
+      bankAccountId: account.id,
+      previousBalance: +previousBalance.toFixed(2),
+      newBalance: +running.toFixed(2),
+      movementCount: movements.length,
+    };
+  }
+
+  /**
+   * Helper privado: calcula el balance ESPERADO de una cuenta a partir
+   * de sus movimientos, comenzando desde `openingBalance`. Read-only.
+   */
+  private async _computeBalanceFromMovements(
+    accountId: string,
+    openingBalance: number,
+  ): Promise<{ balance: number; count: number; lastDate: Date | null }> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    const movements = await this.movementRepository.find({
+      where: {
+        bankAccountId: accountId,
+        organizationId: tenantId ?? undefined,
+      },
+      order: {
+        movementDate: 'ASC',
+        createdAt: 'ASC',
+      },
+    });
+
+    if (movements.length === 0) {
+      return { balance: openingBalance, count: 0, lastDate: null };
+    }
+
+    let running = openingBalance;
+    for (const mv of movements) {
+      if (BankAccountMovement.isInflow(mv.type)) {
+        running += Number(mv.amount) || 0;
+      } else if (BankAccountMovement.isOutflow(mv.type)) {
+        running -= Number(mv.amount) || 0;
+      } else {
+        const previousAfter = Number(mv.balanceAfter);
+        if (!Number.isNaN(previousAfter) && previousAfter !== 0) {
+          running = previousAfter;
+        } else {
+          running += Number(mv.amount) || 0;
+        }
+      }
+    }
+
+    return {
+      balance: running,
+      count: movements.length,
+      lastDate: movements[movements.length - 1].movementDate,
+    };
   }
 }

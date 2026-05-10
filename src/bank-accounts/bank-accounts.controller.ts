@@ -100,6 +100,33 @@ export class BankAccountsController {
   }
 
   /**
+   * Auditar las cuentas bancarias del tenant para detectar discrepancias
+   * entre el saldo guardado (`currentBalance`) y el saldo reconstruido
+   * desde los movimientos. Devuelve solo cuentas con diferencia.
+   *
+   * GET /bank-accounts/audit
+   */
+  @Get('audit')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  audit() {
+    return this.bankAccountsService.auditAccounts();
+  }
+
+  /**
+   * Recalcular el balance de una cuenta. Reescribe `balanceAfter` de
+   * cada movimiento y actualiza `currentBalance`. Solo admin.
+   *
+   * POST /bank-accounts/:id/recalculate-balance
+   */
+  @Post(':id/recalculate-balance')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  recalculateBalance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.bankAccountsService.recalculateBalance(id);
+  }
+
+  /**
    * Obtener transacciones de una cuenta bancaria
    * GET /bank-accounts/:id/transactions
    */
