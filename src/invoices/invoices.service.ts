@@ -2555,7 +2555,24 @@ export class InvoicesService {
     if (!isPaidStatus) return;
     if (!principalIsCash) return;
 
-    // Hay efectivo: la caja DEBE estar abierta.
+    // Si el tenant tiene desactivado el módulo de caja (toggle en
+    // Settings → `organization.settings.cashRegisterEnabled = false`),
+    // NO exigimos caja abierta. El cliente decidió que su negocio no
+    // usa caja del día → facturación con efectivo funciona sin
+    // restricciones, los pagos cash se registran en `payments` normal.
+    //
+    // Sin esta verificación, aunque el frontend oculte toda la UI de
+    // caja, el backend rechaza el POST con 400 — exactamente el bug
+    // que vio el cliente Jeiner.
+    const organization = await this.organizationRepository.findOne({
+      where: { id: organizationId },
+      select: ['id', 'settings'],
+    });
+    const cashRegisterEnabled =
+      (organization?.settings as any)?.cashRegisterEnabled ?? true;
+    if (!cashRegisterEnabled) return;
+
+    // Hay efectivo Y el módulo de caja está activo: la caja DEBE estar abierta.
     const openRegister =
       await this.cashRegisterService.getOpenCashRegister(organizationId);
     if (!openRegister) {
