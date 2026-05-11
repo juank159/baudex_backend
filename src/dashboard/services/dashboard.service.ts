@@ -53,6 +53,7 @@ export class DashboardService {
       methodsRows,
       currencyRows,
       creditsAgg,
+      creditNotesAgg,
       receivablesRows,
       debtorsRows,
       trendRows,
@@ -81,6 +82,9 @@ export class DashboardService {
           ])
         : Promise.resolve([] as any[]),
       this.q(DashboardQueryBuilder.creditsApplied(), [organizationId, startDateStr, endDateStr]),
+      this.q(DashboardQueryBuilder.creditNotesApplied(), [
+        organizationId, startDateStr, endDateStr, org.timezone,
+      ]),
       this.q(DashboardQueryBuilder.receivablesByUrgency(), [organizationId, org.timezone]),
       this.q(DashboardQueryBuilder.topDebtors(), [organizationId, org.timezone]),
       this.q(DashboardQueryBuilder.trendByDay(), [
@@ -107,10 +111,23 @@ export class DashboardService {
     const creditsIncome = num(creditsAgg[0]?.total);
     const paymentsOnOld = num(oldInvoicesAgg[0]?.payment_income);
 
-    const grossProfit = totalCollected - totalCOGS;
+    // Notas de crédito aplicadas en el período: representan dinero que
+    // SE DEVUELVE o se convierte en saldo a favor del cliente. Reducen
+    // el ingreso real de la venta original.
+    const creditNotesTotal = num(creditNotesAgg[0]?.total);
+    const creditNotesCount = Number(creditNotesAgg[0]?.count ?? 0);
+
+    // Ingreso neto = lo cobrado - lo devuelto vía notas de crédito.
+    // Es el dinero que efectivamente se quedó el negocio en el período.
+    const netRevenue = totalCollected - creditNotesTotal;
+
+    // grossProfit y márgenes ahora se calculan sobre el NETO, no sobre
+    // el bruto cobrado. Esto refleja la rentabilidad real: si vendí
+    // $1M pero devolví $200k, mi base efectiva es $800k.
+    const grossProfit = netRevenue - totalCOGS;
     const netProfit = grossProfit - totalExpenses;
-    const grossMargin = totalCollected > 0 ? (grossProfit / totalCollected) * 100 : 0;
-    const netMargin = totalCollected > 0 ? (netProfit / totalCollected) * 100 : 0;
+    const grossMargin = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
+    const netMargin = netRevenue > 0 ? (netProfit / netRevenue) * 100 : 0;
     const revenueGrowth = previousRevenue > 0
       ? ((totalCollected - previousRevenue) / previousRevenue) * 100
       : 0;
@@ -218,6 +235,11 @@ export class DashboardService {
       totalRevenue: totalRevenueLegacy,
       totalExpenses,
       totalCOGS,
+      // Phase 1B: Net revenue (bruto cobrado - notas de crédito aplicadas)
+      // y desglose para que el dashboard muestre ambos.
+      creditNotesTotal,
+      creditNotesCount,
+      netRevenue,
       grossProfit,
       netProfit,
       grossMarginPercentage: round1(grossMargin),

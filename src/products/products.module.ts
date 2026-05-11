@@ -36,19 +36,22 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Product } from './entities/product.entity';
 import { ProductPrice } from './entities/product-price.entity';
-// ✅ IMPORTAR LA NUEVA ENTIDAD
+import { ProductPresentation } from './entities/product-presentation.entity';
 import { TemporaryProduct } from './entities/temporary-product.entity';
 import { ProductRepository } from './repositories/product.repository';
 import { CategoryModule } from 'src/categories/categories.module';
 import { AuthModule } from '../auth/auth.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { InventoryModule } from '../inventory/inventory.module';
 
 import { ProductController } from './products.controller';
 import { ProductPriceController } from './product-price.controller';
+import { ProductPresentationController } from './product-presentation.controller';
+import { ProductWasteController } from './product-waste.controller';
 import { ProductAdminController } from './product-admin.controller';
 import { ProductService } from './products.service';
 import { ProductPriceService } from './product-price.service';
-// ✅ IMPORTAR EL NUEVO SERVICIO
+import { ProductPresentationService } from './product-presentation.service';
 import { TemporaryProductService } from './temporary-product.service';
 import { UsersModule } from 'src/users/users.module';
 
@@ -57,29 +60,35 @@ import { UsersModule } from 'src/users/users.module';
     TypeOrmModule.forFeature([
       Product,
       ProductPrice,
-      TemporaryProduct, // ✅ REGISTRAR LA NUEVA ENTIDAD
+      ProductPresentation,
+      TemporaryProduct,
     ]),
     CategoryModule,
     UsersModule,
     AuthModule,
-    SubscriptionsModule, // 🔒 IMPORTAR MÓDULO DE SUSCRIPCIONES PARA VALIDACIÓN
+    SubscriptionsModule,
+    InventoryModule,
   ],
   controllers: [
     ProductController,
     ProductPriceController,
+    ProductPresentationController,
+    ProductWasteController,
     ProductAdminController,
   ],
   providers: [
     ProductRepository,
     ProductService,
     ProductPriceService,
-    TemporaryProductService, // ✅ REGISTRAR EL NUEVO SERVICIO
+    ProductPresentationService,
+    TemporaryProductService,
   ],
   exports: [
     ProductService,
     ProductPriceService,
+    ProductPresentationService,
     ProductRepository,
-    TemporaryProductService, // ✅ EXPORTAR EL SERVICIO PARA OTROS MÓDULOS
+    TemporaryProductService,
   ],
 })
 export class ProductModule {}

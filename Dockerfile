@@ -54,5 +54,10 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Usar dumb-init como proceso principal
 ENTRYPOINT ["dumb-init", "--"]
 
-# Comando por defecto
-CMD ["node", "--dns-result-order=ipv4first", "dist/main"]
+# Comando por defecto: corre las migraciones pendientes ANTES de
+# levantar el server. TypeORM mantiene la tabla `migrations` con las
+# ya aplicadas, así que esto es idempotente — al segundo arranque no
+# vuelve a correr las mismas. Si una migración falla el server no
+# arranca (deliberado: preferimos el contenedor reiniciando a que el
+# código nuevo apunte a un schema viejo y devuelva 500 al primer query).
+CMD ["sh", "-c", "node node_modules/typeorm/cli.js migration:run -d dist/database/typeorm.config.js && node --dns-result-order=ipv4first dist/main"]

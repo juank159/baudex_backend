@@ -42,12 +42,14 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CustomerCreditsModule } from '../customer-credits/customer-credits.module';
 import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
+import { CashRegisterModule } from '../cash-register/cash-register.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Invoice, InvoiceItem, Payment, Warehouse, Organization]),
     BankAccountsModule, // 🏦 Módulo de cuentas bancarias
+    CashRegisterModule, // 🧾 Caja registradora (Phase 2)
     forwardRef(() => AuthModule),
     forwardRef(() => CustomersModule),
     // ✅ IMPORTANTE: NO usar forwardRef para ProductModule

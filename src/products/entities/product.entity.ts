@@ -140,6 +140,7 @@ import { Category } from '../../categories/entities/category.entity';
 import { User } from '../../users/entities/user.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
 import { ProductPrice } from './product-price.entity';
+import { ProductPresentation } from './product-presentation.entity';
 import { TaxCategory, RetentionCategory } from '../enums/tax.enums';
 
 export enum ProductStatus {
@@ -205,6 +206,21 @@ export class Product extends BaseEntity {
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   unit?: string;
+
+  // ========== UNIDAD BASE Y PRESENTACIONES DE VENTA ==========
+  // baseUnit es la unidad mínima inventariable (g, ml, und). El stock vive aquí.
+  // Las presentaciones (cartón, cajetilla, kilo, paquete) cuelgan del producto
+  // con su propio factor de conversión y precio. Si baseUnit es null, el módulo
+  // legado sigue funcionando con `unit` y precio único.
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  baseUnit?: string;
+
+  @Column({ type: 'boolean', default: false })
+  allowsFractional: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  isWeighed: boolean;
+  // ========== FIN UNIDAD BASE Y PRESENTACIONES ==========
 
   // Dimensions and weight
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
@@ -421,6 +437,13 @@ export class Product extends BaseEntity {
     eager: false,  // Cambiado de true a false para optimización
   })
   prices: ProductPrice[];
+
+  // Presentaciones de venta (cartón, cajetilla, kilo, etc.)
+  @OneToMany(() => ProductPresentation, (p) => p.product, {
+    cascade: true,
+    eager: false,
+  })
+  presentations: ProductPresentation[];
 
   // ✅ MÉTODOS CORREGIDOS - SOLUCIÓN FINAL
   get isActive(): boolean {

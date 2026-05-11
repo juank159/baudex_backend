@@ -26,4 +26,16 @@ export class UpdateOrganizationDto extends PartialType(
   @IsOptional()
   @IsBoolean()
   multiCurrencyEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Habilitar/deshabilitar el módulo de caja registradora para el tenant. ' +
+      'Cuando es false, los flujos de apertura/cierre de caja, validaciones ' +
+      'previas a facturación y la opción "Caja del día" en gastos quedan ' +
+      'desactivados para esta organización. Default: true.',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  cashRegisterEnabled?: boolean;
 }

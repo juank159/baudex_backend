@@ -147,8 +147,11 @@ export class ExpensesController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @HttpCode(HttpStatus.OK)
-  markAsPaid(@Param('id', ParseUUIDPipe) id: string) {
-    return this.expensesService.markAsPaid(id);
+  markAsPaid(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() payload?: { paidFrom?: any; bankAccountId?: string },
+  ) {
+    return this.expensesService.markAsPaid(id, payload);
   }
 
   @Post(':id/upload-attachments')

@@ -5,6 +5,7 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Raw } from 'typeorm';
@@ -14,13 +15,31 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserQueryDto } from './dto/user-query.dto';
 import { User, UserStatus, UserRole } from './entities/user.entity';
 import { PaginatedResponseDto } from '../common/dto/pagination-response.dto';
+import { TenantAwareService } from '../common/services/tenant-aware.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly tenantAwareService: TenantAwareService,
   ) {}
+
+  /**
+   * Devuelve el organizationId del tenant del request actual.
+   * Lanza UnauthorizedException si no hay contexto de tenant.
+   * CRÍTICO: usar en TODOS los métodos del CRUD de empleados para
+   * garantizar aislamiento entre tenants.
+   */
+  private getCurrentTenantId(): string {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new UnauthorizedException(
+        'Contexto de tenant no disponible',
+      );
+    }
+    return tenantId;
+  }
 
   // ==================== MÉTODOS DE CREACIÓN ====================
 
@@ -28,15 +47,20 @@ export class UsersService {
    * Crear un nuevo usuario
    */
   async create(createUserDto: CreateUserDto): Promise<User> {
-    // Verificar si el email ya existe
+    const tenantId = this.getCurrentTenantId();
+
+    // Verificar si el email ya existe (global, ya que email es único cross-tenant)
     const existingUser = await this.findByEmail(createUserDto.email);
     if (existingUser) {
       throw new ConflictException('El email ya está registrado');
     }
 
-    // Crear usuario (password se encripta automáticamente en @BeforeInsert)
+    // Crear usuario asociado al tenant del request — NUNCA confiar en
+    // organizationId del body para evitar que un admin cree usuarios en
+    // otro tenant.
     const user = this.userRepository.create({
       ...createUserDto,
+      organizationId: tenantId,
       status: UserStatus.ACTIVE,
     });
 
@@ -53,6 +77,7 @@ export class UsersService {
    * Obtener todos los usuarios con paginación y filtros
    */
   async findAll(query: UserQueryDto): Promise<PaginatedResponseDto<User>> {
+    const tenantId = this.getCurrentTenantId();
     const {
       page = 1,
       limit = 10,
@@ -77,9 +102,12 @@ export class UsersService {
         'user.lastLoginAt',
         'user.createdAt',
         'user.updatedAt',
-      ]);
+      ])
+      // CRÍTICO: aislamiento multi-tenant. Sin esto, cada admin ve
+      // empleados de TODAS las organizaciones — bug grave de privacidad.
+      .where('user.organizationId = :tenantId', { tenantId });
 
-    // Filtros
+    // Filtros adicionales
     if (search) {
       queryBuilder.andWhere(
         '(user.firstName ILIKE :search OR user.lastName ILIKE :search OR user.email ILIKE :search)',
@@ -118,9 +146,41 @@ export class UsersService {
   }
 
   /**
-   * Obtener un usuario por ID
+   * Obtener un usuario por ID, restringido al tenant actual.
+   * CRÍTICO: aislamiento multi-tenant. Un admin no puede leer un
+   * usuario de OTRO tenant aunque conozca el UUID.
    */
   async findOne(id: string): Promise<User> {
+    const tenantId = this.getCurrentTenantId();
+    const user = await this.userRepository.findOne({
+      where: { id, organizationId: tenantId },
+      select: [
+        'id',
+        'firstName',
+        'lastName',
+        'email',
+        'phone',
+        'role',
+        'status',
+        'avatar',
+        'lastLoginAt',
+        'createdAt',
+        'updatedAt',
+      ],
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    return user;
+  }
+
+  /**
+   * Variante SIN filtro de tenant. Solo para uso interno (auth flow,
+   * validación de tokens, JwtStrategy). NO exponer en endpoints públicos.
+   */
+  async findOneAnyTenant(id: string): Promise<User> {
     const user = await this.userRepository.findOne({
       where: { id },
       select: [
@@ -132,6 +192,7 @@ export class UsersService {
         'role',
         'status',
         'avatar',
+        'organizationId',
         'lastLoginAt',
         'createdAt',
         'updatedAt',
@@ -222,8 +283,9 @@ export class UsersService {
    * Actualizar un usuario
    */
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    const tenantId = this.getCurrentTenantId();
     const user = await this.userRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
     });
 
     if (!user) {
@@ -302,7 +364,10 @@ export class UsersService {
    * Actualizar estado del usuario
    */
   async updateStatus(id: string, status: UserStatus): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const tenantId = this.getCurrentTenantId();
+    const user = await this.userRepository.findOne({
+      where: { id, organizationId: tenantId },
+    });
 
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
@@ -328,7 +393,10 @@ export class UsersService {
    * Actualizar avatar del usuario
    */
   async updateAvatar(id: string, avatarUrl: string): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const tenantId = this.getCurrentTenantId();
+    const user = await this.userRepository.findOne({
+      where: { id, organizationId: tenantId },
+    });
 
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
@@ -347,16 +415,23 @@ export class UsersService {
    * Eliminación suave de usuario
    */
   async softDelete(id: string): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const tenantId = this.getCurrentTenantId();
+    const user = await this.userRepository.findOne({
+      where: { id, organizationId: tenantId },
+    });
 
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    // No permitir eliminar el último admin activo
+    // No permitir eliminar el último admin activo del MISMO tenant
     if (user.role === UserRole.ADMIN) {
       const activeAdmins = await this.userRepository.count({
-        where: { role: UserRole.ADMIN, status: UserStatus.ACTIVE },
+        where: {
+          role: UserRole.ADMIN,
+          status: UserStatus.ACTIVE,
+          organizationId: tenantId,
+        },
       });
 
       if (activeAdmins <= 1) {
@@ -374,8 +449,9 @@ export class UsersService {
    * Restaurar usuario eliminado
    */
   async restore(id: string): Promise<User> {
+    const tenantId = this.getCurrentTenantId();
     const user = await this.userRepository.findOne({
-      where: { id },
+      where: { id, organizationId: tenantId },
       withDeleted: true,
     });
 
@@ -408,26 +484,29 @@ export class UsersService {
     activePercentage: number;
     recentRegistrations: number;
   }> {
-    const total = await this.userRepository.count();
+    const tenantId = this.getCurrentTenantId();
+    const total = await this.userRepository.count({
+      where: { organizationId: tenantId },
+    });
     const active = await this.userRepository.count({
-      where: { status: UserStatus.ACTIVE },
+      where: { status: UserStatus.ACTIVE, organizationId: tenantId },
     });
     const inactive = await this.userRepository.count({
-      where: { status: UserStatus.INACTIVE },
+      where: { status: UserStatus.INACTIVE, organizationId: tenantId },
     });
     const suspended = await this.userRepository.count({
-      where: { status: UserStatus.SUSPENDED },
+      where: { status: UserStatus.SUSPENDED, organizationId: tenantId },
     });
 
-    // Estadísticas por rol
+    // Estadísticas por rol (solo del tenant actual)
     const adminCount = await this.userRepository.count({
-      where: { role: UserRole.ADMIN },
+      where: { role: UserRole.ADMIN, organizationId: tenantId },
     });
     const managerCount = await this.userRepository.count({
-      where: { role: UserRole.MANAGER },
+      where: { role: UserRole.MANAGER, organizationId: tenantId },
     });
     const userCount = await this.userRepository.count({
-      where: { role: UserRole.USER },
+      where: { role: UserRole.USER, organizationId: tenantId },
     });
 
     // Registros recientes (últimos 30 días)
@@ -436,6 +515,7 @@ export class UsersService {
 
     const recentRegistrations = await this.userRepository.count({
       where: {
+        organizationId: tenantId,
         createdAt: {
           $gte: thirtyDaysAgo,
         } as any,
@@ -462,6 +542,7 @@ export class UsersService {
    * Buscar usuarios por término
    */
   async search(searchTerm: string, limit: number = 10): Promise<User[]> {
+    const tenantId = this.getCurrentTenantId();
     return this.userRepository
       .createQueryBuilder('user')
       .select([
@@ -473,8 +554,9 @@ export class UsersService {
         'user.status',
         'user.avatar',
       ])
-      .where(
-        'user.firstName ILIKE :search OR user.lastName ILIKE :search OR user.email ILIKE :search',
+      .where('user.organizationId = :tenantId', { tenantId })
+      .andWhere(
+        '(user.firstName ILIKE :search OR user.lastName ILIKE :search OR user.email ILIKE :search)',
         { search: `%${searchTerm}%` },
       )
       .andWhere('user.status = :status', { status: UserStatus.ACTIVE })
@@ -489,6 +571,9 @@ export class UsersService {
    * Verificar si un email está disponible
    */
   async isEmailAvailable(email: string, excludeId?: string): Promise<boolean> {
+    // Email es único GLOBAL (cross-tenant) en el sistema, así que la
+    // verificación NO se filtra por tenant — un email ya usado en otro
+    // tenant tampoco se puede reutilizar aquí.
     const query = this.userRepository
       .createQueryBuilder('user')
       .where('LOWER(user.email) = LOWER(:email)', { email: email.trim() });

@@ -3,10 +3,15 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
 import { BankAccount } from './entities/bank-account.entity';
+import {
+  BankAccountMovement,
+  BankAccountMovementType,
+} from './entities/bank-account-movement.entity';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto';
 import { BankAccountQueryDto } from './dto/bank-account-query.dto';
@@ -51,6 +56,8 @@ export class BankAccountsService {
   constructor(
     @InjectRepository(BankAccount)
     private readonly bankAccountRepository: Repository<BankAccount>,
+    @InjectRepository(BankAccountMovement)
+    private readonly movementRepository: Repository<BankAccountMovement>,
     @InjectRepository(Payment)
     private readonly paymentRepository: Repository<Payment>,
     @InjectRepository(CreditPayment)
@@ -316,25 +323,65 @@ export class BankAccountsService {
   }
 
   /**
-   * Actualizar el saldo de una cuenta bancaria por ID directamente (para transacciones)
-   * Este método NO valida tenant, debe usarse dentro de transacciones controladas
+   * Actualizar saldo de una cuenta + registrar movement auditable.
+   *
+   * Reemplaza el viejo `updateBalanceById` que solo movía el saldo sin
+   * historial. Ahora cada llamada genera un BankAccountMovement con el
+   * `type` apropiado (default ADJUSTMENT) y un snapshot de balanceAfter.
+   *
+   * Mantiene la firma original (3 parámetros) para no romper callers, y
+   * acepta parámetros opcionales para clasificar el movement correctamente.
+   *
+   * - amount: positivo suma al saldo, negativo resta.
+   * - type: por defecto ADJUSTMENT. Pasar el correspondiente cuando viene
+   *   de un módulo (INVOICE_PAYMENT, CREDIT_PAYMENT, EXPENSE_PAYMENT, REFUND).
    */
   async updateBalanceById(
     accountId: string,
     amount: number,
     organizationId: string,
+    options?: {
+      type?: BankAccountMovementType;
+      description?: string;
+      referenceType?: string;
+      referenceId?: string;
+      createdById?: string;
+      manager?: EntityManager;
+      allowOverdraft?: boolean;
+    },
   ): Promise<void> {
-    await this.bankAccountRepository
-      .createQueryBuilder()
-      .update(BankAccount)
-      .set({
-        currentBalance: () => `current_balance + ${amount}`,
-      })
-      .where('id = :accountId', { accountId })
-      .andWhere('organizationId = :organizationId', { organizationId })
-      .execute();
+    if (amount === 0) return;
+    const type = options?.type ?? BankAccountMovementType.ADJUSTMENT;
+    // El monto siempre se pasa positivo a recordMovement; el signo lo
+    // determina el tipo. Cuando llega negativo (resta), interpretamos
+    // como salida y usamos su valor absoluto.
+    const isNegativeAmount = amount < 0;
+    const absAmount = Math.abs(amount);
+    // Si type es ADJUSTMENT, indicar dirección via metadata.
+    const metadata =
+      type === BankAccountMovementType.ADJUSTMENT
+        ? { direction: isNegativeAmount ? 'subtract' : 'add' }
+        : undefined;
 
-    console.log(`💰 Saldo actualizado para cuenta ${accountId}: +$${amount.toLocaleString()}`);
+    await this.recordMovement({
+      bankAccountId: accountId,
+      type,
+      amount: absAmount,
+      description: options?.description,
+      referenceType: options?.referenceType,
+      referenceId: options?.referenceId,
+      metadata,
+      organizationId,
+      createdById: options?.createdById,
+      manager: options?.manager,
+      // Para mantener compatibilidad con flujos legacy que cobraban siempre
+      // sin validar saldo (ej: invoice payment puede meter negativo en ajustes
+      // contables), permitimos sobregiro si NO es WITHDRAWAL ni EXPENSE_PAYMENT.
+      allowOverdraft:
+        options?.allowOverdraft ??
+        (type !== BankAccountMovementType.WITHDRAWAL &&
+          type !== BankAccountMovementType.EXPENSE_PAYMENT),
+    });
   }
 
   /**
@@ -716,6 +763,507 @@ export class BankAccountsService {
         periodEnd: endDate,
         averageTransaction,
       },
+    };
+  }
+
+  // ==================== MOVEMENTS API ====================
+
+  /**
+   * Núcleo de la auditoría de saldos: registra UN movement y actualiza
+   * el balance de la cuenta en una sola transacción atómica.
+   *
+   * Validaciones:
+   *   - Monto > 0 (el signo lo determina el tipo).
+   *   - Si es outflow y `allowOverdraft=false` (default), valida que el
+   *     saldo no quede negativo.
+   *
+   * Use desde TODOS los puntos donde antes se llamaba updateBalance/
+   * updateBalanceById, para garantizar que cada cambio de saldo deja
+   * registro auditable.
+   */
+  async recordMovement(params: {
+    bankAccountId: string;
+    type: BankAccountMovementType;
+    amount: number;
+    movementDate?: Date;
+    description?: string;
+    referenceType?: string;
+    referenceId?: string;
+    counterpartyAccountId?: string;
+    counterpartyMovementId?: string;
+    metadata?: Record<string, any>;
+    organizationId: string;
+    createdById?: string;
+    /** Si es true, no valida saldo negativo. Default: false. */
+    allowOverdraft?: boolean;
+    /**
+     * Permite ejecutar dentro de una transacción externa para garantizar
+     * atomicidad con otras operaciones (ej: registrar pago + movement).
+     * Si no se pasa, se usa una transacción interna.
+     */
+    manager?: EntityManager;
+  }): Promise<BankAccountMovement> {
+    if (!params.amount || params.amount <= 0) {
+      throw new BadRequestException(
+        'El monto del movimiento debe ser mayor a cero',
+      );
+    }
+
+    const exec = async (mgr: EntityManager): Promise<BankAccountMovement> => {
+      // 1. Calcular el delta (signo según tipo). Sin lock pesimista para
+      // evitar deadlocks cuando este método se llama desde otra
+      // transacción ya abierta (invoices, credit-payments, etc.).
+      const isInflow = BankAccountMovement.isInflow(params.type);
+      const isOutflow = BankAccountMovement.isOutflow(params.type);
+      let delta = params.amount;
+      if (isOutflow) delta = -params.amount;
+      else if (!isInflow) {
+        // ADJUSTMENT u otros: leer signo de metadata.direction
+        if (params.metadata?.direction === 'subtract') {
+          delta = -params.amount;
+        }
+      }
+
+      const allowOverdraft = params.allowOverdraft ?? false;
+
+      // 2. UPDATE atómico SQL.
+      // - `current_balance + delta` es atómico a nivel de fila en Postgres.
+      // - Si !allowOverdraft, condicionamos el UPDATE a que el resultado
+      //   sea >= 0. Si la condición falla, NO actualiza fila → detectamos
+      //   saldo insuficiente.
+      const qb = mgr
+        .getRepository(BankAccount)
+        .createQueryBuilder()
+        .update(BankAccount)
+        .set({
+          currentBalance: () => `current_balance + ${delta}`,
+        })
+        .where('id = :id', { id: params.bankAccountId })
+        .andWhere('organization_id = :org', {
+          org: params.organizationId,
+        });
+      if (!allowOverdraft && delta < 0) {
+        qb.andWhere('current_balance + :delta >= 0', { delta });
+      }
+      const result = await qb.execute();
+
+      // Si no actualizó nada → la cuenta no existe O el saldo era insuficiente
+      const affected = result.affected ?? 0;
+      if (affected === 0) {
+        console.error(
+          `❌ recordMovement UPDATE no afectó filas: ` +
+            `accountId=${params.bankAccountId} org=${params.organizationId} ` +
+            `delta=${delta} type=${params.type} affected=${affected}`,
+        );
+        // Distinguir entre "cuenta no existe" y "saldo insuficiente"
+        const exists = await mgr
+          .getRepository(BankAccount)
+          .findOne({
+            where: {
+              id: params.bankAccountId,
+              organizationId: params.organizationId,
+            },
+          });
+        if (!exists) {
+          throw new NotFoundException(
+            `Cuenta bancaria no encontrada: ${params.bankAccountId} (org: ${params.organizationId})`,
+          );
+        }
+        throw new BadRequestException(
+          `Saldo insuficiente en "${exists.name}". Saldo actual: ` +
+            `$${Number(exists.currentBalance).toLocaleString()}, ` +
+            `intenta retirar: $${params.amount.toLocaleString()}`,
+        );
+      }
+
+      // 3. Leer el saldo final con SELECT explícito.
+      // Antes usábamos RETURNING + raw[0].current_balance, pero TypeORM no
+      // estandariza los nombres del raw entre dialectos/versiones y a veces
+      // dejaba `undefined → NaN` en balance_after. Un SELECT extra cuesta
+      // un round-trip pero garantiza consistencia (y el transformer del
+      // entity convierte string → number automáticamente).
+      const updatedAccount = await mgr
+        .getRepository(BankAccount)
+        .findOne({
+          where: {
+            id: params.bankAccountId,
+            organizationId: params.organizationId,
+          },
+        });
+      if (!updatedAccount) {
+        // Edge case: alguien borró la cuenta entre el UPDATE y el SELECT.
+        throw new NotFoundException(
+          `Cuenta bancaria desapareció durante la operación: ${params.bankAccountId}`,
+        );
+      }
+      const finalBalance = Number(updatedAccount.currentBalance) || 0;
+      const accountName = updatedAccount.name;
+
+      // 3. Crear movement con snapshot del saldo final
+      const movement = mgr.getRepository(BankAccountMovement).create({
+        bankAccountId: params.bankAccountId,
+        type: params.type,
+        amount: params.amount,
+        balanceAfter: finalBalance,
+        movementDate: params.movementDate ?? new Date(),
+        description: params.description,
+        referenceType: params.referenceType,
+        referenceId: params.referenceId,
+        counterpartyAccountId: params.counterpartyAccountId,
+        counterpartyMovementId: params.counterpartyMovementId,
+        metadata: params.metadata,
+        organizationId: params.organizationId,
+        createdById: params.createdById,
+      });
+      const saved = await mgr.getRepository(BankAccountMovement).save(movement);
+
+      console.log(
+        `📒 Movement ${params.type} $${params.amount.toLocaleString()} → ` +
+          `${accountName}: $${finalBalance.toLocaleString()}`,
+      );
+
+      return saved;
+    };
+
+    if (params.manager) {
+      // Composer con transacción externa: usar su manager
+      return await exec(params.manager);
+    }
+    // Sin transacción externa: ejecutar directamente con `em`.
+    // El UPDATE atómico (current_balance + delta) NO necesita transacción
+    // explícita — es self-contained a nivel de fila en Postgres. Y el INSERT
+    // del movement subsiguiente, si falla, queda inconsistente PERO no
+    // bloquea (vs antes con tx interna que podía deadlockar contra externas).
+    // Si en el futuro necesitamos atomicidad estricta para callers sin
+    // manager, agregar aquí un wrapping con `this.em.transaction` PERO
+    // verificar primero que no exista una transacción externa ya abierta.
+    return await exec(this.em);
+  }
+
+  /**
+   * Depósito manual del usuario (entra plata a la cuenta sin venir de una
+   * factura/abono).
+   */
+  async depositManual(params: {
+    bankAccountId: string;
+    amount: number;
+    description?: string;
+    movementDate?: Date;
+    organizationId: string;
+    createdById?: string;
+  }): Promise<BankAccountMovement> {
+    return this.recordMovement({
+      ...params,
+      type: BankAccountMovementType.DEPOSIT,
+      description: params.description ?? 'Depósito manual',
+    });
+  }
+
+  /**
+   * Retiro manual del usuario (sale plata sin gasto formal asociado).
+   */
+  async withdrawManual(params: {
+    bankAccountId: string;
+    amount: number;
+    description?: string;
+    movementDate?: Date;
+    organizationId: string;
+    createdById?: string;
+  }): Promise<BankAccountMovement> {
+    return this.recordMovement({
+      ...params,
+      type: BankAccountMovementType.WITHDRAWAL,
+      description: params.description ?? 'Retiro manual',
+    });
+  }
+
+  /**
+   * Transferencia entre dos cuentas. Genera 2 movements atómicos
+   * (transfer_out de origen + transfer_in de destino) cruzados por
+   * `counterpartyMovementId`. Si una mitad falla, ninguna se aplica.
+   */
+  async transferBetweenAccounts(params: {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    description?: string;
+    movementDate?: Date;
+    organizationId: string;
+    createdById?: string;
+  }): Promise<{
+    outMovement: BankAccountMovement;
+    inMovement: BankAccountMovement;
+  }> {
+    if (params.fromAccountId === params.toAccountId) {
+      throw new BadRequestException(
+        'No se puede transferir a la misma cuenta',
+      );
+    }
+    if (!params.amount || params.amount <= 0) {
+      throw new BadRequestException('El monto debe ser mayor a cero');
+    }
+
+    return await this.em.transaction(async (mgr) => {
+      const out = await this.recordMovement({
+        bankAccountId: params.fromAccountId,
+        type: BankAccountMovementType.TRANSFER_OUT,
+        amount: params.amount,
+        movementDate: params.movementDate,
+        description:
+            params.description ?? 'Transferencia entre cuentas (salida)',
+        counterpartyAccountId: params.toAccountId,
+        organizationId: params.organizationId,
+        createdById: params.createdById,
+        manager: mgr,
+      });
+      const inn = await this.recordMovement({
+        bankAccountId: params.toAccountId,
+        type: BankAccountMovementType.TRANSFER_IN,
+        amount: params.amount,
+        movementDate: params.movementDate,
+        description:
+            params.description ?? 'Transferencia entre cuentas (entrada)',
+        counterpartyAccountId: params.fromAccountId,
+        counterpartyMovementId: out.id,
+        organizationId: params.organizationId,
+        createdById: params.createdById,
+        manager: mgr,
+      });
+      // Cerrar el ciclo: out apunta al inn
+      out.counterpartyMovementId = inn.id;
+      await mgr.getRepository(BankAccountMovement).save(out);
+      return { outMovement: out, inMovement: inn };
+    });
+  }
+
+  /**
+   * Lista los movements REALES (de la nueva tabla) de una cuenta para un
+   * período. Reemplaza el cálculo on-the-fly de getTransactions.
+   */
+  async listMovements(params: {
+    bankAccountId: string;
+    organizationId: string;
+    startDate?: Date;
+    endDate?: Date;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    items: BankAccountMovement[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = params.page ?? 1;
+    const limit = Math.min(params.limit ?? 50, 200);
+
+    const qb = this.movementRepository
+      .createQueryBuilder('m')
+      .where('m.bankAccountId = :acc', { acc: params.bankAccountId })
+      .andWhere('m.organizationId = :org', {
+        org: params.organizationId,
+      })
+      .orderBy('m.movementDate', 'DESC')
+      .addOrderBy('m.createdAt', 'DESC');
+
+    if (params.startDate) {
+      qb.andWhere('m.movementDate >= :start', { start: params.startDate });
+    }
+    if (params.endDate) {
+      qb.andWhere('m.movementDate <= :end', { end: params.endDate });
+    }
+
+    const total = await qb.getCount();
+    const items = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return { items, total, page, limit };
+  }
+
+  // ==================== AUDITORÍA ====================
+
+  /**
+   * Audita las cuentas bancarias del tenant: compara `currentBalance` con
+   * el balance "esperado" reconstruido desde los movimientos. Devuelve
+   * SOLO las cuentas con discrepancia para que el admin decida si las
+   * recalcula. Las cuentas sin movimientos comparan contra `openingBalance`.
+   *
+   * Esta operación es READ-ONLY y barata: una sola query por cuenta.
+   */
+  async auditAccounts(): Promise<
+    Array<{
+      bankAccountId: string;
+      accountName: string;
+      storedBalance: number;
+      computedBalance: number;
+      difference: number;
+      movementCount: number;
+      lastMovementDate: Date | null;
+    }>
+  > {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new UnauthorizedException('Contexto de tenant no disponible');
+    }
+
+    const accounts = await this.bankAccountRepository.find({
+      where: { organizationId: tenantId },
+    });
+
+    const results: Array<{
+      bankAccountId: string;
+      accountName: string;
+      storedBalance: number;
+      computedBalance: number;
+      difference: number;
+      movementCount: number;
+      lastMovementDate: Date | null;
+    }> = [];
+
+    for (const account of accounts) {
+      // El saldo se reconstruye desde 0: el saldo inicial es un movimiento
+      // de tipo INITIAL_BALANCE, así que 0 + sum(movimientos) = balance real.
+      const computed = await this._computeBalanceFromMovements(account.id, 0);
+      const stored = Number(account.currentBalance) || 0;
+      const diff = +(stored - computed.balance).toFixed(2);
+      // Solo reportamos las que tienen diferencia significativa (>= 1 centavo)
+      if (Math.abs(diff) >= 0.01) {
+        results.push({
+          bankAccountId: account.id,
+          accountName: account.name,
+          storedBalance: stored,
+          computedBalance: +computed.balance.toFixed(2),
+          difference: diff,
+          movementCount: computed.count,
+          lastMovementDate: computed.lastDate,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Recalcula el balance de UNA cuenta basado en los movimientos. Reescribe
+   * `balanceAfter` de cada movimiento (cronológicamente) y actualiza
+   * `currentBalance` de la cuenta. Operación atómica.
+   */
+  async recalculateBalance(
+    accountId: string,
+  ): Promise<{
+    bankAccountId: string;
+    previousBalance: number;
+    newBalance: number;
+    movementCount: number;
+  }> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new UnauthorizedException('Contexto de tenant no disponible');
+    }
+
+    const account = await this.bankAccountRepository.findOne({
+      where: { id: accountId, organizationId: tenantId },
+    });
+    if (!account) {
+      throw new NotFoundException('Cuenta bancaria no encontrada');
+    }
+
+    const previousBalance = Number(account.currentBalance) || 0;
+
+    const movements = await this.movementRepository.find({
+      where: {
+        bankAccountId: account.id,
+        organizationId: tenantId,
+      },
+      order: {
+        movementDate: 'ASC',
+        createdAt: 'ASC',
+      },
+    });
+
+    // Reconstruir balanceAfter en cascada desde 0. El saldo inicial es
+    // un movimiento INITIAL_BALANCE que se suma como inflow normal.
+    let running = 0;
+    for (const mv of movements) {
+      if (BankAccountMovement.isInflow(mv.type)) {
+        running += Number(mv.amount) || 0;
+      } else if (BankAccountMovement.isOutflow(mv.type)) {
+        running -= Number(mv.amount) || 0;
+      } else {
+        // ADJUSTMENT: si el balanceAfter previo era válido, conservarlo
+        // (un ajuste manual no debería perder su signo). Si no, sumar.
+        const previousAfter = Number(mv.balanceAfter);
+        if (!Number.isNaN(previousAfter) && previousAfter !== 0) {
+          running = previousAfter;
+        } else {
+          running += Number(mv.amount) || 0;
+        }
+      }
+      mv.balanceAfter = +running.toFixed(2);
+    }
+
+    // Persistir todo en una transacción.
+    await this.movementRepository.manager.transaction(async (em) => {
+      if (movements.length > 0) {
+        await em.save(BankAccountMovement, movements);
+      }
+      account.currentBalance = +running.toFixed(2);
+      await em.save(BankAccount, account);
+    });
+
+    return {
+      bankAccountId: account.id,
+      previousBalance: +previousBalance.toFixed(2),
+      newBalance: +running.toFixed(2),
+      movementCount: movements.length,
+    };
+  }
+
+  /**
+   * Helper privado: calcula el balance ESPERADO de una cuenta a partir
+   * de sus movimientos, comenzando desde `openingBalance`. Read-only.
+   */
+  private async _computeBalanceFromMovements(
+    accountId: string,
+    openingBalance: number,
+  ): Promise<{ balance: number; count: number; lastDate: Date | null }> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    const movements = await this.movementRepository.find({
+      where: {
+        bankAccountId: accountId,
+        organizationId: tenantId ?? undefined,
+      },
+      order: {
+        movementDate: 'ASC',
+        createdAt: 'ASC',
+      },
+    });
+
+    if (movements.length === 0) {
+      return { balance: openingBalance, count: 0, lastDate: null };
+    }
+
+    let running = openingBalance;
+    for (const mv of movements) {
+      if (BankAccountMovement.isInflow(mv.type)) {
+        running += Number(mv.amount) || 0;
+      } else if (BankAccountMovement.isOutflow(mv.type)) {
+        running -= Number(mv.amount) || 0;
+      } else {
+        const previousAfter = Number(mv.balanceAfter);
+        if (!Number.isNaN(previousAfter) && previousAfter !== 0) {
+          running = previousAfter;
+        } else {
+          running += Number(mv.amount) || 0;
+        }
+      }
+    }
+
+    return {
+      balance: running,
+      count: movements.length,
+      lastDate: movements[movements.length - 1].movementDate,
     };
   }
 }

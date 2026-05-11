@@ -25,6 +25,7 @@ import {
 } from '../common/dto/pagination-response.dto';
 import { CustomersService } from '../customers/customers.service';
 import { ProductService } from '../products/products.service';
+import { ProductPresentation } from '../products/entities/product-presentation.entity';
 import { TemporaryProductService } from '../products/temporary-product.service';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
 import { UserPreferencesService } from '../users/user-preferences.service';
@@ -41,6 +42,8 @@ import { CustomerCredit, CreditStatus } from '../customer-credits/entities/custo
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
 import { CreditTransaction, CreditTransactionType } from '../customer-credits/entities/credit-transaction.entity';
 import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
+import { CashRegisterService } from '../cash-register/cash-register.service';
+import { BankAccountMovementType } from '../bank-accounts/entities/bank-account-movement.entity';
 import { ClientBalanceService } from '../customer-credits/client-balance.service';
 import { SubscriptionService } from '../subscriptions/services/subscription.service';
 
@@ -72,6 +75,7 @@ export class InvoicesService {
     @Inject(forwardRef(() => CustomerCreditsService))
     private readonly customerCreditsService: CustomerCreditsService,
     private readonly bankAccountsService: BankAccountsService, // 🏦 Servicio de cuentas bancarias
+    private readonly cashRegisterService: CashRegisterService, // 🧾 Caja registradora (Phase 2)
     @Inject(forwardRef(() => ClientBalanceService))
     private readonly clientBalanceService: ClientBalanceService, // 💰 Servicio de saldo a favor
     private readonly subscriptionService: SubscriptionService, // 📋 Servicio de suscripciones
@@ -101,6 +105,13 @@ export class InvoicesService {
     if (createInvoiceDto.paymentMethod === PaymentMethod.CREDIT) {
       await this.validateCreditAvailability(customer, createInvoiceDto);
     }
+
+    // 🔒 PHASE 2: Validar caja abierta para ventas en efectivo.
+    // Si la factura tiene algún pago en cash (sea método principal cash
+    // o un pago múltiple en cash), debe haber caja abierta del tenant.
+    // Frontend ya valida pero el backend es la última línea de defensa
+    // (puede haber clientes desactualizados o llamadas API directas).
+    await this.validateCashRegisterIfNeeded(createInvoiceDto, tenantId);
 
     // ✅ VERIFICAR PRODUCTOS REGISTRADOS Y CREAR TEMPORALES
     const processedItems = [];
@@ -188,6 +199,29 @@ export class InvoicesService {
         timeZone: orgTimezone,
       }); // "YYYY-MM-DD" en timezone del tenant
 
+      // Pre-resolver presentaciones (Fase 3): si un item viene con
+      // presentationId, validar que existe y que pertenece al producto. Snapshot
+      // del factor para preservar integridad histórica si la presentación cambia.
+      const presentationByIndex = await Promise.all(
+        processedItems.map(async (itemDto) => {
+          if (!itemDto.presentationId || !itemDto.productId) return null;
+          const pres = await manager.findOne(ProductPresentation, {
+            where: { id: itemDto.presentationId },
+          });
+          if (!pres) {
+            throw new BadRequestException(
+              `Presentación ${itemDto.presentationId} no encontrada`,
+            );
+          }
+          if (pres.productId !== itemDto.productId) {
+            throw new BadRequestException(
+              `La presentación ${pres.id} no pertenece al producto ${itemDto.productId}`,
+            );
+          }
+          return pres;
+        }),
+      );
+
       // Crear factura
       const invoice = manager.create(Invoice, {
         number: createInvoiceDto.number,
@@ -207,10 +241,15 @@ export class InvoicesService {
 
         // ✅ CREAR ITEMS CON PRODUCTOS TEMPORALES Y CÁLCULO FIFO
         items: await Promise.all(
-          processedItems.map(async (itemDto) => {
+          processedItems.map(async (itemDto, idx) => {
             let unitCost = 0;
             let totalCost = 0;
             let itemTaxPercentage = 0; // ✅ IVA del item basado en el producto
+
+            const presentation = presentationByIndex[idx];
+            const factor = presentation?.factor ?? 1;
+            // baseQuantity = lo que se descuenta del stock (en unidad base)
+            const baseQuantity = Number(itemDto.quantity) * factor;
 
             // ✅ CALCULAR COSTO FIFO PARA PRODUCTOS REGISTRADOS
             if (itemDto.productId) {
@@ -232,13 +271,19 @@ export class InvoicesService {
                   itemTaxPercentage = 0;
                 }
 
+                // FIFO se calcula sobre la cantidad real descontada (unidad base).
+                // unitCost del item se reescala a "costo por presentación" para que
+                // quantity × unitCost = totalCost se siga manteniendo.
                 const fifoCost = await this.inventoryService.calculateFifoCost(
                   itemDto.productId,
-                  itemDto.quantity,
+                  baseQuantity,
                   tenantId,
                 );
-                unitCost = fifoCost.unitCost;
                 totalCost = fifoCost.totalCost;
+                unitCost =
+                  Number(itemDto.quantity) > 0
+                    ? totalCost / Number(itemDto.quantity)
+                    : fifoCost.unitCost;
               } catch (error) {
                 console.warn(
                   `⚠️ No se pudo calcular FIFO para producto ${itemDto.productId}: ${error.message}`,
@@ -289,6 +334,9 @@ export class InvoicesService {
               totalCost,
               // ✅ USAR EL IVA DEL PRODUCTO INDIVIDUAL (NO global de la factura)
               taxPercentage: itemTaxPercentage,
+              // Presentación de venta (Fase 3) — null si no aplica
+              presentationId: itemDto.presentationId,
+              presentationFactor: presentation?.factor,
             });
           }),
         ),
@@ -463,20 +511,40 @@ export class InvoicesService {
       await manager.save(Payment, payment);
 
 
-      // 🏦 Actualizar saldo de cuenta bancaria usando el manager de la transacción
+      // 🏦 Actualizar saldo de cuenta bancaria + registrar movement.
+      // Usa el bankAccountsService para que cada pago genere un
+      // BankAccountMovement auditable (tabla bank_account_movements).
+      // Pasa el `manager` para que el movement se registre en la misma
+      // transacción que el payment (atómico: si falla movement, falla payment).
       if (paymentData.bankAccountId) {
         try {
-          await manager
-            .createQueryBuilder()
-            .update('BankAccount')
-            .set({
-              currentBalance: () => `current_balance + ${amount}`,
-            })
-            .where('id = :id', { id: paymentData.bankAccountId })
-            .andWhere('organization_id = :orgId', { orgId: organizationId })
-            .execute();
-        } catch (error) {
-          console.warn(`   ⚠️ Error actualizando saldo de cuenta: ${error.message}`);
+          await this.bankAccountsService.updateBalanceById(
+            paymentData.bankAccountId,
+            amount,
+            organizationId,
+            {
+              type: BankAccountMovementType.INVOICE_PAYMENT,
+              description:
+                `Pago factura ${invoice.number}` +
+                (paymentData.bankAccountName
+                  ? ` vía ${paymentData.bankAccountName}`
+                  : ''),
+              referenceType: 'invoice',
+              referenceId: invoice.id,
+              createdById,
+              allowOverdraft: true,
+              manager,
+            },
+          );
+        } catch (error: any) {
+          console.error(
+            `❌ Error actualizando saldo en pago múltiple: ` +
+              `${error?.message || error}\n` +
+              `  bankAccountId=${paymentData.bankAccountId} ` +
+              `amount=${amount} invoiceId=${invoice.id}`,
+          );
+          if (error?.stack) console.error(error.stack);
+          throw error;
         }
       }
     }
@@ -571,7 +639,7 @@ export class InvoicesService {
           try {
             await this.inventoryService.registerSale(
               item.productId,
-              item.quantity,
+              item.baseQuantity,
               item.unitPrice,
               organizationId,
               createdById,
@@ -896,11 +964,36 @@ export class InvoicesService {
             try {
               await this.bankAccountsService.updateBalanceById(
                 bankAccountId,
-                remainingToPay, // ✅ CORREGIDO: Solo actualizar con el monto real pagado
+                remainingToPay,
                 organizationId || invoice.organizationId,
+                {
+                  type: BankAccountMovementType.INVOICE_PAYMENT,
+                  description: `Pago factura ${invoice.number}`,
+                  referenceType: 'invoice',
+                  referenceId: invoice.id,
+                  createdById: createdById || invoice.createdById,
+                  // Permitir sobregiro porque es un INGRESO — un payment
+                  // jamás puede dejar la cuenta negativa.
+                  allowOverdraft: true,
+                  // Pasar el manager de la transacción de invoices para
+                  // que recordMovement use ESA transacción y no abra otra
+                  // (evita posibles conflictos con setLock o aislamiento).
+                  manager,
+                },
               );
-            } catch (error) {
-              console.warn(`⚠️ Error actualizando saldo de cuenta: ${error.message}`);
+            } catch (error: any) {
+              console.error(
+                `❌ Error actualizando saldo de cuenta bancaria: ` +
+                  `${error?.message || error}\n` +
+                  `  bankAccountId=${bankAccountId} ` +
+                  `amount=${remainingToPay} ` +
+                  `invoiceId=${invoice.id}`,
+              );
+              if (error?.stack) console.error(error.stack);
+              // Re-lanzar para que la transacción haga rollback del payment
+              // si la actualización del saldo falla. Mejor que dejar
+              // estado inconsistente (payment registrado, saldo no movido).
+              throw error;
             }
           }
         } else {
@@ -918,7 +1011,7 @@ export class InvoicesService {
               try {
                 await this.inventoryService.registerSale(
                   item.productId,
-                  item.quantity,
+                  item.baseQuantity,
                   item.unitPrice,
                   invoice.organizationId,
                   invoice.createdById,
@@ -966,7 +1059,7 @@ export class InvoicesService {
               try {
                 await this.inventoryService.registerSale(
                   item.productId,
-                  item.quantity,
+                  item.baseQuantity,
                   item.unitPrice,
                   invoice.organizationId,
                   invoice.createdById,
@@ -2186,10 +2279,13 @@ export class InvoicesService {
         for (const item of invoice.items) {
           if (item.productId) {
             try {
-              // Registrar devolución de venta (reversa de venta)
+              // Registrar devolución de venta (reversa de venta).
+              // Usa baseQuantity para devolver al stock la cantidad real
+              // descontada al vender (cuando el item tenía presentación,
+              // el descuento fue quantity × factor en unidad base).
               await this.inventoryService.registerSaleReturn(
                 item.productId,
-                item.quantity,
+                item.baseQuantity,
                 item.unitCost || 0, // Usar el costo original de la venta
                 invoice.organizationId,
                 invoice.createdById,
@@ -2428,6 +2524,65 @@ export class InvoicesService {
   }
 
   // ========== MÉTODOS DE VALIDACIÓN DE SUSCRIPCIÓN ==========
+
+  /**
+   * 🔒 PHASE 2: Valida que haya una caja registradora abierta cuando la
+   * factura recibe pagos en efectivo. Sin caja abierta, NO se permite
+   * registrar la venta — el cajero debe abrir caja primero.
+   *
+   * Aplica si:
+   *   - `paymentMethod` principal es CASH y status va a tener pagos.
+   *   - O cualquier `multiplePayments[].method` es CASH.
+   *
+   * NO aplica si la factura es a crédito (no entra dinero) o si todos
+   * los pagos son por banco/transferencia/tarjeta (la caja no se toca).
+   */
+  private async validateCashRegisterIfNeeded(
+    dto: CreateInvoiceDto,
+    organizationId: string,
+  ): Promise<void> {
+    // ¿El método principal es cash?
+    const principalIsCash = dto.paymentMethod === PaymentMethod.CASH;
+
+    // Si la factura no se cobra al crearla (status PENDING sin pagos),
+    // no validamos. La validación correrá cuando se agreguen pagos en
+    // efectivo posteriormente vía addPayment.
+    const isPaidStatus =
+      dto.status === undefined || // default es paid
+      (dto.status as any) === 'paid' ||
+      (dto.status as any) === 'partially_paid';
+
+    if (!isPaidStatus) return;
+    if (!principalIsCash) return;
+
+    // Si el tenant tiene desactivado el módulo de caja (toggle en
+    // Settings → `organization.settings.cashRegisterEnabled = false`),
+    // NO exigimos caja abierta. El cliente decidió que su negocio no
+    // usa caja del día → facturación con efectivo funciona sin
+    // restricciones, los pagos cash se registran en `payments` normal.
+    //
+    // Sin esta verificación, aunque el frontend oculte toda la UI de
+    // caja, el backend rechaza el POST con 400 — exactamente el bug
+    // que vio el cliente Jeiner.
+    const organization = await this.organizationRepository.findOne({
+      where: { id: organizationId },
+      select: ['id', 'settings'],
+    });
+    const cashRegisterEnabled =
+      (organization?.settings as any)?.cashRegisterEnabled ?? true;
+    if (!cashRegisterEnabled) return;
+
+    // Hay efectivo Y el módulo de caja está activo: la caja DEBE estar abierta.
+    const openRegister =
+      await this.cashRegisterService.getOpenCashRegister(organizationId);
+    if (!openRegister) {
+      throw new BadRequestException(
+        'No hay una caja abierta. Para registrar ventas en efectivo, ' +
+          'abre la caja registradora primero (declarando el saldo inicial ' +
+          'del turno).',
+      );
+    }
+  }
 
   /**
    * 🔒 VALIDACIÓN DE SUSCRIPCIÓN ACTIVA

@@ -12,12 +12,18 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { BankAccountsService } from './bank-accounts.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { UpdateBankAccountDto } from './dto/update-bank-account.dto';
 import { BankAccountQueryDto } from './dto/bank-account-query.dto';
+import {
+  CreateBankAccountMovementDto,
+  TransferBetweenAccountsDto,
+} from './dto/create-bank-account-movement.dto';
+import { BankAccountMovementType } from './entities/bank-account-movement.entity';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../users/entities/user.entity';
@@ -94,6 +100,33 @@ export class BankAccountsController {
   }
 
   /**
+   * Auditar las cuentas bancarias del tenant para detectar discrepancias
+   * entre el saldo guardado (`currentBalance`) y el saldo reconstruido
+   * desde los movimientos. Devuelve solo cuentas con diferencia.
+   *
+   * GET /bank-accounts/audit
+   */
+  @Get('audit')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  audit() {
+    return this.bankAccountsService.auditAccounts();
+  }
+
+  /**
+   * Recalcular el balance de una cuenta. Reescribe `balanceAfter` de
+   * cada movimiento y actualiza `currentBalance`. Solo admin.
+   *
+   * POST /bank-accounts/:id/recalculate-balance
+   */
+  @Post(':id/recalculate-balance')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  recalculateBalance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.bankAccountsService.recalculateBalance(id);
+  }
+
+  /**
    * Obtener transacciones de una cuenta bancaria
    * GET /bank-accounts/:id/transactions
    */
@@ -166,5 +199,98 @@ export class BankAccountsController {
   @HttpCode(HttpStatus.OK)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.bankAccountsService.remove(id);
+  }
+
+  // ==================== MOVEMENTS ====================
+
+  /**
+   * Listar movements (historial real auditable) de una cuenta.
+   * Soporta filtro por rango de fechas y paginación.
+   * GET /bank-accounts/:id/movements
+   */
+  @Get(':id/movements')
+  async listMovements(
+    @Param('id', ParseUUIDPipe) id: string,
+    @TenantId() organizationId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.bankAccountsService.listMovements({
+      bankAccountId: id,
+      organizationId,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 50,
+    });
+  }
+
+  /**
+   * Registrar un movement manual (depósito o retiro). Solo se permiten
+   * tipos manuales — los tipos automáticos (INVOICE_PAYMENT, etc.) se
+   * crean desde sus módulos correspondientes.
+   * POST /bank-accounts/:id/movements
+   */
+  @Post(':id/movements')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  @HttpCode(HttpStatus.CREATED)
+  async createMovement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateBankAccountMovementDto,
+    @TenantId() organizationId: string,
+    @GetUser('id') userId: string,
+  ) {
+    // Permitir solo tipos manuales por este endpoint para evitar que el
+    // cliente cree movements de tipos reservados a otros módulos.
+    const allowedManualTypes = [
+      BankAccountMovementType.DEPOSIT,
+      BankAccountMovementType.WITHDRAWAL,
+      BankAccountMovementType.ADJUSTMENT,
+      BankAccountMovementType.INITIAL_BALANCE,
+    ];
+    if (!allowedManualTypes.includes(dto.type)) {
+      throw new BadRequestException(
+        'Solo se permiten movements manuales (deposit, withdrawal, ' +
+          'adjustment, initial_balance). Otros tipos se crean desde sus ' +
+          'módulos.',
+      );
+    }
+    return this.bankAccountsService.recordMovement({
+      bankAccountId: id,
+      type: dto.type,
+      amount: dto.amount,
+      description: dto.description,
+      movementDate: dto.movementDate ? new Date(dto.movementDate) : undefined,
+      organizationId,
+      createdById: userId,
+    });
+  }
+
+  /**
+   * Transferencia atómica entre dos cuentas. Genera 2 movements
+   * cruzados (transfer_out + transfer_in) en una transacción única.
+   * POST /bank-accounts/transfers
+   */
+  @Post('transfers')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @HttpCode(HttpStatus.CREATED)
+  async transfer(
+    @Body() dto: TransferBetweenAccountsDto,
+    @TenantId() organizationId: string,
+    @GetUser('id') userId: string,
+  ) {
+    return this.bankAccountsService.transferBetweenAccounts({
+      fromAccountId: dto.fromAccountId,
+      toAccountId: dto.toAccountId,
+      amount: dto.amount,
+      description: dto.description,
+      movementDate: dto.movementDate ? new Date(dto.movementDate) : undefined,
+      organizationId,
+      createdById: userId,
+    });
   }
 }

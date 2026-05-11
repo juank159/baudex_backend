@@ -145,6 +145,34 @@ export class DashboardQueryBuilder {
     `;
   }
 
+  // ───────── Notas de crédito CONFIRMADAS (=aplicadas) en el período ─────────
+  // El enum solo tiene draft/confirmed/cancelled — cuando se confirma se
+  // aplica simultáneamente al balance del cliente / factura. Por eso
+  // `status='confirmed'` ES la NC efectiva (no existe un 'applied' aparte).
+  // Usamos applied_at::date en TZ del tenant cuando existe; si no, fallback
+  // a date (fecha de emisión) para no perder NCs viejas que se confirmaron
+  // antes de que el campo applied_at fuera populado.
+  static creditNotesApplied(): string {
+    return `
+      SELECT
+        COALESCE(SUM(total), 0)::numeric AS total,
+        COUNT(*)::int                    AS count
+      FROM credit_notes
+      WHERE organization_id = $1
+        AND deleted_at IS NULL
+        AND status = 'confirmed'
+        AND (
+          (applied_at IS NOT NULL
+            AND (applied_at AT TIME ZONE $4)::date >= $2::date
+            AND (applied_at AT TIME ZONE $4)::date <= $3::date)
+          OR
+          (applied_at IS NULL
+            AND (date AT TIME ZONE $4)::date >= $2::date
+            AND (date AT TIME ZONE $4)::date <= $3::date)
+        )
+    `;
+  }
+
   // ───────── Receivables (cartera global con semáforo) ─────────
   // Calcula urgencia usando (NOW AT TIME ZONE orgTz)::date vs dueDate::date.
   static receivablesByUrgency(): string {
