@@ -38,6 +38,11 @@ RUN npm ci --only=production && npm cache clean --force
 # Copiar aplicación compilada desde builder
 COPY --from=builder /usr/src/app/dist ./dist
 
+# Copiar el entrypoint (responsable de correr migraciones + arrancar
+# el server). Va como archivo separado para que Dokploy / panels de
+# hosting NO puedan sobrescribirlo desde una "Start command" custom.
+COPY --chmod=755 docker-entrypoint.sh ./docker-entrypoint.sh
+
 # Cambiar propietario de archivos
 RUN chown -R nestjs:nodejs /usr/src/app
 
@@ -51,13 +56,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node dist/healthcheck.js || exit 1
 
-# Usar dumb-init como proceso principal
-ENTRYPOINT ["dumb-init", "--"]
-
-# Comando por defecto: corre las migraciones pendientes ANTES de
-# levantar el server. TypeORM mantiene la tabla `migrations` con las
-# ya aplicadas, así que esto es idempotente — al segundo arranque no
-# vuelve a correr las mismas. Si una migración falla el server no
-# arranca (deliberado: preferimos el contenedor reiniciando a que el
-# código nuevo apunte a un schema viejo y devuelva 500 al primer query).
-CMD ["sh", "-c", "node node_modules/typeorm/cli.js migration:run -d dist/database/typeorm.config.js && node --dns-result-order=ipv4first dist/main"]
+# ENTRYPOINT con dumb-init (manejo de señales correcto) + nuestro
+# script que aplica migraciones antes de arrancar. El script termina
+# con `exec` para que `node dist/main` reciba directamente PID 1 vía
+# dumb-init — señales SIGTERM/SIGINT le llegan limpias.
+ENTRYPOINT ["dumb-init", "--", "./docker-entrypoint.sh"]
