@@ -61,12 +61,37 @@ export class AuthService {
       password,
       firstName,
       lastName,
-      role = UserRole.MANAGER,
+      role: requestedRole,
       organizationName,
     } = registerDto;
 
     let targetOrganizationId = organizationId;
     let organization;
+
+    // 🔑 REGLA MULTITENANT — Rol del nuevo usuario:
+    //
+    // Si este registro está CREANDO una organización nueva (no se pasó
+    // `organizationId` o vino `organizationName`), entonces el usuario
+    // es el DUEÑO del tenant: el primer usuario, el que firma el contrato
+    // de la suscripción. Tiene que quedar como `ADMIN` para que pueda
+    // configurar permisos, invitar empleados, gestionar el negocio.
+    //
+    // Si en cambio se pasó un `organizationId` válido (caso "invitar
+    // empleado a una organización ya existente"), respetamos el `role`
+    // que pidió el caller — un admin existente decide si la persona
+    // entra como `manager` o `user`.
+    //
+    // BUG HISTÓRICO: antes el default era `UserRole.MANAGER` para
+    // CUALQUIER registro, incluido el del dueño que crea su empresa.
+    // Eso dejó 3 tenants con cero admins en producción (Baudity,
+    // Jeiner Corp, Mercaexpress) y nadie podía gestionar permisos. La
+    // promoción de esos managers a admin se hizo manualmente; este
+    // cambio evita que el bug se repita en futuros registros.
+    const isCreatingNewOrganization =
+      !!organizationName || !targetOrganizationId;
+    const effectiveRole = isCreatingNewOrganization
+      ? UserRole.ADMIN
+      : (requestedRole ?? UserRole.USER);
 
     // MULTITENANT: Lógica para crear/obtener organización
     if (organizationName) {
@@ -158,12 +183,14 @@ export class AuthService {
     }
 
     // Crear usuario (el password se encripta automáticamente en @BeforeInsert)
+    // `effectiveRole` ya resolvió: ADMIN si crea organización, o el role
+    // pedido por un admin existente que invita al empleado.
     const user = this.userRepository.create({
       email: normalizedEmail,
       password, // Se encriptará automáticamente
       firstName,
       lastName,
-      role,
+      role: effectiveRole,
       status: UserStatus.ACTIVE,
       organizationId: targetOrganizationId,
     });
