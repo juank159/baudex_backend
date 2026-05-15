@@ -231,17 +231,39 @@ export class CashRegisterService {
     const end = cashRegister.closedAt ?? new Date();
     const orgId = cashRegister.organizationId;
 
+    // ✅ INGRESOS DE EFECTIVO AL TURNO — incluye:
+    //   (a) `payments.paymentMethod='cash'` → cubre cobros de facturas y
+    //       los pagos a créditos vinculados a facturas (el módulo de
+    //       créditos crea un `Payment` espejo cuando hay invoiceId).
+    //   (b) `credit_payments.paymentMethod='cash'` cuyo crédito es
+    //       DIRECTO (sin invoiceId) → estos pagos NO generan `Payment`
+    //       espejo, así que sin este UNION quedaban sin contabilizar
+    //       en el efectivo del día. El cajero recibía el dinero pero la
+    //       caja no lo veía.
     const [salesAgg] = await this.em.query(
       `
       SELECT
-        COALESCE(SUM(p.amount), 0)::numeric AS total,
+        COALESCE(SUM(amount), 0)::numeric AS total,
         COUNT(*)::int AS count
-      FROM payments p
-      WHERE p.organization_id = $1
-        AND p.deleted_at IS NULL
-        AND p."paymentMethod" = 'cash'
-        AND p."paymentDate" >= $2
-        AND p."paymentDate" <= $3
+      FROM (
+        SELECT p.amount
+        FROM payments p
+        WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          AND p."paymentMethod" = 'cash'
+          AND p."paymentDate" >= $2
+          AND p."paymentDate" <= $3
+        UNION ALL
+        SELECT cp.amount
+        FROM credit_payments cp
+        JOIN customer_credits cc ON cc.id = cp.credit_id
+        WHERE cp.organization_id = $1
+          AND cp.deleted_at IS NULL
+          AND cp.payment_method = 'cash'
+          AND cp.payment_date >= $2
+          AND cp.payment_date <= $3
+          AND cc.invoice_id IS NULL
+      ) cash_in
       `,
       [orgId, start, end],
     );

@@ -11,9 +11,11 @@ import { ClientBalance } from './entities/client-balance.entity';
 import { ClientBalanceTransaction } from './entities/client-balance-transaction.entity';
 import { CreditTransaction } from './entities/credit-transaction.entity';
 import { Invoice } from '../invoices/entities/invoice.entity';
+import { Organization } from '../organizations/entities/organization.entity';
 import { AuthModule } from '../auth/auth.module';
 import { CommonModule } from '../common/common.module';
 import { CustomersModule } from '../customers/customers.module';
+import { CashRegisterModule } from '../cash-register/cash-register.module';
 
 @Module({
   imports: [
@@ -24,10 +26,12 @@ import { CustomersModule } from '../customers/customers.module';
       ClientBalanceTransaction,
       CreditTransaction,
       Invoice, // Para sincronizar facturas cuando se paga un crédito
+      Organization, // Para leer settings.cashRegisterEnabled al validar caja
     ]),
     AuthModule,
     CommonModule,
     forwardRef(() => CustomersModule),
+    CashRegisterModule, // Validar caja abierta en pagos cash
   ],
   controllers: [CustomerCreditsController, ClientBalanceController],
   providers: [CustomerCreditsService, ClientBalanceService],

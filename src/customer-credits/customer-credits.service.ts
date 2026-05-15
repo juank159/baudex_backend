@@ -20,6 +20,8 @@ const SYNC_FROM_INVOICE_PREFIX = 'SYNC-INV-';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
 import { CustomersService } from '../customers/customers.service';
 import { ClientBalanceService } from './client-balance.service';
+import { CashRegisterService } from '../cash-register/cash-register.service';
+import { Organization } from '../organizations/entities/organization.entity';
 import {
   CreateCustomerCreditDto,
   AddCreditPaymentDto,
@@ -45,12 +47,51 @@ export class CustomerCreditsService {
     private readonly transactionRepository: Repository<CreditTransaction>,
     @InjectRepository(Invoice)
     private readonly invoiceRepository: Repository<Invoice>,
+    @InjectRepository(Organization)
+    private readonly organizationRepository: Repository<Organization>,
     private readonly tenantAwareService: TenantAwareService,
     private readonly customersService: CustomersService,
     @Inject(forwardRef(() => ClientBalanceService))
     private readonly clientBalanceService: ClientBalanceService,
+    private readonly cashRegisterService: CashRegisterService,
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Validar que haya caja abierta cuando se paga un crédito en efectivo.
+   * Réplica del flujo que ya tienen `invoices.service.validateCashRegisterIfNeeded`
+   * y `expenses.service`: si el tenant tiene desactivado el módulo
+   * (`organization.settings.cashRegisterEnabled = false`), NO valida.
+   * Si está activo y el método es cash, exige caja abierta.
+   *
+   * Antes este flujo no existía para créditos: un cliente podía pagar un
+   * crédito en efectivo aunque la caja estuviera cerrada, y ese efectivo
+   * no quedaba contabilizado en el turno. Ahora se bloquea explícitamente.
+   */
+  private async validateCashRegisterIfNeeded(
+    paymentMethod: PaymentMethod,
+    organizationId: string,
+  ): Promise<void> {
+    if (paymentMethod !== PaymentMethod.CASH) return;
+
+    const organization = await this.organizationRepository.findOne({
+      where: { id: organizationId },
+      select: ['id', 'settings'],
+    });
+    const cashRegisterEnabled =
+      (organization?.settings as any)?.cashRegisterEnabled ?? true;
+    if (!cashRegisterEnabled) return;
+
+    const openRegister =
+      await this.cashRegisterService.getOpenCashRegister(organizationId);
+    if (!openRegister) {
+      throw new BadRequestException(
+        'No hay una caja abierta. Para registrar pagos en efectivo, ' +
+          'abre la caja registradora primero (declarando el saldo inicial ' +
+          'del turno).',
+      );
+    }
+  }
 
   /**
    * Crear un nuevo crédito de cliente
@@ -402,6 +443,11 @@ export class CustomerCreditsService {
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
+
+    // 🔒 PHASE 2: caja abierta requerida si el pago es en efectivo y el
+    // tenant tiene el módulo activo. Bloqueo temprano para no encolar la
+    // transacción y revertir después.
+    await this.validateCashRegisterIfNeeded(dto.paymentMethod, tenantId);
 
     const credit = await this.findOne(creditId);
 
