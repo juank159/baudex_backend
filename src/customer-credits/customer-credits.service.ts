@@ -413,7 +413,15 @@ export class CustomerCreditsService {
 
     const credit = await this.creditRepository.findOne({
       where: { id, organizationId: tenantId, deletedAt: IsNull() },
-      relations: ['customer', 'invoice', 'createdBy', 'payments', 'payments.bankAccount'],
+      relations: [
+        'customer',
+        'invoice',
+        'invoice.items',
+        'invoice.items.product',
+        'createdBy',
+        'payments',
+        'payments.bankAccount',
+      ],
     });
 
     if (!credit) {

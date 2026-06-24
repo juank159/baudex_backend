@@ -144,14 +144,18 @@ export class InvoicesService {
 
         // 📦 Solo validar stock si skipStockValidation no está activo
         if (!createInvoiceDto.skipStockValidation) {
-          const isValid = await this.productsService.validateStockForSale(
+          // Usamos el stock real de batches (getAvailableStock) en lugar de la
+          // columna `product.stock` (que es denormalizada y puede estar desactualizada).
+          // Esto evita el bug donde un producto con stock en batches fallaba
+          // la validación porque product.stock no se había actualizado.
+          const availableStock = await this.inventoryService.getAvailableStock(
             itemDto.productId,
-            itemDto.quantity,
+            tenantId,
           );
 
-          if (!isValid) {
+          if (availableStock < itemDto.quantity) {
             throw new BadRequestException(
-              `Stock insuficiente para el producto: ${product.name}`,
+              `Stock insuficiente para el producto: ${product.name}. Disponible: ${availableStock}, solicitado: ${itemDto.quantity}`,
             );
           }
         }
@@ -446,6 +450,20 @@ export class InvoicesService {
       }
 
       await manager.save(Invoice, completeInvoice);
+
+      // Incrementar currentBalance del cliente cuando queda deuda pendiente.
+      // Este campo nunca se incrementaba en creación, solo se decrementaba al
+      // pagar — por eso la validación de cupo siempre veía balance = 0.
+      if (completeInvoice.balanceDue > 0) {
+        await manager
+          .createQueryBuilder()
+          .update('Customer')
+          .set({
+            currentBalance: () => `"currentBalance" + ${completeInvoice.balanceDue}`,
+          })
+          .where('id = :id', { id: completeInvoice.customerId })
+          .execute();
+      }
 
       // Recargar con todas las relaciones (incluyendo payments) para la respuesta
       const fullInvoice = await manager.findOne(Invoice, {
@@ -2350,6 +2368,19 @@ export class InvoicesService {
         }
       } catch (syncError) {
         console.error(`❌ [Invoice] Error al cancelar crédito asociado:`, syncError.message);
+      }
+
+      // Decrementar currentBalance por el saldo pendiente que se cancela.
+      // Simétrico al incremento que se hace al crear una factura con balanceDue > 0.
+      if (invoice.balanceDue > 0) {
+        await manager
+          .createQueryBuilder()
+          .update('Customer')
+          .set({
+            currentBalance: () => `GREATEST(0, "currentBalance" - ${invoice.balanceDue})`,
+          })
+          .where('id = :id', { id: invoice.customerId })
+          .execute();
       }
 
       // Cancelar factura
