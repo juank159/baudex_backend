@@ -799,6 +799,16 @@ export class CustomersService {
         dueDate: inv.dueDate,
       }));
 
+    // Auto-heal: sincronizar currentBalance con el valor real calculado desde facturas.
+    // Corrige clientes cuyo currentBalance quedó en 0 por el bug histórico donde
+    // la creación de facturas a crédito no incrementaba este campo.
+    if (customer.currentBalance !== pendingAmount) {
+      await this.customerRepository.update(customerId, {
+        currentBalance: pendingAmount,
+      });
+      customer.currentBalance = pendingAmount;
+    }
+
     return {
       customer,
       totalInvoices: customer.invoices.length,
