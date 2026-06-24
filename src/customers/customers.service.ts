@@ -767,19 +767,31 @@ export class CustomersService {
     const paidInvoices = customer.invoices.filter(
       (inv) => inv.status === 'paid',
     );
-    const pendingInvoices = customer.invoices.filter(
-      (inv) => inv.status === 'pending' || inv.status === 'partially_paid',
-    );
     const overdueInvoices = customer.invoices.filter((inv) => inv.isOverdue);
 
     const totalSales = paidInvoices.reduce((sum, inv) => sum + inv.total, 0);
-    const pendingAmount = pendingInvoices.reduce(
-      (sum, inv) => sum + inv.balanceDue,
-      0,
-    );
     const overdueAmount = overdueInvoices.reduce(
       (sum, inv) => sum + inv.balanceDue,
       0,
+    );
+
+    // La deuda real del cliente vive en customer_credits (no en invoice.status).
+    // Sumamos balanceDue de todos los créditos activos (pending, partially_paid, overdue).
+    const creditDebtResult: { total: string }[] =
+      await this.customerRepository.manager.query(
+        `SELECT COALESCE(SUM(balance_due), 0) AS total
+         FROM customer_credits
+         WHERE customer_id = $1
+           AND organization_id = $2
+           AND status IN ('pending', 'partially_paid', 'overdue')`,
+        [customerId, customer.organizationId],
+      );
+    const pendingAmount =
+      parseFloat(creditDebtResult[0]?.total ?? '0') || 0;
+
+    // Contadores de facturas (para las métricas del resumen)
+    const pendingInvoices = customer.invoices.filter(
+      (inv) => inv.status === 'pending' || inv.status === 'partially_paid',
     );
 
     // Historial de pagos (últimos 6 meses)
