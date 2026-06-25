@@ -41,7 +41,7 @@ export class DashboardQueryBuilder {
         COALESCE(SUM(CAST(amount AS DECIMAL)), 0)::numeric    AS total_amount
       FROM expenses
       WHERE organization_id = $1
-        AND status = 'approved'
+        AND status IN ('approved', 'paid')
         AND deleted_at IS NULL
         AND date >= $2::date
         AND date <= $3::date

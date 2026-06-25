@@ -302,8 +302,8 @@ export class DashboardService {
     startStr: string,
     endStr: string,
   ): Promise<number> {
-    const start = new Date(`${startStr}T00:00:00`);
-    const end = new Date(`${endStr}T00:00:00`);
+    const start = new Date(`${startStr}T00:00:00Z`);
+    const end = new Date(`${endStr}T00:00:00Z`);
     const diffDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86_400_000));
 
     const prevEnd = new Date(start);

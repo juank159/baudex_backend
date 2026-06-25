@@ -9,9 +9,11 @@
  * btree sin caer en filter por expresión funcional (`::date AT TIME ZONE ...`).
  */
 export function toUtcAtTenantMidnight(dateStr: string, tenantTimezone: string): Date {
-  const local = new Date(`${dateStr}T00:00:00`);
-  const tzOffsetMs = getTimezoneOffsetMs(local, tenantTimezone);
-  return new Date(local.getTime() - tzOffsetMs);
+  // Usar Z para que Date siempre interprete como UTC puro,
+  // independientemente del TZ del proceso Node.js en producción.
+  const asUtcMidnight = new Date(`${dateStr}T00:00:00Z`);
+  const tzOffsetMs = getTimezoneOffsetMs(asUtcMidnight, tenantTimezone);
+  return new Date(asUtcMidnight.getTime() - tzOffsetMs);
 }
 
 /** Retorna un Date un día después del timestamp recibido (para `< endExclusive`). */

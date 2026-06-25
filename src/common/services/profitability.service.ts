@@ -61,8 +61,6 @@ export class ProfitabilityService {
     startDate?: string,
     endDate?: string,
   ): Promise<ProfitabilityStats> {
-    console.log('🎯 CALCULANDO RENTABILIDAD FIFO CON FACTURAS REALES');
-    console.log(`📅 Filtros de fecha - Inicio: ${startDate || 'Sin filtro'}, Fin: ${endDate || 'Sin filtro'}`);
 
     // 📅 USAR QUERYBUILDER CON CAST EXPLÍCITO ::date PARA COMPARACIONES CORRECTAS
     const qb = this.invoiceRepository.createQueryBuilder('invoice')
@@ -80,36 +78,46 @@ export class ProfitabilityService {
         startDate,
         endDate,
       });
-      console.log(`📅 Aplicando filtro de fechas: ${startDate} - ${endDate}`);
+
     } else if (startDate) {
       qb.andWhere('invoice.date >= CAST(:startDate AS date)', { startDate });
-      console.log(`📅 Aplicando filtro desde: ${startDate}`);
+
     } else if (endDate) {
       qb.andWhere('invoice.date <= CAST(:endDate AS date)', { endDate });
-      console.log(`📅 Aplicando filtro hasta: ${endDate}`);
+
     } else {
-      console.log(`📅 Sin filtro de fechas - incluyendo todas las facturas`);
+
     }
 
     const invoices = await qb.getMany();
-
-    console.log(`📊 Encontradas ${invoices.length} facturas pagadas con FIFO real`);
 
     let totalRevenue = 0;
     let totalCOGS = 0;
     const productStats = new Map();
     const categoryStats = new Map();
 
-    // Procesar cada factura con costos FIFO reales
+    // Procesar cada factura con costos FIFO reales.
+    // Para facturas PARTIALLY_PAID usamos un ratio de cobro para no sobreestimar
+    // ingresos con el valor facturado total cuando solo se cobró una parte.
     for (const invoice of invoices) {
+      const invoiceTotal = parseFloat(String(invoice.total      ?? 0)) || 0;
+      const invoicePaid  = parseFloat(String(invoice.paidAmount ?? 0)) || 0;
+      // Ratio de pago: 1.0 para PAID, fracción < 1 para PARTIALLY_PAID.
+      // Evitar división por cero y limitar a [0,1].
+      const paymentRatio = invoiceTotal > 0
+        ? Math.min(1, Math.max(0, invoicePaid / invoiceTotal))
+        : 1;
+
       for (const item of invoice.items) {
-        // Usar el total de la factura y los costos FIFO calculados
-        const revenue = item.unitPrice * item.quantity; // Precio de venta total
-        const cost = item.totalCost || 0; // Costo FIFO calculado
-        const profit = revenue - cost;
+        const fullRevenue = parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0);
+        const fullCost    = parseFloat(String((item as any).totalCost ?? 0));
+
+        // Aplicar ratio: solo contamos ingresos/costos proporcionales a lo cobrado.
+        const revenue = fullRevenue * paymentRatio;
+        const cost    = fullCost    * paymentRatio;
 
         totalRevenue += revenue;
-        totalCOGS += cost;
+        totalCOGS    += cost;
 
         // Estadísticas por producto
         const productId = item.productId || `unknown_${Date.now()}_${Math.random()}`;
@@ -127,21 +135,18 @@ export class ProfitabilityService {
 
         const productStat = productStats.get(productId);
         productStat.totalRevenue += revenue;
-        productStat.totalCOGS += cost;
-        productStat.unitsSold += item.quantity;
+        productStat.totalCOGS    += cost;
+        productStat.unitsSold    += item.quantity * paymentRatio;
 
         // Estadísticas por categoría
         const categoryName = (item.product as any)?.category?.name || 'General';
         if (!categoryStats.has(categoryName)) {
-          categoryStats.set(categoryName, {
-            totalRevenue: 0,
-            totalCOGS: 0,
-          });
+          categoryStats.set(categoryName, { totalRevenue: 0, totalCOGS: 0 });
         }
 
         const categoryStat = categoryStats.get(categoryName);
         categoryStat.totalRevenue += revenue;
-        categoryStat.totalCOGS += cost;
+        categoryStat.totalCOGS    += cost;
       }
     }
 
@@ -206,19 +211,11 @@ export class ProfitabilityService {
       `, expensesParams);
       totalExpenses = parseFloat(expensesResult[0]?.total || '0');
     } catch (e) {
-      console.log('⚠️ Error consultando gastos para netProfit:', e);
+
     }
 
     const netProfit = grossProfit - totalExpenses;
     const netMarginPercentage = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    console.log('💰 DATOS REALES FIFO CALCULADOS DESDE FACTURAS:');
-    console.log(`   📦 Ingresos: $${totalRevenue.toLocaleString()}`);
-    console.log(`   💸 Costos FIFO: $${totalCOGS.toLocaleString()}`);
-    console.log(`   📈 Ganancia Bruta: $${grossProfit.toLocaleString()}`);
-    console.log(`   💰 Gastos: $${totalExpenses.toLocaleString()}`);
-    console.log(`   📊 Ganancia Neta: $${netProfit.toLocaleString()}`);
-    console.log(`   📊 Margen FIFO: ${grossMarginPercentage.toFixed(2)}%`);
 
     return {
       totalRevenue,
