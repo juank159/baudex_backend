@@ -64,14 +64,17 @@ export class ProfitabilityService {
     endDate?: string,
   ): Promise<ProfitabilityStats> {
 
-    // 📅 USAR QUERYBUILDER CON CAST EXPLÍCITO ::date PARA COMPARACIONES CORRECTAS
+    // 📅 Modelo ACCRUAL: incluir todas las facturas EMITIDAS (no draft/cancelled/credited).
+    // La rentabilidad se mide sobre lo vendido, no solo sobre lo cobrado.
+    // Ventas a crédito (pending/overdue) también generaron costo de mercancía y
+    // representan ingresos futuros comprometidos — excluirlas distorsiona el margen real.
     const qb = this.invoiceRepository.createQueryBuilder('invoice')
       .leftJoinAndSelect('invoice.items', 'item')
       .leftJoinAndSelect('item.product', 'product')
       .leftJoinAndSelect('product.category', 'category')
       .where('invoice.organizationId = :organizationId', { organizationId })
-      .andWhere('invoice.status IN (:...statuses)', {
-        statuses: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID],
+      .andWhere('invoice.status NOT IN (:...excluded)', {
+        excluded: [InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED, InvoiceStatus.CREDITED],
       })
       .andWhere('invoice.deletedAt IS NULL');
 
@@ -98,25 +101,13 @@ export class ProfitabilityService {
     const productStats = new Map();
     const categoryStats = new Map();
 
-    // Procesar cada factura con costos FIFO reales.
-    // Para facturas PARTIALLY_PAID usamos un ratio de cobro para no sobreestimar
-    // ingresos con el valor facturado total cuando solo se cobró una parte.
+    // Modelo ACCRUAL: usar el valor FACTURADO completo (precio × cantidad).
+    // No aplicar paymentRatio — la venta está comprometida por el total de la factura
+    // independientemente de cuánto se haya cobrado hasta ahora.
     for (const invoice of invoices) {
-      const invoiceTotal = parseFloat(String(invoice.total      ?? 0)) || 0;
-      const invoicePaid  = parseFloat(String(invoice.paidAmount ?? 0)) || 0;
-      // Ratio de pago: 1.0 para PAID, fracción < 1 para PARTIALLY_PAID.
-      // Evitar división por cero y limitar a [0,1].
-      const paymentRatio = invoiceTotal > 0
-        ? Math.min(1, Math.max(0, invoicePaid / invoiceTotal))
-        : 1;
-
       for (const item of invoice.items) {
-        const fullRevenue = parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0);
-        const fullCost    = parseFloat(String((item as any).totalCost ?? 0));
-
-        // Aplicar ratio: solo contamos ingresos/costos proporcionales a lo cobrado.
-        const revenue = fullRevenue * paymentRatio;
-        const cost    = fullCost    * paymentRatio;
+        const revenue = parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0);
+        const cost    = parseFloat(String((item as any).totalCost ?? 0));
 
         totalRevenue += revenue;
         totalCOGS    += cost;
@@ -138,7 +129,7 @@ export class ProfitabilityService {
         const productStat = productStats.get(productId);
         productStat.totalRevenue += revenue;
         productStat.totalCOGS    += cost;
-        productStat.unitsSold    += item.quantity * paymentRatio;
+        productStat.unitsSold    += item.quantity ?? 0;
 
         // Estadísticas por categoría
         const categoryName = (item.product as any)?.category?.name || 'General';
@@ -162,13 +153,10 @@ export class ProfitabilityService {
       // Listar las facturas con margen negativo (top 5 peores)
       const lossItems: Array<{invoiceId: string; status: string; revenue: number; cogs: number}> = [];
       for (const invoice of invoices) {
-        const invoiceTotal = parseFloat(String(invoice.total ?? 0)) || 0;
-        const invoicePaid  = parseFloat(String(invoice.paidAmount ?? 0)) || 0;
-        const paymentRatio = invoiceTotal > 0 ? Math.min(1, Math.max(0, invoicePaid / invoiceTotal)) : 1;
         let invRevenue = 0, invCogs = 0;
         for (const item of invoice.items) {
-          invRevenue += parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0) * paymentRatio;
-          invCogs    += parseFloat(String((item as any).totalCost ?? 0)) * paymentRatio;
+          invRevenue += parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0);
+          invCogs    += parseFloat(String((item as any).totalCost ?? 0));
         }
         if (invCogs > invRevenue) {
           lossItems.push({ invoiceId: invoice.id, status: invoice.status, revenue: invRevenue, cogs: invCogs });
