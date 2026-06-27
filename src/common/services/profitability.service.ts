@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Sale, SaleStatus } from '../../sales/entities/sale.entity';
@@ -45,6 +45,8 @@ interface ProfitabilityStats {
 
 @Injectable()
 export class ProfitabilityService {
+  private readonly logger = new Logger(ProfitabilityService.name);
+
   constructor(
     @InjectRepository(Sale)
     private saleRepository: Repository<Sale>,
@@ -147,6 +149,36 @@ export class ProfitabilityService {
         const categoryStat = categoryStats.get(categoryName);
         categoryStat.totalRevenue += revenue;
         categoryStat.totalCOGS    += cost;
+      }
+    }
+
+    // Diagnóstico: registrar cuando hay pérdidas para ayudar a identificar la causa
+    if (totalCOGS > totalRevenue && invoices.length > 0) {
+      this.logger.warn(
+        `[PROFITABILITY-LOSS] org=${organizationId} range=${startDate}→${endDate} ` +
+        `revenue=${totalRevenue.toFixed(2)} COGS=${totalCOGS.toFixed(2)} ` +
+        `invoices=${invoices.length}`,
+      );
+      // Listar las facturas con margen negativo (top 5 peores)
+      const lossItems: Array<{invoiceId: string; status: string; revenue: number; cogs: number}> = [];
+      for (const invoice of invoices) {
+        const invoiceTotal = parseFloat(String(invoice.total ?? 0)) || 0;
+        const invoicePaid  = parseFloat(String(invoice.paidAmount ?? 0)) || 0;
+        const paymentRatio = invoiceTotal > 0 ? Math.min(1, Math.max(0, invoicePaid / invoiceTotal)) : 1;
+        let invRevenue = 0, invCogs = 0;
+        for (const item of invoice.items) {
+          invRevenue += parseFloat(String(item.unitPrice ?? 0)) * (item.quantity ?? 0) * paymentRatio;
+          invCogs    += parseFloat(String((item as any).totalCost ?? 0)) * paymentRatio;
+        }
+        if (invCogs > invRevenue) {
+          lossItems.push({ invoiceId: invoice.id, status: invoice.status, revenue: invRevenue, cogs: invCogs });
+        }
+      }
+      lossItems.sort((a, b) => (a.revenue - a.cogs) - (b.revenue - b.cogs));
+      for (const li of lossItems.slice(0, 5)) {
+        this.logger.warn(
+          `  ↳ invoice=${li.invoiceId} status=${li.status} revenue=${li.revenue.toFixed(2)} COGS=${li.cogs.toFixed(2)} loss=${(li.cogs - li.revenue).toFixed(2)}`,
+        );
       }
     }
 
