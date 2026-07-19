@@ -585,7 +585,12 @@ export class SubscriptionService {
   ): Promise<SubscriptionCurrentDto> {
     // 1. Suscripción activa y vigente
     const subscription = await this.getActiveSubscription(organizationId);
-    console.log(`[SUB_DEBUG] orgId=${organizationId} activeSub=${subscription ? JSON.stringify({id: subscription.id, endDate: subscription.endDate, endDateType: typeof subscription.endDate, isExpired: subscription.isExpired, daysUntil: subscription.daysUntilExpiration}) : 'null'}`);
+    // DEBUG TEMPORAL: query raw SQL to compare
+    const rawRows = await this.subscriptionRepository.query(
+      `SELECT "endDate"::text, NOW()::text as now_sql FROM subscriptions WHERE "organizationId" = $1 ORDER BY created_at DESC LIMIT 1`,
+      [organizationId],
+    );
+    console.log(`[SUB_DEBUG] orgId=${organizationId} typeormEndDate=${subscription?.endDate} rawSQLEndDate=${rawRows[0]?.endDate} nowSQL=${rawRows[0]?.now_sql}`);
     if (subscription) return this.mapToCurrentDto(subscription);
 
     // 2. No hay activa — buscar cualquier suscripción existente (trial vencido, cancelada, etc.)
