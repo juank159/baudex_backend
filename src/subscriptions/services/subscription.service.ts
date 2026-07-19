@@ -585,6 +585,7 @@ export class SubscriptionService {
   ): Promise<SubscriptionCurrentDto> {
     // 1. Suscripción activa y vigente
     const subscription = await this.getActiveSubscription(organizationId);
+    console.log(`[SUB_DEBUG] orgId=${organizationId} activeSub=${subscription ? JSON.stringify({id: subscription.id, endDate: subscription.endDate, endDateType: typeof subscription.endDate, isExpired: subscription.isExpired, daysUntil: subscription.daysUntilExpiration}) : 'null'}`);
     if (subscription) return this.mapToCurrentDto(subscription);
 
     // 2. No hay activa — buscar cualquier suscripción existente (trial vencido, cancelada, etc.)
