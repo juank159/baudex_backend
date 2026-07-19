@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThan, IsNull, Between } from 'typeorm';
+import { Repository, MoreThan, LessThan, IsNull, Between, Not } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import {
   Subscription,
@@ -39,6 +39,8 @@ import {
 
 @Injectable()
 export class SubscriptionService {
+  private readonly logger = new Logger(SubscriptionService.name);
+
   constructor(
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
@@ -583,24 +585,47 @@ export class SubscriptionService {
   async getCurrentSubscriptionDto(
     organizationId: string,
   ): Promise<SubscriptionCurrentDto> {
-    // 1. Suscripción activa y vigente
-    const subscription = await this.getActiveSubscription(organizationId);
-    // DEBUG TEMPORAL: query raw SQL to compare
-    const rawRows = await this.subscriptionRepository.query(
-      `SELECT "endDate"::text, NOW()::text as now_sql FROM subscriptions WHERE "organizationId" = $1 ORDER BY created_at DESC LIMIT 1`,
+    // Raw SQL para diagnóstico y evitar bugs de TypeORM con dates
+    const rawRows: any[] = await this.subscriptionRepository.query(
+      `SELECT id, plan, status, type, "startDate"::text, "endDate"::text, "createdAt"::text
+       FROM subscriptions WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 5`,
       [organizationId],
     );
-    console.log(`[SUB_DEBUG] orgId=${organizationId} typeormEndDate=${subscription?.endDate} rawSQLEndDate=${rawRows[0]?.endDate} nowSQL=${rawRows[0]?.now_sql}`);
+    this.logger.log(
+      `[SUB-DEBUG] org=${organizationId} subs=${JSON.stringify(rawRows)}`,
+    );
+
+    // 1. Suscripción activa y vigente (cualquier plan)
+    const subscription = await this.getActiveSubscription(organizationId);
     if (subscription) return this.mapToCurrentDto(subscription);
 
-    // 2. No hay activa — buscar cualquier suscripción existente (trial vencido, cancelada, etc.)
+    // 2. Suscripción de pago activa aunque TypeORM no la vea como "activa" — evita que
+    //    un trial automático reciente tape una suscripción premium/basic anterior
+    const paidActive = await this.subscriptionRepository.findOne({
+      where: {
+        organizationId,
+        plan: Not(SubscriptionPlan.TRIAL),
+        status: SubscriptionStatus.ACTIVE,
+      },
+      order: { endDate: 'DESC' },
+    });
+    if (paidActive) return this.mapToCurrentDto(paidActive);
+
+    // 3. Cualquier suscripción de pago (expirada o no) — preferir sobre trial automático
+    const latestPaid = await this.subscriptionRepository.findOne({
+      where: { organizationId, plan: Not(SubscriptionPlan.TRIAL) },
+      order: { endDate: 'DESC' },
+    });
+    if (latestPaid) return this.mapToCurrentDto(latestPaid);
+
+    // 4. No hay suscripción de pago — buscar cualquier (trial)
     const latestSubscription = await this.subscriptionRepository.findOne({
       where: { organizationId },
       order: { createdAt: 'DESC' },
     });
     if (latestSubscription) return this.mapToCurrentDto(latestSubscription);
 
-    // 3. No existe ninguna — crear trial nuevo
+    // 5. No existe ninguna — crear trial nuevo
     const newTrial = await this.createTrialSubscription(organizationId);
     return this.mapToCurrentDto(newTrial);
   }
@@ -817,6 +842,19 @@ export class SubscriptionService {
   private mapToCurrentDto(subscription: Subscription): SubscriptionCurrentDto {
     const limits = getPlanLimits(subscription.plan);
 
+    // Parsear endDate de forma robusta (TypeORM puede devolver string o Date)
+    const endDateRaw = subscription.endDate;
+    const endDate: Date = endDateRaw instanceof Date ? endDateRaw : new Date(endDateRaw as any);
+    const now = new Date();
+    const isEndDateValid = !isNaN(endDate.getTime());
+    const diffMs = isEndDateValid ? endDate.getTime() - now.getTime() : -1;
+    const diffDays = diffMs > 0 ? Math.ceil(diffMs / (1000 * 60 * 60 * 24)) : 0;
+    const isExpiredComputed = !isEndDateValid || endDate <= now;
+    const isActiveComputed = subscription.status === 'active' && !isExpiredComputed;
+    const totalMs = isEndDateValid ? endDate.getTime() - (subscription.startDate instanceof Date ? subscription.startDate : new Date(subscription.startDate as any)).getTime() : 1;
+    const elapsedMs = isEndDateValid ? now.getTime() - (subscription.startDate instanceof Date ? subscription.startDate : new Date(subscription.startDate as any)).getTime() : 1;
+    const progress = totalMs > 0 ? Math.min(Math.max(elapsedMs / totalMs, 0), 1) : 1;
+
     return {
       id: subscription.id,
       organizationId: subscription.organizationId,
@@ -825,13 +863,13 @@ export class SubscriptionService {
       status: subscription.status,
       type: subscription.type,
       startDate: subscription.startDate,
-      endDate: subscription.endDate,
-      isActive: subscription.isActive,
-      isExpired: subscription.isExpired,
-      isTrial: subscription.isTrial,
-      daysUntilExpiration: subscription.daysUntilExpiration,
-      subscriptionProgress: subscription.subscriptionProgress,
-      remainingDays: subscription.remainingDays,
+      endDate: isEndDateValid ? endDate : subscription.endDate,
+      isActive: isActiveComputed,
+      isExpired: isExpiredComputed,
+      isTrial: subscription.plan === 'trial',
+      daysUntilExpiration: diffDays,
+      subscriptionProgress: progress,
+      remainingDays: diffDays,
       maxUsers: subscription.maxUsers,
       autoRenew: subscription.autoRenew,
       price: subscription.price,
@@ -966,5 +1004,19 @@ export class SubscriptionService {
     }
 
     return SubscriptionPlan.ENTERPRISE;
+  }
+
+  async debugRawSubscriptions(organizationId: string): Promise<any[]> {
+    return this.subscriptionRepository.query(
+      `SELECT id, plan, status, type,
+              "startDate" AT TIME ZONE 'UTC' AS "startDate",
+              "endDate" AT TIME ZONE 'UTC' AS "endDate",
+              "createdAt" AT TIME ZONE 'UTC' AS "createdAt",
+              ("endDate" > NOW()) AS "isStillValid"
+       FROM subscriptions
+       WHERE "organizationId" = $1
+       ORDER BY "createdAt" DESC`,
+      [organizationId],
+    );
   }
 }

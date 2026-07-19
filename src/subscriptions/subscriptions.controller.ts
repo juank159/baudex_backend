@@ -211,6 +211,18 @@ export class SubscriptionsController {
     return this.subscriptionService.getSubscriptionStats();
   }
 
+  /**
+   * Diagnóstico: ver todas las suscripciones del org actual con raw SQL
+   */
+  @Get('debug')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Debug: ver suscripciones raw del org actual' })
+  async debugCurrentSubscriptions(@TenantId() organizationId: string) {
+    const raw = await this.subscriptionService.debugRawSubscriptions(organizationId);
+    return { organizationId, subscriptions: raw, now: new Date().toISOString() };
+  }
+
   // ==================== ENDPOINT DE PRUEBA (DEBUG) ====================
 
   @Get('test/:organizationId')
