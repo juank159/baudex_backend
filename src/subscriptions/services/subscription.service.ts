@@ -587,8 +587,8 @@ export class SubscriptionService {
   ): Promise<SubscriptionCurrentDto> {
     // Raw SQL para diagnóstico y evitar bugs de TypeORM con dates
     const rawRows: any[] = await this.subscriptionRepository.query(
-      `SELECT id, plan, status, type, "startDate"::text, "endDate"::text, "createdAt"::text
-       FROM subscriptions WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 5`,
+      `SELECT id, plan, status, type, "startDate"::text, "endDate"::text, created_at::text
+       FROM subscriptions WHERE "organizationId" = $1 ORDER BY created_at DESC LIMIT 5`,
       [organizationId],
     );
     this.logger.log(
@@ -1011,11 +1011,11 @@ export class SubscriptionService {
       `SELECT id, plan, status, type,
               "startDate" AT TIME ZONE 'UTC' AS "startDate",
               "endDate" AT TIME ZONE 'UTC' AS "endDate",
-              "createdAt" AT TIME ZONE 'UTC' AS "createdAt",
+              created_at AT TIME ZONE 'UTC' AS "createdAt",
               ("endDate" > NOW()) AS "isStillValid"
        FROM subscriptions
        WHERE "organizationId" = $1
-       ORDER BY "createdAt" DESC`,
+       ORDER BY created_at DESC`,
       [organizationId],
     );
   }
