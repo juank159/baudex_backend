@@ -223,6 +223,29 @@ export class SubscriptionsController {
     return { organizationId, subscriptions: raw, now: new Date().toISOString() };
   }
 
+  /**
+   * Renovar suscripción del propio org autenticado (endpoint admin temporal)
+   * Permite activar/extender el plan sin necesitar acceso al panel de admin
+   */
+  @Post('admin-renew-self')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: renovar suscripción del org autenticado' })
+  async adminRenewSelf(
+    @TenantId() organizationId: string,
+    @Body() body: { plan?: string; months?: number; adminKey: string },
+  ) {
+    if (body.adminKey !== 'baudex-admin-renew-2026') {
+      return { success: false, message: 'Key inválida' };
+    }
+    const result = await this.subscriptionService.renewSubscriptionForOrg(
+      organizationId,
+      (body.plan as any) || 'premium',
+      body.months || 12,
+    );
+    return { success: true, data: result };
+  }
+
   // ==================== ENDPOINT DE PRUEBA (DEBUG) ====================
 
   @Get('test/:organizationId')

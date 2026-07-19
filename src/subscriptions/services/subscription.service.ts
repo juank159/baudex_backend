@@ -1006,6 +1006,46 @@ export class SubscriptionService {
     return SubscriptionPlan.ENTERPRISE;
   }
 
+  async renewSubscriptionForOrg(
+    organizationId: string,
+    plan: string,
+    months: number,
+  ): Promise<any> {
+    const planEnum = plan as SubscriptionPlan;
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + months);
+
+    // Expirar suscripciones anteriores via raw SQL para evitar conflictos
+    await this.subscriptionRepository.query(
+      `UPDATE subscriptions SET status = 'expired' WHERE "organizationId" = $1 AND status = 'active'`,
+      [organizationId],
+    );
+
+    const newSub = new Subscription();
+    newSub.organizationId = organizationId;
+    newSub.plan = planEnum;
+    newSub.status = SubscriptionStatus.ACTIVE;
+    newSub.type = SubscriptionType.MONTHLY;
+    newSub.startDate = new Date();
+    newSub.endDate = endDate;
+    newSub.maxUsers = -1;
+    newSub.autoRenew = false;
+    newSub.billingCycle = months === 12 ? 12 : 1;
+
+    const saved = await this.subscriptionRepository.save(newSub);
+
+    // Actualizar tabla organizations
+    await this.organizationRepository.query(
+      `UPDATE organizations SET "subscriptionPlan" = $1, "subscriptionStatus" = 'active', "subscriptionEndDate" = $2 WHERE id = $3`,
+      [planEnum, endDate, organizationId],
+    );
+
+    this.logger.log(
+      `[RENEW] org=${organizationId} plan=${plan} endDate=${endDate.toISOString()}`,
+    );
+    return { id: saved.id, plan: saved.plan, endDate: saved.endDate };
+  }
+
   async debugRawSubscriptions(organizationId: string): Promise<any[]> {
     return this.subscriptionRepository.query(
       `SELECT id, plan, status, type,
