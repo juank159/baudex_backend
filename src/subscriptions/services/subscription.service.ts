@@ -162,14 +162,16 @@ export class SubscriptionService {
    */
   async getSubscriptionInfo(organizationId: string) {
     const subscription = await this.getActiveSubscription(organizationId);
+    if (subscription) return this.formatSubscriptionInfo(subscription);
 
-    if (!subscription) {
-      // Si no hay suscripción activa, crear trial automáticamente
-      const newTrial = await this.createTrialSubscription(organizationId);
-      return this.formatSubscriptionInfo(newTrial);
-    }
+    const latestSubscription = await this.subscriptionRepository.findOne({
+      where: { organizationId },
+      order: { createdAt: 'DESC' },
+    });
+    if (latestSubscription) return this.formatSubscriptionInfo(latestSubscription);
 
-    return this.formatSubscriptionInfo(subscription);
+    const newTrial = await this.createTrialSubscription(organizationId);
+    return this.formatSubscriptionInfo(newTrial);
   }
 
   private formatSubscriptionInfo(subscription: Subscription) {
@@ -581,15 +583,20 @@ export class SubscriptionService {
   async getCurrentSubscriptionDto(
     organizationId: string,
   ): Promise<SubscriptionCurrentDto> {
+    // 1. Suscripción activa y vigente
     const subscription = await this.getActiveSubscription(organizationId);
+    if (subscription) return this.mapToCurrentDto(subscription);
 
-    if (!subscription) {
-      // Si no hay suscripción activa, crear trial automáticamente
-      const newTrial = await this.createTrialSubscription(organizationId);
-      return this.mapToCurrentDto(newTrial);
-    }
+    // 2. No hay activa — buscar cualquier suscripción existente (trial vencido, cancelada, etc.)
+    const latestSubscription = await this.subscriptionRepository.findOne({
+      where: { organizationId },
+      order: { createdAt: 'DESC' },
+    });
+    if (latestSubscription) return this.mapToCurrentDto(latestSubscription);
 
-    return this.mapToCurrentDto(subscription);
+    // 3. No existe ninguna — crear trial nuevo
+    const newTrial = await this.createTrialSubscription(organizationId);
+    return this.mapToCurrentDto(newTrial);
   }
 
   /**
