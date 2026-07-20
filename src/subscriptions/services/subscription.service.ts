@@ -1010,10 +1010,11 @@ export class SubscriptionService {
     organizationId: string,
     plan: string,
     months: number,
+    specificEndDate?: Date,
   ): Promise<any> {
     const planEnum = plan as SubscriptionPlan;
-    const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + months);
+    const endDate = specificEndDate ?? new Date();
+    if (!specificEndDate) endDate.setMonth(endDate.getMonth() + months);
 
     // Expirar suscripciones anteriores via raw SQL para evitar conflictos
     await this.subscriptionRepository.query(

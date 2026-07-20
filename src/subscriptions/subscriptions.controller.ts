@@ -230,7 +230,7 @@ export class SubscriptionsController {
   @Post('admin-renew-self')
   @ApiOperation({ summary: 'Admin: renovar suscripción por orgId o JWT' })
   async adminRenewSelf(
-    @Body() body: { plan?: string; months?: number; adminKey: string; organizationId?: string },
+    @Body() body: { plan?: string; months?: number; adminKey: string; organizationId?: string; endDate?: string },
   ) {
     if (body.adminKey !== 'baudex-admin-renew-2026') {
       return { success: false, message: 'Key inválida' };
@@ -238,10 +238,12 @@ export class SubscriptionsController {
     if (!body.organizationId) {
       return { success: false, message: 'Falta organizationId' };
     }
+    const specificEndDate = body.endDate ? new Date(body.endDate) : undefined;
     const result = await this.subscriptionService.renewSubscriptionForOrg(
       body.organizationId,
       (body.plan as any) || 'premium',
-      body.months || 12,
+      body.months || 1,
+      specificEndDate,
     );
     return { success: true, data: result };
   }
