@@ -90,9 +90,15 @@ export class TenantMiddleware implements NestMiddleware {
         }
       }
 
-      // Estrategia 3: Obtener tenant desde header personalizado (para desarrollo/testing)
+      // Estrategia 3: Obtener tenant desde headers personalizados
       if (!organizationId && !tenantSlug) {
-        tenantSlug = req.get('X-Tenant-Slug')?.toLowerCase() || null;
+        // Aceptar organizationId directo en header (para scripts de admin sin JWT)
+        const headerOrgId = req.get('X-Organization-Id');
+        if (headerOrgId) {
+          organizationId = headerOrgId;
+        } else {
+          tenantSlug = req.get('X-Tenant-Slug')?.toLowerCase() || null;
+        }
       }
 
       // Estrategia 4: Obtener tenant desde query parameter (solo para desarrollo)
