@@ -166,6 +166,19 @@ export class SubscriptionAdminController {
     };
   }
 
+  @Get('organizations')
+  @ApiOperation({ summary: 'Listar todas las organizaciones con su suscripción actual' })
+  @ApiResponse({ status: 200, description: 'Lista de organizaciones con estado de suscripción' })
+  async getAllOrganizationsWithSubscriptions() {
+    const data = await this.subscriptionService.getAllOrganizationsWithSubscriptions();
+    return {
+      success: true,
+      total: data.length,
+      data,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Post('sync-organization-data')
   @ApiOperation({
     summary:

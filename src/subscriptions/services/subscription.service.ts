@@ -438,6 +438,37 @@ export class SubscriptionService {
   /**
    * Obtener estadísticas de suscripciones
    */
+  async getAllOrganizationsWithSubscriptions(): Promise<any[]> {
+    const rows: any[] = await this.subscriptionRepository.query(
+      `SELECT
+         o.id            AS "organizationId",
+         o.name          AS "organizationName",
+         o.slug          AS "slug",
+         o."isActive"    AS "isActive",
+         s.id            AS "subscriptionId",
+         s.plan          AS "plan",
+         s.status        AS "status",
+         s.type          AS "type",
+         s."startDate"   AS "startDate",
+         s."endDate"     AS "endDate",
+         (s."endDate" > NOW()) AS "isValid",
+         GREATEST(0, CEIL(EXTRACT(EPOCH FROM (s."endDate" - NOW())) / 86400))::int AS "daysRemaining",
+         s.created_at    AS "subscriptionCreatedAt"
+       FROM organizations o
+       LEFT JOIN LATERAL (
+         SELECT * FROM subscriptions
+         WHERE "organizationId" = o.id
+         ORDER BY
+           (status = 'active') DESC,
+           "endDate" DESC
+         LIMIT 1
+       ) s ON true
+       WHERE o."deletedAt" IS NULL
+       ORDER BY o.name ASC`,
+    );
+    return rows;
+  }
+
   async getSubscriptionStats() {
     const [
       totalActive,
