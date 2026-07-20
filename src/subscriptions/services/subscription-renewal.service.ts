@@ -67,8 +67,9 @@ export class SubscriptionRenewalService {
 
     // 4. Calcular fechas de la nueva suscripción
     const startDate = new Date();
-    const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + renewData.durationMonths);
+    const endDate = renewData.endDate
+      ? new Date(renewData.endDate)
+      : (() => { const d = new Date(); d.setMonth(d.getMonth() + renewData.durationMonths); return d; })();
 
     // 5. Crear la nueva suscripción
     const newSubscription = this.subscriptionRepository.create({

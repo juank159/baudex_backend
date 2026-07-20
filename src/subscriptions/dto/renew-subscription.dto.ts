@@ -7,6 +7,7 @@ import {
   Max,
   IsOptional,
   IsNumber,
+  IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -64,6 +65,14 @@ export class RenewSubscriptionDto {
   })
   @IsOptional()
   paymentMethod?: string;
+
+  @ApiPropertyOptional({
+    description: 'Fecha de vencimiento específica (ISO 8601). Si se proporciona, ignora durationMonths.',
+    example: '2026-08-30T23:59:59.000Z',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'endDate debe ser una fecha ISO 8601 válida' })
+  endDate?: string;
 }
 
 export class RenewSubscriptionResponseDto {
