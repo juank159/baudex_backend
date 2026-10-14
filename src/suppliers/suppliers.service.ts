@@ -308,7 +308,7 @@ export class SuppliersService {
     return await queryBuilder.getOne();
   }
 
-  private toResponseDto(supplier: Supplier): SupplierResponseDto {
+  toResponseDto(supplier: Supplier): SupplierResponseDto {
     return {
       id: supplier.id,
       name: supplier.name,

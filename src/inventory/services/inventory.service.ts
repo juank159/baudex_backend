@@ -1376,21 +1376,8 @@ export class InventoryService {
 
       const totalPages = Math.ceil(total / limit);
 
-      // Debug: Check if products are loaded
-      this.logger.log(
-        '🔍 DEBUG: First movement:',
-        JSON.stringify(movements[0], null, 2),
-      );
-      this.logger.log('🔍 DEBUG: Product info:', movements[0]?.product);
-      this.logger.log('🔍 DEBUG: Total movements found:', movements.length);
-      this.logger.log('🔍 DEBUG: About to transform movements...');
-
       // Transform movements to include productName and productSku in flat structure
       const transformedMovements = movements.map((movement) => {
-        this.logger.log(
-          `🔍 DEBUG: Processing movement ${movement.id}, product:`,
-          movement.product,
-        );
         return {
           ...movement,
           productName: movement.product?.name || null,
@@ -1400,11 +1387,6 @@ export class InventoryService {
           performedBy: null, // Also clean up the user relation to reduce payload
         };
       });
-
-      this.logger.log(
-        '🔍 DEBUG: First transformed movement:',
-        JSON.stringify(transformedMovements[0], null, 2),
-      );
 
       return {
         movements: transformedMovements,

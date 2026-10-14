@@ -34,6 +34,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { CreditNotesModule } from './credit-notes/credit-notes.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { CashRegisterModule } from './cash-register/cash-register.module';
+import { SyncModule } from './sync/sync.module';
 import { CustomerCreditsModule } from './customer-credits/customer-credits.module';
 import { PrinterSettingsModule } from './printer-settings/printer-settings.module';
 import { AppMailerModule } from './mailer/mailer.module';
@@ -88,6 +89,7 @@ import { AppMailerModule } from './mailer/mailer.module';
 
     // Módulo de Caja Registradora
     CashRegisterModule,
+    SyncModule,
 
     // Módulo de Configuración de Impresoras
     PrinterSettingsModule,
