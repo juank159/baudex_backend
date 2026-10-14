@@ -68,7 +68,19 @@ export class Subscription extends BaseEntity {
   @Column({ type: 'varchar', length: 255, nullable: true })
   cancelReason?: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  // Postgres devuelve los decimales como texto ("59.99"); el transformer los
+  // entrega como número, que es lo que la app espera.
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    transformer: {
+      to: (value?: number | null) => value,
+      from: (value?: string | number | null) =>
+        value === null || value === undefined ? value : Number(value),
+    },
+  })
   price?: number;
 
   @Column({ type: 'varchar', length: 10, nullable: true })
