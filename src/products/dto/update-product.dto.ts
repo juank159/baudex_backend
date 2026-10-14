@@ -1,4 +1,5 @@
 import {
+  Max,
   IsString,
   IsOptional,
   IsEnum,
@@ -127,6 +128,7 @@ export class UpdateProductDto {
     { message: 'La tasa de impuesto debe tener máximo 2 decimales' },
   )
   @Min(0, { message: 'La tasa de impuesto debe ser mayor o igual a 0' })
+  @Max(100, { message: 'La tasa de impuesto no puede ser mayor a 100%' })
   taxRate?: number;
 
   @IsOptional()
@@ -152,6 +154,7 @@ export class UpdateProductDto {
     { message: 'La tasa de retención debe tener máximo 2 decimales' },
   )
   @Min(0, { message: 'La tasa de retención debe ser mayor o igual a 0' })
+  @Max(100, { message: 'La tasa de retención no puede ser mayor a 100%' })
   retentionRate?: number;
 
   @IsOptional()
