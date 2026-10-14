@@ -4,7 +4,7 @@ const http = require('http');
 const options = {
   hostname: 'localhost',
   port: 3000,
-  path: '/api',
+  path: '/api/health', // ruta pública de estado (sin tenant)
   timeout: 2000,
 };
 

@@ -1,26 +1,22 @@
 #!/bin/sh
 # Entrypoint para producción.
 #
-# Corre las migraciones pendientes de TypeORM ANTES de levantar el
-# server. Si una migración falla, el contenedor falla rápido (set -e)
-# en vez de arrancar el server contra un schema desactualizado y
-# servir 500s al primer request.
+# Arranca el servidor. Las migraciones pendientes las aplica el propio
+# servidor al iniciar (src/database/run-migrations-on-startup.ts), antes de
+# atender peticiones: todas en una sola transacción, con candado para que
+# solo un servidor migre a la vez, y deteniéndose si una migración borra
+# información sin autorización. Si una migración falla, el servidor no
+# arranca (mejor detenido que atendiendo con la base a medio actualizar).
 #
-# Idempotente: TypeORM mantiene la tabla `migrations` con las ya
-# aplicadas, así que reinicios subsecuentes sólo corren las pendientes
-# (típicamente cero).
+# Así funciona igual aunque Dokploy use este entrypoint o su propio comando
+# de arranque.
 #
 # Esto vive como ENTRYPOINT (no CMD) para que Dokploy / docker-compose
 # no puedan reemplazarlo accidentalmente desde su UI con un
-# "Start command" custom. Si alguien necesita arrancar SIN migrar
-# (debugging), debe explícitamente sobreescribir el entrypoint con
-# `--entrypoint /bin/sh`.
+# "Start command" custom.
 
 set -e
 
-echo "[entrypoint] Aplicando migraciones de TypeORM…"
-node node_modules/typeorm/cli.js migration:run \
-  -d dist/database/typeorm.config.js
-echo "[entrypoint] Migraciones OK. Arrancando server…"
+echo "[entrypoint] Arrancando server (aplica migraciones pendientes al iniciar)…"
 
 exec node --dns-result-order=ipv4first dist/main "$@"
