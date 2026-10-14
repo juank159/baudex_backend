@@ -198,7 +198,7 @@
 //   @BeforeInsert()
 //   generateInvoiceNumber() {
 //     if (!this.number) {
-//       const year = new Date().getFullYear();
+//       const year = tenantWallClockNow().getFullYear();
 //       const timestamp = Date.now().toString().slice(-6);
 //       this.number = `INV-${year}-${timestamp}`;
 //     }
@@ -265,6 +265,7 @@
 //   }
 // }
 
+import { tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Entity,
   Column,
@@ -528,7 +529,8 @@ export class Invoice extends BaseEntity {
     }
 
     // Comparar solo fechas (sin horas) para evitar falsos positivos
-    const now = new Date();
+    // "Hoy" según el reloj del negocio (no el del servidor, que va en UTC).
+    const now = tenantWallClockNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const dueDateOnly = new Date(
       this.dueDate.getFullYear(),
@@ -576,7 +578,8 @@ export class Invoice extends BaseEntity {
   get daysOverdue(): number {
     if (!this.isOverdue) return 0;
 
-    const now = new Date();
+    // "Hoy" según el reloj del negocio (no el del servidor, que va en UTC).
+    const now = tenantWallClockNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const dueDateOnly = new Date(
       this.dueDate.getFullYear(),
@@ -611,7 +614,8 @@ export class Invoice extends BaseEntity {
   get daysUntilDue(): number {
     if (this.isOverdue || this.isPaid) return 0;
 
-    const now = new Date();
+    // "Hoy" según el reloj del negocio (no el del servidor, que va en UTC).
+    const now = tenantWallClockNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const dueDateOnly = new Date(
       this.dueDate.getFullYear(),
@@ -652,7 +656,7 @@ export class Invoice extends BaseEntity {
   @BeforeInsert()
   generateInvoiceNumber() {
     if (!this.number) {
-      const year = new Date().getFullYear();
+      const year = tenantWallClockNow().getFullYear();
       const timestamp = Date.now().toString().slice(-6);
       this.number = `INV-${year}-${timestamp}`;
     }

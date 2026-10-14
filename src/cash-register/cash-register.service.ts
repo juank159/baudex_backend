@@ -312,8 +312,110 @@ export class CashRegisterService {
       [orgId, start, end],
     );
 
+    // ── DESGLOSE DEL TURNO ──────────────────────────────────────────────
+    // (1) De dónde salió el efectivo: ventas vs abonos a créditos.
+    //     Los abonos a créditos de factura quedan en `payments` con
+    //     referencia SYNC-CRD-…; los de créditos directos solo en
+    //     `credit_payments`.
+    const [cashOriginAgg] = await this.em.query(
+      `
+      SELECT
+        COALESCE(SUM(amount) FILTER (WHERE NOT is_credit_payment), 0)::numeric AS sales_total,
+        COUNT(*) FILTER (WHERE NOT is_credit_payment)::int                     AS sales_count,
+        COALESCE(SUM(amount) FILTER (WHERE is_credit_payment), 0)::numeric     AS credit_total,
+        COUNT(*) FILTER (WHERE is_credit_payment)::int                         AS credit_count
+      FROM (
+        SELECT p.amount, COALESCE(p.reference, '') LIKE 'SYNC-CRD-%' AS is_credit_payment
+        FROM payments p
+        WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          AND p."paymentMethod" = 'cash'
+          AND p."paymentDate" >= $2
+          AND p."paymentDate" <= $3
+        UNION ALL
+        SELECT cp.amount, TRUE AS is_credit_payment
+        FROM credit_payments cp
+        JOIN customer_credits cc ON cc.id = cp.credit_id
+        WHERE cp.organization_id = $1
+          AND cp.deleted_at IS NULL
+          AND cp.payment_method = 'cash'
+          AND cp.payment_date >= $2
+          AND cp.payment_date <= $3
+          AND cc.invoice_id IS NULL
+      ) cash_in
+      `,
+      [orgId, start, end],
+    );
+
+    // (2) Cobros por otros medios: dinero real que entró al negocio en el
+    //     turno pero NO al cajón (está en Nequi, banco, datáfono...). No
+    //     incluye 'credit' (fiado) ni saldo a favor: eso no es dinero nuevo.
+    const otherMethodRows: {
+      method: string;
+      label: string;
+      total: string;
+      count: number;
+    }[] = await this.em.query(
+      `
+      SELECT method, label, SUM(amount)::numeric AS total, COUNT(*)::int AS count
+      FROM (
+        SELECT p."paymentMethod" AS method,
+               COALESCE(ba.name, p."paymentMethod") AS label,
+               p.amount
+        FROM payments p
+        LEFT JOIN bank_accounts ba ON ba.id = p.bank_account_id
+        WHERE p.organization_id = $1
+          AND p.deleted_at IS NULL
+          AND p."paymentMethod" NOT IN ('cash', 'credit', 'client_balance', 'saldo_favor')
+          AND p."paymentDate" >= $2
+          AND p."paymentDate" <= $3
+        UNION ALL
+        SELECT cp.payment_method AS method,
+               COALESCE(ba.name, cp.payment_method) AS label,
+               cp.amount
+        FROM credit_payments cp
+        JOIN customer_credits cc ON cc.id = cp.credit_id
+        LEFT JOIN bank_accounts ba ON ba.id = cp.bank_account_id
+        WHERE cp.organization_id = $1
+          AND cp.deleted_at IS NULL
+          AND cp.payment_method NOT IN ('cash', 'credit', 'client_balance', 'saldo_favor')
+          AND cp.payment_date >= $2
+          AND cp.payment_date <= $3
+          AND cc.invoice_id IS NULL
+      ) other_in
+      GROUP BY method, label
+      ORDER BY SUM(amount) DESC
+      `,
+      [orgId, start, end],
+    );
+
+    // (3) Ventas fiadas en el turno: se vendió, pero aún no es dinero.
+    const [creditSalesAgg] = await this.em.query(
+      `
+      SELECT COALESCE(SUM(cc.original_amount), 0)::numeric AS total,
+             COUNT(*)::int AS count
+      FROM customer_credits cc
+      WHERE cc.organization_id = $1
+        AND cc.deleted_at IS NULL
+        AND cc.status <> 'cancelled'
+        AND cc.created_at >= $2
+        AND cc.created_at <= $3
+      `,
+      [orgId, start, end],
+    );
+
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const cashSales = parseFloat(salesAgg?.total ?? '0');
+    const otherMethods = otherMethodRows.map((row) => ({
+      method: row.method,
+      label: row.label,
+      total: parseFloat(row.total) || 0,
+      count: Number(row.count) || 0,
+    }));
+    const otherMethodsTotal = round(otherMethods.reduce((sum, m) => sum + m.total, 0));
+
     return {
-      cashSales: parseFloat(salesAgg?.total ?? '0'),
+      cashSales,
       cashSalesCount: Number(salesAgg?.count ?? 0),
       cashExpenses: parseFloat(expensesAgg?.total ?? '0'),
       cashExpensesCount: Number(expensesAgg?.count ?? 0),
@@ -322,6 +424,17 @@ export class CashRegisterService {
       invoicesCount: Number(invoicesAgg?.count ?? 0),
       creditNotesCount: Number(creditNotesAgg?.count ?? 0),
       creditNotesTotal: parseFloat(creditNotesAgg?.total ?? '0'),
+
+      cashFromSales: parseFloat(cashOriginAgg?.sales_total ?? '0'),
+      cashFromSalesCount: Number(cashOriginAgg?.sales_count ?? 0),
+      cashFromCreditPayments: parseFloat(cashOriginAgg?.credit_total ?? '0'),
+      cashFromCreditPaymentsCount: Number(cashOriginAgg?.credit_count ?? 0),
+      otherMethods,
+      otherMethodsTotal,
+      otherMethodsCount: otherMethods.reduce((sum, m) => sum + m.count, 0),
+      totalCollected: round(cashSales + otherMethodsTotal),
+      creditSalesTotal: parseFloat(creditSalesAgg?.total ?? '0'),
+      creditSalesCount: Number(creditSalesAgg?.count ?? 0),
     };
   }
 

@@ -6,6 +6,7 @@ import {
   IsString,
   IsDateString,
   IsUUID,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -64,4 +65,15 @@ export class AddCreditPaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Clave de idempotencia del abono (única por abono, generada en el cliente). ' +
+      'Reenviar la misma clave no duplica el pago. También se acepta en el header Idempotency-Key.',
+    example: '3f1c2a52-7d0e-4c0b-9d0e-0b7f2f2a9c11',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  idempotencyKey?: string;
 }

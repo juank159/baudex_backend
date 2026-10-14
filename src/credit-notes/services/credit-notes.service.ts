@@ -1,4 +1,5 @@
 // src/credit-notes/services/credit-notes.service.ts
+import { tenantRangeEndOf, tenantRangeStartOf, tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Injectable,
   BadRequestException,
@@ -418,11 +419,15 @@ export class CreditNotesService {
     }
 
     if (startDate) {
-      queryBuilder.andWhere('cn.date >= :startDate', { startDate });
+      queryBuilder.andWhere('cn.date >= :startDate', {
+        startDate: tenantRangeStartOf(startDate),
+      });
     }
 
     if (endDate) {
-      queryBuilder.andWhere('cn.date <= :endDate', { endDate });
+      queryBuilder.andWhere('cn.date <= :endDate', {
+        endDate: tenantRangeEndOf(endDate),
+      });
     }
 
     // Ordenar
@@ -702,7 +707,7 @@ export class CreditNotesService {
     organizationId: string,
     manager: any,
   ): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = tenantWallClockNow().getFullYear();
     const prefix = `CN-${year}`;
 
     // Obtener último número del año (incluye eliminadas para evitar duplicados)

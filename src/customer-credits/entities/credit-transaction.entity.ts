@@ -33,6 +33,16 @@ export enum CreditTransactionType {
 @Index('IDX_credit_transactions_type', ['type'])
 @Index('IDX_credit_transactions_organization', ['organizationId'])
 export class CreditTransaction {
+  /**
+   * Clave de idempotencia enviada por el cliente para movimientos que no
+   * generan un abono (ej. aumento de deuda). Unique(organizationId,
+   * idempotencyKey) vía índice parcial (migración
+   * AddIdempotencyKeyToCreditTransactions): reenviar la misma operación no
+   * la aplica dos veces.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'idempotency_key' })
+  idempotencyKey?: string;
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

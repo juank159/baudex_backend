@@ -1,3 +1,4 @@
+import { tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Entity,
   Column,
@@ -178,8 +179,8 @@ export class Sale extends BaseEntity {
   @BeforeInsert()
   generateSaleNumber() {
     if (!this.saleNumber) {
-      const year = new Date().getFullYear();
-      const month = String(new Date().getMonth() + 1).padStart(2, '0');
+      const year = tenantWallClockNow().getFullYear();
+      const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
       const timestamp = Date.now().toString().slice(-6);
       this.saleNumber = `SAL-${year}${month}-${timestamp}`;
     }

@@ -1,3 +1,4 @@
+import { tenantEndOfDayOf, tenantNowParts, tenantRangeStartOf, tenantStartOfDayOf } from '../../common/utils/tenant-clock';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, LessThanOrEqual } from 'typeorm';
@@ -139,7 +140,8 @@ export class KardexReportService {
     // Fechas por defecto
     const defaultEndDate = endDate || new Date();
     const defaultStartDate =
-      startDate || new Date(defaultEndDate.getFullYear(), 0, 1); // Inicio del año
+      startDate ||
+      tenantRangeStartOf(`${tenantNowParts(defaultEndDate).year}-01-01`)!; // Inicio del año del negocio
 
     // Debug: Log de consulta kardex
     console.log(
@@ -147,8 +149,8 @@ export class KardexReportService {
     );
 
     // Crear fecha de inicio del día para cálculos consistentes
-    const startOfQueryDay = new Date(defaultStartDate);
-    startOfQueryDay.setHours(0, 0, 0, 0);
+    // Inicio de ese día en el negocio (no en el reloj UTC del servidor)
+    const startOfQueryDay = tenantStartOfDayOf(defaultStartDate);
 
     // Obtener balance inicial
     let initialBalance = await this.getInitialBalance(
@@ -162,8 +164,7 @@ export class KardexReportService {
     );
 
     // ✅ CORREGIDO: Obtener movimientos del período desde inicio del día
-    const endOfDay = new Date(defaultEndDate);
-    endOfDay.setHours(23, 59, 59, 999); // Final del día filtrado
+    const endOfDay = tenantEndOfDayOf(defaultEndDate); // Final del día filtrado, en el negocio
 
     const movements = await this.movementRepository.find({
       where: {
@@ -324,7 +325,9 @@ export class KardexReportService {
     const defaultEndDate = endDate || new Date();
     const defaultStartDate =
       startDate ||
-      new Date(defaultEndDate.getFullYear(), defaultEndDate.getMonth(), 1);
+      tenantRangeStartOf(
+        `${tenantNowParts(defaultEndDate).year}-${String(tenantNowParts(defaultEndDate).month).padStart(2, '0')}-01`,
+      )!;
 
     const movements = await this.movementRepository.find({
       where: {
@@ -491,8 +494,7 @@ export class KardexReportService {
 
     // ✅ MÉTODO CORREGIDO: Incluir movimientos hasta el inicio del día filtrado
     // Para kardex, el saldo inicial debe incluir TODO hasta el comienzo del día
-    const startOfDay = new Date(startDate);
-    startOfDay.setHours(0, 0, 0, 0); // Inicio del día de la fecha filtrada
+    const startOfDay = tenantStartOfDayOf(startDate); // Inicio del día de la fecha filtrada, en el negocio
 
     const previousMovements = await this.movementRepository.find({
       where: {

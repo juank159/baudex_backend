@@ -1,3 +1,4 @@
+import { tenantCalendarDateOf, tenantInstantOf, tenantRangeEndOf, tenantRangeStartOf, tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -249,11 +250,15 @@ export class PurchaseOrdersService {
     }
 
     if (startDate) {
-      queryBuilder.andWhere('po.orderDate >= :startDate', { startDate });
+      queryBuilder.andWhere('po.orderDate >= :startDate', {
+        startDate: tenantRangeStartOf(startDate),
+      });
     }
 
     if (endDate) {
-      queryBuilder.andWhere('po.orderDate <= :endDate', { endDate });
+      queryBuilder.andWhere('po.orderDate <= :endDate', {
+        endDate: tenantRangeEndOf(endDate),
+      });
     }
 
     if (search) {
@@ -773,9 +778,7 @@ export class PurchaseOrdersService {
             totalCost: receivedItem.receivedQuantity * orderItem.unitCost,
             finalUnitCost: actualUnitCost,
             supplierLotNumber: receivedItem.supplierLotNumber,
-            expirationDate: receivedItem.expirationDate
-              ? new Date(receivedItem.expirationDate)
-              : null,
+            expirationDate: tenantCalendarDateOf(receivedItem.expirationDate),
             notes: historyNotes || null,
           },
         );
@@ -800,7 +803,7 @@ export class PurchaseOrdersService {
 
       // Establecer fecha de entrega si se proporciona
       if (receiveDto.receivedDate) {
-        reloadedOrder.actualDeliveryDate = new Date(receiveDto.receivedDate);
+        reloadedOrder.actualDeliveryDate = tenantInstantOf(receiveDto.receivedDate) ?? new Date();
       }
 
       this.logger.log(`📦 Purchase Order Status Update - ID: ${reloadedOrder.id}`);
@@ -892,8 +895,8 @@ export class PurchaseOrdersService {
     organizationId: string,
     queryRunner: QueryRunner,
   ): Promise<string> {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
     const prefix = `PO-${year}${month}-`;
 
     let attempts = 0;

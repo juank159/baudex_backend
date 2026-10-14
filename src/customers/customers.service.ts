@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
@@ -421,20 +421,91 @@ export class CustomersService {
     return this.customerRepository.save(customer);
   }
 
+  /**
+   * Sumar o restar al acumulado de deuda por créditos del cliente.
+   *
+   * El ajuste se hace con un UPDATE atómico en SQL (no leer → calcular →
+   * guardar): dos abonos simultáneos del mismo cliente ya no pueden pisarse
+   * entre sí. Si el llamador está dentro de una transacción debe pasar su
+   * `manager` para que el ajuste viaje en esa misma transacción.
+   */
   async updateBalance(
     id: string,
     amount: number,
     operation: 'add' | 'subtract',
+    manager?: EntityManager,
   ): Promise<Customer> {
     const customer = await this.findOne(id);
 
-    if (operation === 'add') {
-      customer.creditBalance = (customer.creditBalance || 0) + amount;
-    } else {
-      customer.creditBalance = Math.max(0, (customer.creditBalance || 0) - amount);
+    const delta = Math.round(Math.abs(Number(amount) || 0) * 100) / 100;
+    const repository = manager
+      ? manager.getRepository(Customer)
+      : this.customerRepository;
+
+    const result: { credit_balance: string }[] = await repository.query(
+      operation === 'add'
+        ? `UPDATE customers
+              SET credit_balance = COALESCE(credit_balance, 0) + $1
+            WHERE id = $2 AND organization_id = $3
+        RETURNING credit_balance`
+        : `UPDATE customers
+              SET credit_balance = GREATEST(0, COALESCE(credit_balance, 0) - $1)
+            WHERE id = $2 AND organization_id = $3
+        RETURNING credit_balance`,
+      [delta, id, customer.organizationId],
+    );
+
+    // TypeORM devuelve [filas, cantidad] para UPDATE ... RETURNING en postgres
+    const rows: any = Array.isArray(result?.[0]) ? result[0] : result;
+    const updated = rows?.[0]?.credit_balance;
+    if (updated !== undefined && updated !== null) {
+      customer.creditBalance = parseFloat(updated) || 0;
     }
 
-    return this.customerRepository.save(customer);
+    return customer;
+  }
+
+  /**
+   * Recalcular los acumulados de deuda del cliente desde la fuente de verdad
+   * (`customer_credits`), en vez de confiar en sumas y restas incrementales.
+   *
+   * `credit_balance` y `currentBalance` son contadores derivados: la deuda
+   * real es la suma de `balance_due` de los créditos activos. Recalcularlos
+   * al final de cada operación de crédito hace que el dato se auto-corrija
+   * aunque alguna operación anterior los haya dejado desfasados.
+   *
+   * Debe llamarse con el `manager` de la transacción del llamador, después
+   * de haber bloqueado la fila del cliente, para que la suma vea todos los
+   * cambios ya confirmados de ese cliente.
+   */
+  async recalculateCreditBalances(
+    customerId: string,
+    organizationId: string,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const repository = manager
+      ? manager.getRepository(Customer)
+      : this.customerRepository;
+
+    const result = await repository.query(
+      `UPDATE customers c
+          SET credit_balance = debt.total,
+              "currentBalance" = debt.total
+         FROM (
+           SELECT COALESCE(SUM(cc.balance_due), 0) AS total
+             FROM customer_credits cc
+            WHERE cc.customer_id = $1
+              AND cc.organization_id = $2
+              AND cc.deleted_at IS NULL
+              AND cc.status IN ('pending', 'partially_paid', 'overdue')
+         ) debt
+        WHERE c.id = $1 AND c.organization_id = $2
+    RETURNING c.credit_balance`,
+      [customerId, organizationId],
+    );
+
+    const rows: any = Array.isArray(result?.[0]) ? result[0] : result;
+    return parseFloat(rows?.[0]?.credit_balance ?? '0') || 0;
   }
 
   /**
@@ -709,6 +780,75 @@ export class CustomersService {
   }
 
   /**
+   * Deuda PENDIENTE real del cliente: suma del saldo de sus créditos activos
+   * (pendientes, parcialmente pagados o vencidos). No es el historial de lo
+   * que ha comprado: un crédito ya pagado no cuenta. Es la única cifra que
+   * se compara contra el límite de crédito.
+   */
+  async getPendingCreditDebt(
+    customerId: string,
+    organizationId: string,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const repository = manager
+      ? manager.getRepository(Customer)
+      : this.customerRepository;
+    const rows: { total: string }[] = await repository.query(
+      `SELECT COALESCE(SUM(balance_due), 0) AS total
+         FROM customer_credits
+        WHERE customer_id = $1
+          AND organization_id = $2
+          AND deleted_at IS NULL
+          AND status IN ('pending', 'partially_paid', 'overdue')`,
+      [customerId, organizationId],
+    );
+    return Math.round((parseFloat(rows?.[0]?.total ?? '0') || 0) * 100) / 100;
+  }
+
+  /**
+   * Validar que agregarle `amountToAdd` de deuda al cliente no supere su
+   * límite de crédito. Si lo supera lanza un error claro (400) para que la
+   * operación NO se guarde y el usuario sepa exactamente por qué.
+   *
+   * Regla: deuda pendiente actual + monto nuevo <= límite de crédito.
+   */
+  async assertWithinCreditLimit(
+    customer: Pick<Customer, 'id' | 'organizationId' | 'creditLimit'> & {
+      displayName?: string;
+      firstName?: string;
+      lastName?: string;
+    },
+    amountToAdd: number,
+    manager?: EntityManager,
+  ): Promise<{ creditLimit: number; pendingDebt: number; availableCredit: number }> {
+    const round = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
+    const creditLimit = round(customer.creditLimit);
+    const amount = round(amountToAdd);
+    const pendingDebt = await this.getPendingCreditDebt(
+      customer.id,
+      customer.organizationId,
+      manager,
+    );
+    const availableCredit = round(Math.max(0, creditLimit - pendingDebt));
+
+    if (round(pendingDebt + amount) > creditLimit) {
+      const money = (value: number) => `$${value.toLocaleString('es-CO')}`;
+      const name =
+        customer.displayName ||
+        `${customer.firstName ?? ''} ${customer.lastName ?? ''}`.trim() ||
+        'El cliente';
+      throw new BadRequestException(
+        `LÍMITE DE CRÉDITO EXCEDIDO. ${name} debe actualmente ${money(pendingDebt)} ` +
+          `y su límite es ${money(creditLimit)}. Solo puede fiar ${money(availableCredit)} más ` +
+          `y se intentó agregar ${money(amount)} (se pasa por ${money(round(pendingDebt + amount - creditLimit))}). ` +
+          `No se guardó nada. Registre un abono, aumente el cupo del cliente o cobre de contado.`,
+      );
+    }
+
+    return { creditLimit, pendingDebt, availableCredit };
+  }
+
+  /**
    * Verificar si el cliente puede realizar una compra
    */
   async canMakePurchase(
@@ -729,8 +869,14 @@ export class CustomersService {
       };
     }
 
-    const newBalance = customer.currentBalance + amount;
-    const availableCredit = customer.availableCredit;
+    // El límite se compara contra la deuda PENDIENTE real (créditos activos),
+    // no contra acumulados históricos.
+    const pendingDebt = await this.getPendingCreditDebt(
+      customerId,
+      customer.organizationId,
+    );
+    const newBalance = pendingDebt + amount;
+    const availableCredit = Math.max(0, customer.creditLimit - pendingDebt);
 
     if (newBalance > customer.creditLimit) {
       return {

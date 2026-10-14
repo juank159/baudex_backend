@@ -1,13 +1,15 @@
 // src/customer-credits/customer-credits.service.ts
+import { tenantCalendarDateOf, tenantRangeEndOf, tenantRangeStartOf, tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ServiceUnavailableException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, LessThan, IsNull, Not } from 'typeorm';
+import { Repository, DataSource, EntityManager, LessThan, IsNull, Not } from 'typeorm';
 import { CustomerCredit, CreditStatus } from './entities/customer-credit.entity';
 import { CreditPayment } from './entities/credit-payment.entity';
 import { CreditTransaction, CreditTransactionType } from './entities/credit-transaction.entity';
@@ -20,7 +22,13 @@ const SYNC_FROM_INVOICE_PREFIX = 'SYNC-INV-';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
 import { CustomersService } from '../customers/customers.service';
 import { ClientBalanceService } from './client-balance.service';
+import { ClientBalance } from './entities/client-balance.entity';
+import { Customer } from '../customers/entities/customer.entity';
 import { CashRegisterService } from '../cash-register/cash-register.service';
+import {
+  parseClientDateTime,
+  parseClientDateTimeLegacy,
+} from '../common/utils/timezone-range.util';
 import { Organization } from '../organizations/entities/organization.entity';
 import {
   CreateCustomerCreditDto,
@@ -111,6 +119,23 @@ export class CustomerCreditsService {
       throw new NotFoundException('Cliente no encontrado');
     }
 
+    // UN SOLO CRÉDITO POR FACTURA: el crédito de una venta fiada nace junto
+    // con la factura (misma transacción). Si la app pide crearlo otra vez
+    // (versiones anteriores lo hacían en una segunda petición, o es un
+    // reenvío), se devuelve el que ya existe en vez de duplicar la deuda.
+    if (dto.invoiceId) {
+      const existingForInvoice = await this.creditRepository.findOne({
+        where: {
+          invoiceId: dto.invoiceId,
+          organizationId: tenantId,
+          deletedAt: IsNull(),
+        },
+      });
+      if (existingForInvoice) {
+        return this.findOne(existingForInvoice.id);
+      }
+    }
+
     // VALIDACIÓN: No permitir nuevo crédito directo si hay uno pendiente
     // Solo aplica para créditos directos (sin invoiceId), los de facturas son automáticos
     if (!dto.invoiceId) {
@@ -131,6 +156,17 @@ export class CustomerCreditsService {
       }
     }
 
+    // LÍMITE DE CRÉDITO: una deuda directa (sin factura) no puede llevar al
+    // cliente por encima de su cupo. Los créditos que nacen de una factura ya
+    // fueron validados al crear la factura; validarlos otra vez aquí dejaría
+    // la factura guardada sin su crédito.
+    if (!dto.invoiceId) {
+      await this.customersService.assertWithinCreditLimit(
+        customer,
+        Number(dto.originalAmount),
+      );
+    }
+
     console.log(`📝 [Credits] Creando crédito de $${dto.originalAmount} para cliente ${customer.firstName}`);
 
     return this.dataSource.transaction(async (manager) => {
@@ -140,7 +176,7 @@ export class CustomerCreditsService {
         paidAmount: 0,
         balanceDue: dto.originalAmount,
         status: CreditStatus.PENDING,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        dueDate: tenantCalendarDateOf(dto.dueDate),
         description: dto.description,
         notes: dto.notes,
         customerId: dto.customerId,
@@ -336,12 +372,12 @@ export class CustomerCreditsService {
 
     if (query.startDate) {
       qb.andWhere('credit.createdAt >= :startDate', {
-        startDate: new Date(query.startDate),
+        startDate: tenantRangeStartOf(query.startDate),
       });
     }
     if (query.endDate) {
       qb.andWhere('credit.createdAt <= :endDate', {
-        endDate: new Date(query.endDate),
+        endDate: tenantRangeEndOf(query.endDate),
       });
     }
 
@@ -439,17 +475,187 @@ export class CustomerCreditsService {
   }
 
   /**
-   * Agregar un abono al crédito
-   * NUEVO: Permite sobrepagos que se convierten en saldo a favor
+   * Redondear a 2 decimales (centavos). Evita residuos de punto flotante
+   * como 0.01999999998 en saldos y sobrepagos.
+   */
+  private roundMoney(value: number): number {
+    return Math.round((Number(value) || 0) * 100) / 100;
+  }
+
+  /**
+   * Normalizar la clave de idempotencia recibida (body o header).
+   */
+  private normalizeIdempotencyKey(...candidates: (string | undefined | null)[]): string | null {
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const key = candidate.trim();
+      if (key.length > 0 && key.length <= 64) return key;
+    }
+    return null;
+  }
+
+  /**
+   * Ejecutar una operación de crédito dentro de una transacción con bloqueo
+   * por cliente y por crédito.
+   *
+   * Orden de bloqueo SIEMPRE igual (cliente → crédito) para que dos
+   * operaciones del mismo cliente se ejecuten una detrás de otra y nunca
+   * lean un saldo viejo. `FOR NO KEY UPDATE` bloquea a otros escritores sin
+   * chocar con las llaves foráneas que apuntan a estas filas.
+   *
+   * Si la base aborta por deadlock, serialización o espera de bloqueo, se
+   * reintenta; si aun así no se logra, se responde 503 (reintentable) y NO
+   * se guarda nada a medias.
+   */
+  private async runLockedCreditOperation<T>(
+    creditId: string,
+    tenantId: string,
+    work: (manager: EntityManager, credit: CustomerCredit) => Promise<T>,
+  ): Promise<T> {
+    const creditRef = await this.creditRepository.findOne({
+      where: { id: creditId, organizationId: tenantId, deletedAt: IsNull() },
+      select: ['id', 'customerId'],
+    });
+    if (!creditRef) {
+      throw new NotFoundException('Crédito no encontrado');
+    }
+
+    const retryableCodes = ['40P01', '40001', '55P03'];
+    const maxAttempts = 3;
+
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.dataSource.transaction(async (manager) => {
+          // Nunca esperar un bloqueo indefinidamente.
+          await manager.query(`SET LOCAL lock_timeout = '15s'`);
+
+          // 1. Bloquear al cliente: serializa todas sus operaciones de crédito.
+          await manager.query(
+            `SELECT id FROM customers WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`,
+            [creditRef.customerId, tenantId],
+          );
+
+          // 2. Bloquear el crédito y leer su estado REAL dentro de la transacción.
+          const credit = await manager
+            .createQueryBuilder(CustomerCredit, 'credit')
+            .setLock('for_no_key_update')
+            .where('credit.id = :creditId', { creditId })
+            .andWhere('credit.organizationId = :tenantId', { tenantId })
+            .andWhere('credit.deletedAt IS NULL')
+            .getOne();
+
+          if (!credit) {
+            throw new NotFoundException('Crédito no encontrado');
+          }
+
+          return work(manager, credit);
+        });
+      } catch (error) {
+        const code = error?.code ?? error?.driverError?.code;
+        if (retryableCodes.includes(code)) {
+          if (attempt < maxAttempts) {
+            console.warn(
+              `⏳ [Credits] Bloqueo/deadlock (${code}) en crédito ${creditId}, reintento ${attempt}/${maxAttempts - 1}`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+            continue;
+          }
+          throw new ServiceUnavailableException(
+            'El crédito está siendo actualizado por otra operación. Intenta de nuevo en unos segundos.',
+          );
+        }
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Respuesta para un abono que ya estaba registrado (reintento del cliente).
+   * Devuelve el estado actual del crédito sin volver a aplicar nada.
+   */
+  private async buildIdempotentPaymentResponse(
+    existingPayment: CreditPayment,
+    creditId: string,
+  ): Promise<{ credit: CustomerCredit; payment: CreditPayment; idempotent: boolean }> {
+    if (existingPayment.creditId !== creditId) {
+      throw new BadRequestException(
+        'La clave de idempotencia ya fue usada en un abono de otro crédito',
+      );
+    }
+    console.log(
+      `♻️ [Credits] Abono repetido detectado (pago ${existingPayment.id}) — se devuelve el ya registrado, sin duplicar`,
+    );
+    return {
+      credit: await this.findOne(creditId),
+      payment: existingPayment,
+      idempotent: true,
+    };
+  }
+
+  /**
+   * Agregar un abono al crédito.
+   *
+   * Garantías:
+   * - Todo o nada: abono, saldo del crédito, movimiento, factura, saldo a
+   *   favor y acumulados del cliente se guardan en UNA transacción.
+   * - Sin carreras: el estado del crédito se lee con bloqueo dentro de la
+   *   transacción, así dos abonos simultáneos se aplican uno tras otro.
+   * - Sin duplicados: un abono reenviado (misma clave de idempotencia, o el
+   *   mismo abono exacto reenviado por una versión vieja de la app) devuelve
+   *   el abono ya registrado en vez de crear otro.
    */
   async addPayment(
     creditId: string,
     dto: AddCreditPaymentDto,
     createdById: string,
-  ): Promise<{ credit: CustomerCredit; payment: CreditPayment }> {
+    headerIdempotencyKey?: string,
+  ): Promise<{ credit: CustomerCredit; payment: CreditPayment; idempotent?: boolean }> {
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
+    }
+
+    const paymentAmount = this.roundMoney(dto.amount);
+    if (paymentAmount <= 0) {
+      throw new BadRequestException('El monto del pago debe ser mayor a cero');
+    }
+
+    const idempotencyKey = this.normalizeIdempotencyKey(
+      dto.idempotencyKey,
+      headerIdempotencyKey,
+    );
+    // Las versiones anteriores de la app mandan una clave automática
+    // (`idem_...`) calculada por request, que cambia entre reintentos. Solo
+    // las claves explícitas identifican al abono de forma estable.
+    const hasStableKey = !!idempotencyKey && !idempotencyKey.startsWith('idem_');
+
+    // La hora del abono llega del dispositivo. Si viene sin zona horaria es
+    // la hora del reloj del negocio: se interpreta en la zona del tenant (no
+    // como UTC), para que el abono quede en la hora real y entre en el turno
+    // de caja correcto.
+    const organizationForTz = await this.organizationRepository.findOne({
+      where: { id: tenantId },
+      select: ['id', 'timezone'],
+    });
+    const tenantTimezone = organizationForTz?.timezone || 'America/Bogota';
+    const paymentDate = parseClientDateTime(dto.paymentDate, tenantTimezone);
+    if (dto.paymentDate && !paymentDate) {
+      throw new BadRequestException('La fecha debe ser válida');
+    }
+    // Misma fecha leída como antes de la corrección (sin zona = UTC): solo
+    // para reconocer el reenvío de un abono guardado con la hora antigua.
+    const legacyPaymentDate = parseClientDateTimeLegacy(dto.paymentDate);
+
+    // Reintento de un abono ya confirmado: responder de inmediato, ANTES de
+    // validar caja (la caja pudo cerrarse después y el abono ya existe).
+    if (idempotencyKey) {
+      const alreadySaved = await this.paymentRepository.findOne({
+        where: { organizationId: tenantId, idempotencyKey },
+        withDeleted: true,
+      });
+      if (alreadySaved) {
+        return this.buildIdempotentPaymentResponse(alreadySaved, creditId);
+      }
     }
 
     // 🔒 PHASE 2: caja abierta requerida si el pago es en efectivo y el
@@ -457,185 +663,248 @@ export class CustomerCreditsService {
     // transacción y revertir después.
     await this.validateCashRegisterIfNeeded(dto.paymentMethod, tenantId);
 
-    const credit = await this.findOne(creditId);
-
-    if (credit.status === CreditStatus.PAID) {
-      throw new BadRequestException('El crédito ya está pagado completamente');
-    }
-
-    if (credit.status === CreditStatus.CANCELLED) {
-      throw new BadRequestException('No se puede abonar a un crédito cancelado');
-    }
-
-    const remainingAmount = Number(credit.balanceDue);
-    const paymentAmount = Number(dto.amount);
-
-    if (paymentAmount <= 0) {
-      throw new BadRequestException('El monto del pago debe ser mayor a cero');
-    }
-
-    // Calcular sobrepago si existe
-    let overpaymentAmount = 0;
-    let effectivePaymentAmount = paymentAmount;
-
-    if (paymentAmount > remainingAmount) {
-      overpaymentAmount = paymentAmount - remainingAmount;
-      effectivePaymentAmount = remainingAmount;
-      console.log(`💰 [Credits] Sobrepago detectado: $${overpaymentAmount}`);
-    }
-
-    return this.dataSource.transaction(async (manager) => {
-      // 1. Crear el pago
-      const payment = manager.create(CreditPayment, {
-        amount: paymentAmount,
-        paymentMethod: dto.paymentMethod,
-        paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
-        reference: dto.reference,
-        notes: dto.notes,
+    let outcome: { payment: CreditPayment; duplicate: boolean };
+    try {
+      outcome = await this.runLockedCreditOperation(
         creditId,
-        bankAccountId: dto.bankAccountId || null,
-        organizationId: tenantId,
-        createdById,
-      });
+        tenantId,
+        async (manager, credit) => {
+          // A. Idempotencia bajo bloqueo: si otro request con la misma clave
+          //    acaba de confirmar, aquí ya se ve.
+          if (idempotencyKey) {
+            const existing = await manager.findOne(CreditPayment, {
+              where: { organizationId: tenantId, idempotencyKey },
+        withDeleted: true,
+            });
+            if (existing) {
+              return { payment: existing, duplicate: true };
+            }
+          }
 
-      const savedPayment = await manager.save(CreditPayment, payment);
+          // B. Protección para versiones anteriores de la app (sin clave
+          //    estable): el mismo abono exacto —mismo crédito, monto, método
+          //    y la misma marca de tiempo del dispositivo— es un reenvío.
+          //    Solo aplica a marcas de tiempo precisas; una fecha elegida en
+          //    el calendario (medianoche) no identifica a un abono.
+          if (!hasStableKey && paymentDate) {
+            const isPreciseTimestamp =
+              paymentDate.getUTCSeconds() !== 0 ||
+              paymentDate.getUTCMilliseconds() !== 0;
+            if (isPreciseTimestamp) {
+              const sameSubmission = await manager
+                .createQueryBuilder(CreditPayment, 'payment')
+                .where('payment.creditId = :creditId', { creditId })
+                .andWhere('payment.organizationId = :tenantId', { tenantId })
+                .andWhere('payment.amount = :amount', { amount: paymentAmount })
+                .andWhere('payment.paymentMethod = :paymentMethod', {
+                  paymentMethod: dto.paymentMethod,
+                })
+                .andWhere('payment.paymentDate IN (:...paymentDates)', {
+                  paymentDates: [paymentDate, legacyPaymentDate ?? paymentDate],
+                })
+                .andWhere('payment.deletedAt IS NULL')
+                .getOne();
+              if (sameSubmission) {
+                return { payment: sameSubmission, duplicate: true };
+              }
+            }
+          }
 
-      // 2. Calcular nuevo estado
-      const newPaidAmount = credit.paidAmount + effectivePaymentAmount;
-      const newBalanceDue = Math.max(0, credit.originalAmount - newPaidAmount);
-      const newStatus = newBalanceDue <= 0 ? CreditStatus.PAID : CreditStatus.PARTIALLY_PAID;
+          if (credit.status === CreditStatus.PAID) {
+            throw new BadRequestException('El crédito ya está pagado completamente');
+          }
 
-      // 3. Actualizar el crédito
-      await manager.update(CustomerCredit, { id: creditId }, {
-        paidAmount: newPaidAmount,
-        balanceDue: newBalanceDue,
-        status: newStatus,
-      });
+          if (credit.status === CreditStatus.CANCELLED) {
+            throw new BadRequestException('No se puede abonar a un crédito cancelado');
+          }
 
-      // 4. Registrar transacción de pago (incluye info de saldo generado si hay sobrepago)
-      // Si hay sobrepago, agregamos la info en la descripción con formato detectable
-      let paymentDescription = dto.notes || null;
-      if (overpaymentAmount > 0) {
-        const balanceInfo = `[SALDO_GENERADO:${overpaymentAmount}]`;
-        paymentDescription = paymentDescription
-          ? `${paymentDescription} ${balanceInfo}`
-          : balanceInfo;
-      }
+          // Calcular con el saldo REAL (leído con bloqueo)
+          const remainingAmount = this.roundMoney(credit.balanceDue);
+          const overpaymentAmount = this.roundMoney(
+            Math.max(0, paymentAmount - remainingAmount),
+          );
+          const effectivePaymentAmount = this.roundMoney(
+            Math.min(paymentAmount, remainingAmount),
+          );
+          if (overpaymentAmount > 0) {
+            console.log(`💰 [Credits] Sobrepago detectado: $${overpaymentAmount}`);
+          }
 
-      const paymentTransaction = manager.create(CreditTransaction, {
-        creditId,
-        type: CreditTransactionType.PAYMENT,
-        amount: paymentAmount,
-        description: paymentDescription,
-        balanceAfter: newBalanceDue,
-        paymentMethod: dto.paymentMethod,
-        bankAccountId: dto.bankAccountId || null,
-        organizationId: tenantId,
-        createdById,
-      });
-      await manager.save(CreditTransaction, paymentTransaction);
-
-      // 5. Actualizar balance del cliente
-      await this.customersService.updateBalance(
-        credit.customerId,
-        effectivePaymentAmount,
-        'subtract',
-      );
-
-      console.log(`💰 [Credits] Abono de $${paymentAmount}. Saldo: $${newBalanceDue}`);
-
-      // 6. SINCRONIZACIÓN: Actualizar factura asociada si existe
-      // IMPORTANTE: El crédito representa el saldo pendiente de la factura.
-      // Por lo tanto, el balanceDue de la factura debe ser IGUAL al balanceDue del crédito.
-      // NO debemos sumar el pago, sino sincronizar directamente el saldo.
-      if (credit.invoiceId) {
-        try {
-          const invoice = await manager.findOne(Invoice, {
-            where: { id: credit.invoiceId },
+          // 1. Crear el pago
+          const payment = manager.create(CreditPayment, {
+            amount: paymentAmount,
+            paymentMethod: dto.paymentMethod,
+            paymentDate: paymentDate ?? new Date(),
+            reference: dto.reference,
+            notes: dto.notes,
+            creditId,
+            bankAccountId: dto.bankAccountId || null,
+            organizationId: tenantId,
+            createdById,
+            idempotencyKey: idempotencyKey || null,
           });
 
-          if (invoice) {
-            // El saldo de la factura debe ser exactamente igual al saldo del crédito
-            // porque el crédito representa la deuda pendiente de esa factura
-            const invoiceNewBalanceDue = newBalanceDue; // Usar el nuevo saldo del crédito directamente
-            const invoiceNewPaidAmount = Math.max(0, Number(invoice.total) - invoiceNewBalanceDue);
+          const savedPayment = await manager.save(CreditPayment, payment);
 
-            let invoiceNewStatus: InvoiceStatus;
-            if (invoiceNewBalanceDue <= 0) {
-              invoiceNewStatus = InvoiceStatus.PAID;
-            } else if (invoiceNewPaidAmount > 0) {
-              invoiceNewStatus = InvoiceStatus.PARTIALLY_PAID;
-            } else {
-              invoiceNewStatus = invoice.status;
-            }
+          // 2. Calcular nuevo estado
+          const newPaidAmount = this.roundMoney(
+            Number(credit.paidAmount) + effectivePaymentAmount,
+          );
+          const newBalanceDue = this.roundMoney(
+            Math.max(0, Number(credit.originalAmount) - newPaidAmount),
+          );
+          const newStatus =
+            newBalanceDue <= 0 ? CreditStatus.PAID : CreditStatus.PARTIALLY_PAID;
 
-            await manager.update(Invoice, { id: credit.invoiceId }, {
-              paidAmount: invoiceNewPaidAmount,
-              balanceDue: invoiceNewBalanceDue,
-              status: invoiceNewStatus,
+          // 3. Actualizar el crédito
+          await manager.update(CustomerCredit, { id: creditId }, {
+            paidAmount: newPaidAmount,
+            balanceDue: newBalanceDue,
+            status: newStatus,
+          });
+
+          // 4. Registrar transacción de pago (incluye info de saldo generado si hay sobrepago)
+          // Si hay sobrepago, agregamos la info en la descripción con formato detectable
+          let paymentDescription = dto.notes || null;
+          if (overpaymentAmount > 0) {
+            const balanceInfo = `[SALDO_GENERADO:${overpaymentAmount}]`;
+            paymentDescription = paymentDescription
+              ? `${paymentDescription} ${balanceInfo}`
+              : balanceInfo;
+          }
+
+          const paymentTransaction = manager.create(CreditTransaction, {
+            creditId,
+            type: CreditTransactionType.PAYMENT,
+            amount: paymentAmount,
+            description: paymentDescription,
+            balanceAfter: newBalanceDue,
+            paymentMethod: dto.paymentMethod,
+            bankAccountId: dto.bankAccountId || null,
+            organizationId: tenantId,
+            createdById,
+          });
+          await manager.save(CreditTransaction, paymentTransaction);
+
+          console.log(`💰 [Credits] Abono de $${paymentAmount}. Saldo: $${newBalanceDue}`);
+
+          // 5. SINCRONIZACIÓN: Actualizar factura asociada si existe
+          // IMPORTANTE: El crédito representa el saldo pendiente de la factura.
+          // Por lo tanto, el balanceDue de la factura debe ser IGUAL al balanceDue del crédito.
+          // NO debemos sumar el pago, sino sincronizar directamente el saldo.
+          // Va dentro de la misma transacción: si falla, no se guarda el abono.
+          if (credit.invoiceId) {
+            const invoice = await manager.findOne(Invoice, {
+              where: { id: credit.invoiceId },
             });
 
-            // SINCRONIZACIÓN DE HISTORIAL: Crear registro de pago en factura
-            // Solo si este pago NO vino de una sincronización desde facturas (evitar loop)
-            const isFromInvoiceSync = dto.reference?.startsWith(SYNC_FROM_INVOICE_PREFIX);
+            if (invoice) {
+              // El saldo de la factura debe ser exactamente igual al saldo del crédito
+              // porque el crédito representa la deuda pendiente de esa factura
+              const invoiceNewBalanceDue = newBalanceDue; // Usar el nuevo saldo del crédito directamente
+              const invoiceNewPaidAmount = this.roundMoney(
+                Math.max(0, Number(invoice.total) - invoiceNewBalanceDue),
+              );
 
-            if (!isFromInvoiceSync) {
-              // Generar número de pago único para la factura
-              const year = new Date().getFullYear();
-              const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
-              const paymentNumber = `PAY-${year}-${randomPart}`;
+              let invoiceNewStatus: InvoiceStatus;
+              if (invoiceNewBalanceDue <= 0) {
+                invoiceNewStatus = InvoiceStatus.PAID;
+              } else if (invoiceNewPaidAmount > 0) {
+                invoiceNewStatus = InvoiceStatus.PARTIALLY_PAID;
+              } else {
+                invoiceNewStatus = invoice.status;
+              }
 
-              // Mapear método de pago a enum de factura
-              const invoicePaymentMethod = this.mapCreditPaymentMethodToInvoice(dto.paymentMethod);
-
-              const invoicePayment = manager.create(Payment, {
-                paymentNumber,
-                amount: effectivePaymentAmount,
-                paymentMethod: invoicePaymentMethod,
-                paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
-                reference: `${SYNC_FROM_CREDIT_PREFIX}${savedPayment.id}`,
-                notes: dto.notes ? `[Desde Créditos] ${dto.notes}` : '[Pago sincronizado desde módulo de Créditos]',
-                invoiceId: credit.invoiceId,
-                bankAccountId: dto.bankAccountId || null,
-                organizationId: tenantId,
-                createdById,
+              await manager.update(Invoice, { id: credit.invoiceId }, {
+                paidAmount: invoiceNewPaidAmount,
+                balanceDue: invoiceNewBalanceDue,
+                status: invoiceNewStatus,
               });
 
-              await manager.save(Payment, invoicePayment);
-              console.log(`📝 [Credits→Invoice] Pago registrado en historial de factura ${invoice.number}`);
+              // SINCRONIZACIÓN DE HISTORIAL: Crear registro de pago en factura
+              // Solo si este pago NO vino de una sincronización desde facturas (evitar loop)
+              const isFromInvoiceSync = dto.reference?.startsWith(SYNC_FROM_INVOICE_PREFIX);
+
+              if (!isFromInvoiceSync && effectivePaymentAmount > 0) {
+                // Generar número de pago único para la factura
+                const year = tenantWallClockNow().getFullYear();
+                const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+                const paymentNumber = `PAY-${year}-${randomPart}`;
+
+                // Mapear método de pago a enum de factura
+                const invoicePaymentMethod = this.mapCreditPaymentMethodToInvoice(dto.paymentMethod);
+
+                const invoicePayment = manager.create(Payment, {
+                  paymentNumber,
+                  amount: effectivePaymentAmount,
+                  paymentMethod: invoicePaymentMethod,
+                  paymentDate: paymentDate ?? new Date(),
+                  reference: `${SYNC_FROM_CREDIT_PREFIX}${savedPayment.id}`,
+                  notes: dto.notes ? `[Desde Créditos] ${dto.notes}` : '[Pago sincronizado desde módulo de Créditos]',
+                  invoiceId: credit.invoiceId,
+                  bankAccountId: dto.bankAccountId || null,
+                  organizationId: tenantId,
+                  createdById,
+                });
+
+                await manager.save(Payment, invoicePayment);
+                console.log(`📝 [Credits→Invoice] Pago registrado en historial de factura ${invoice.number}`);
+              }
+
+              console.log(`🔄 [Credits→Invoice] Factura ${invoice.number} sincronizada. Pagado: $${invoiceNewPaidAmount}, Saldo: $${invoiceNewBalanceDue}, Estado: ${invoiceNewStatus}`);
             }
-
-            console.log(`🔄 [Credits→Invoice] Factura ${invoice.number} sincronizada. Pagado: $${invoiceNewPaidAmount}, Saldo: $${invoiceNewBalanceDue}, Estado: ${invoiceNewStatus}`);
           }
-        } catch (error) {
-          console.error(`❌ [Credits] Error al sincronizar factura:`, error.message);
-          // No lanzar error para no afectar el pago del crédito
-        }
-      }
 
-      // 7. Si hay sobrepago, crear saldo a favor (el registro ya quedó en la transacción de pago)
-      if (overpaymentAmount > 0) {
-        try {
-          await this.clientBalanceService.depositBalance(
+          // 6. Si hay sobrepago, crear saldo a favor EN LA MISMA transacción:
+          //    el excedente nunca se pierde ni queda a medias.
+          if (overpaymentAmount > 0) {
+            await this.clientBalanceService.depositBalance(
+              credit.customerId,
+              overpaymentAmount,
+              `Sobrepago de crédito #${creditId.substring(0, 8)} - Exceso aplicado como saldo a favor`,
+              createdById,
+              creditId,
+              manager,
+            );
+            console.log(`✅ [Credits] Saldo a favor de $${overpaymentAmount} creado (trazabilidad incluida en transacción de pago)`);
+          }
+
+          // 7. Acumulados del cliente recalculados desde los créditos reales
+          await this.customersService.recalculateCreditBalances(
             credit.customerId,
-            overpaymentAmount,
-            `Sobrepago de crédito #${creditId.substring(0, 8)} - Exceso aplicado como saldo a favor`,
-            createdById,
-            creditId,
+            tenantId,
+            manager,
           );
-          console.log(`✅ [Credits] Saldo a favor de $${overpaymentAmount} creado (trazabilidad incluida en transacción de pago)`);
-        } catch (error) {
-          console.error(`❌ [Credits] Error al crear saldo a favor:`, error.message);
+
+          return { payment: savedPayment, duplicate: false };
+        },
+      );
+    } catch (error) {
+      // Carrera entre dos requests con la misma clave sobre créditos de
+      // clientes distintos: el índice único rechaza al segundo.
+      const code = error?.code ?? error?.driverError?.code;
+      if (code === '23505' && idempotencyKey) {
+        const existing = await this.paymentRepository.findOne({
+          where: { organizationId: tenantId, idempotencyKey },
+        withDeleted: true,
+        });
+        if (existing) {
+          return this.buildIdempotentPaymentResponse(existing, creditId);
         }
       }
+      throw error;
+    }
 
-      const updatedCredit = await this.findOne(creditId);
+    if (outcome.duplicate) {
+      return this.buildIdempotentPaymentResponse(outcome.payment, creditId);
+    }
 
-      return {
-        credit: updatedCredit,
-        payment: savedPayment,
-      };
-    });
+    // Leer DESPUÉS de confirmar la transacción: el crédito devuelto a la app
+    // refleja el saldo ya actualizado.
+    return {
+      credit: await this.findOne(creditId),
+      payment: outcome.payment,
+    };
   }
 
   /**
@@ -646,31 +915,59 @@ export class CustomerCreditsService {
     amount: number,
     description: string,
     createdById: string,
+    idempotencyKey?: string,
   ): Promise<CustomerCredit> {
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    const credit = await this.findOne(creditId);
-
-    if (credit.status === CreditStatus.PAID) {
-      throw new BadRequestException('No se puede agregar monto a un crédito pagado');
-    }
-
-    if (credit.status === CreditStatus.CANCELLED) {
-      throw new BadRequestException('No se puede agregar monto a un crédito cancelado');
-    }
-
-    if (amount <= 0) {
+    if (!(Number(amount) > 0)) {
       throw new BadRequestException('El monto debe ser mayor a cero');
     }
+    const amountToAdd = this.roundMoney(amount);
 
-    console.log(`📝 [Credits] Agregando $${amount} al crédito ${creditId}`);
+    console.log(`📝 [Credits] Agregando $${amountToAdd} al crédito ${creditId}`);
 
-    return this.dataSource.transaction(async (manager) => {
-      const newTotalAmount = credit.originalAmount + amount;
-      const newBalanceDue = credit.balanceDue + amount;
+    const operationKey = this.normalizeIdempotencyKey(idempotencyKey);
+
+    await this.runLockedCreditOperation(creditId, tenantId, async (manager, credit) => {
+      // Reenvío del mismo aumento (reintento / cola offline): ya se aplicó.
+      if (operationKey) {
+        const alreadyApplied = await manager.findOne(CreditTransaction, {
+          where: { organizationId: tenantId, idempotencyKey: operationKey },
+        });
+        if (alreadyApplied) {
+          console.log(`♻️ [Credits] Aumento de deuda repetido (${operationKey}) — no se aplica dos veces`);
+          return;
+        }
+      }
+
+      if (credit.status === CreditStatus.PAID) {
+        throw new BadRequestException('No se puede agregar monto a un crédito pagado');
+      }
+
+      if (credit.status === CreditStatus.CANCELLED) {
+        throw new BadRequestException('No se puede agregar monto a un crédito cancelado');
+      }
+
+      // LÍMITE DE CRÉDITO: se valida con el cliente bloqueado, así dos
+      // aumentos simultáneos no pueden pasar el cupo entre los dos.
+      const customer = await manager.findOne(Customer, {
+        where: { id: credit.customerId, organizationId: tenantId },
+      });
+      if (!customer) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      await this.customersService.assertWithinCreditLimit(
+        customer,
+        amountToAdd,
+        manager,
+      );
+
+      // Calcular con el saldo REAL (leído con bloqueo)
+      const newTotalAmount = this.roundMoney(Number(credit.originalAmount) + amountToAdd);
+      const newBalanceDue = this.roundMoney(Number(credit.balanceDue) + amountToAdd);
 
       // 1. Actualizar el crédito
       await manager.update(CustomerCredit, { id: creditId }, {
@@ -683,25 +980,27 @@ export class CustomerCreditsService {
       const transaction = manager.create(CreditTransaction, {
         creditId,
         type: CreditTransactionType.DEBT_INCREASE,
-        amount: amount,
+        amount: amountToAdd,
         description: description,
         balanceAfter: newBalanceDue,
         organizationId: tenantId,
         createdById,
+        idempotencyKey: operationKey || null,
       });
       await manager.save(CreditTransaction, transaction);
 
-      // 3. Actualizar balance del cliente
-      await this.customersService.updateBalance(
+      // 3. Acumulados del cliente recalculados desde los créditos reales
+      await this.customersService.recalculateCreditBalances(
         credit.customerId,
-        amount,
-        'add',
+        tenantId,
+        manager,
       );
 
       console.log(`✅ [Credits] Monto agregado. Nueva deuda: $${newTotalAmount}`);
-
-      return this.findOne(creditId);
     });
+
+    // Leer después de confirmar la transacción
+    return this.findOne(creditId);
   }
 
   /**
@@ -714,118 +1013,136 @@ export class CustomerCreditsService {
     creditId: string,
     createdById: string,
     amountToApply?: number,
+    idempotencyKey?: string,
   ): Promise<CustomerCredit> {
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    const credit = await this.findOne(creditId);
+    const operationKey = this.normalizeIdempotencyKey(idempotencyKey);
 
-    if (credit.status === CreditStatus.PAID) {
-      throw new BadRequestException('El crédito ya está pagado');
-    }
-
-    if (credit.status === CreditStatus.CANCELLED) {
-      throw new BadRequestException('El crédito está cancelado');
-    }
-
-    const clientBalance = await this.clientBalanceService.getClientBalance(credit.customerId);
-
-    if (!clientBalance || Number(clientBalance.balance) <= 0) {
-      throw new BadRequestException('El cliente no tiene saldo a favor disponible');
-    }
-
-    const availableBalance = Number(clientBalance.balance);
-    const remainingAmount = Number(credit.balanceDue);
-
-    // Si se especifica un monto, usarlo; de lo contrario, usar el mínimo entre saldo y deuda
-    let balanceToUse: number;
-    if (amountToApply !== undefined && amountToApply > 0) {
-      if (amountToApply > availableBalance) {
-        throw new BadRequestException(
-          `Monto solicitado ($${amountToApply}) excede el saldo disponible ($${availableBalance})`,
-        );
+    await this.runLockedCreditOperation(creditId, tenantId, async (manager, credit) => {
+      // Reenvío de la misma aplicación de saldo (reintento / cola offline).
+      if (operationKey) {
+        const alreadyApplied = await manager.findOne(CreditPayment, {
+          where: { organizationId: tenantId, idempotencyKey: operationKey },
+          withDeleted: true,
+        });
+        if (alreadyApplied) {
+          console.log(`♻️ [Credits] Aplicación de saldo repetida (${operationKey}) — no se aplica dos veces`);
+          return;
+        }
       }
-      if (amountToApply > remainingAmount) {
-        throw new BadRequestException(
-          `Monto solicitado ($${amountToApply}) excede la deuda pendiente ($${remainingAmount})`,
-        );
+
+      if (credit.status === CreditStatus.PAID) {
+        throw new BadRequestException('El crédito ya está pagado');
       }
-      balanceToUse = amountToApply;
-    } else {
-      balanceToUse = Math.min(availableBalance, remainingAmount);
-    }
 
-    console.log(`🔧 [Credits] Aplicando saldo a favor: $${balanceToUse}`);
+      if (credit.status === CreditStatus.CANCELLED) {
+        throw new BadRequestException('El crédito está cancelado');
+      }
 
-    // 1. Usar el saldo a favor
-    await this.clientBalanceService.useBalance(
-      {
-        clientId: credit.customerId,
+      const clientBalance = await manager.findOne(ClientBalance, {
+        where: { customerId: credit.customerId, organizationId: tenantId },
+      });
+
+      if (!clientBalance || Number(clientBalance.balance) <= 0) {
+        throw new BadRequestException('El cliente no tiene saldo a favor disponible');
+      }
+
+      const availableBalance = this.roundMoney(clientBalance.balance);
+      const remainingAmount = this.roundMoney(credit.balanceDue);
+
+      // Si se especifica un monto, usarlo; de lo contrario, usar el mínimo entre saldo y deuda
+      let balanceToUse: number;
+      if (amountToApply !== undefined && amountToApply > 0) {
+        if (amountToApply > availableBalance) {
+          throw new BadRequestException(
+            `Monto solicitado ($${amountToApply}) excede el saldo disponible ($${availableBalance})`,
+          );
+        }
+        if (amountToApply > remainingAmount) {
+          throw new BadRequestException(
+            `Monto solicitado ($${amountToApply}) excede la deuda pendiente ($${remainingAmount})`,
+          );
+        }
+        balanceToUse = this.roundMoney(amountToApply);
+      } else {
+        balanceToUse = this.roundMoney(Math.min(availableBalance, remainingAmount));
+      }
+
+      if (balanceToUse <= 0) {
+        throw new BadRequestException('No hay saldo pendiente al cual aplicar el saldo a favor');
+      }
+
+      console.log(`🔧 [Credits] Aplicando saldo a favor: $${balanceToUse}`);
+
+      // 1. Usar el saldo a favor (misma transacción)
+      await this.clientBalanceService.useBalance(
+        {
+          clientId: credit.customerId,
+          amount: balanceToUse,
+          description: `Aplicado manualmente al crédito #${creditId.substring(0, 8)}`,
+          relatedCreditId: creditId,
+        },
+        createdById,
+        manager,
+      );
+
+      // 2. Crear pago
+      const balancePayment = manager.create(CreditPayment, {
         amount: balanceToUse,
-        description: `Aplicado manualmente al crédito #${creditId.substring(0, 8)}`,
-        relatedCreditId: creditId,
-      },
-      createdById,
-    );
+        paymentMethod: 'saldo_favor',
+        paymentDate: new Date(),
+        notes: 'Abono de saldo a favor (manual)',
+        creditId,
+        organizationId: tenantId,
+        createdById,
+        idempotencyKey: operationKey || null,
+      });
+      await manager.save(CreditPayment, balancePayment);
 
-    // 2. Crear pago
-    const balancePayment = this.paymentRepository.create({
-      amount: balanceToUse,
-      paymentMethod: 'saldo_favor',
-      paymentDate: new Date(),
-      notes: 'Abono de saldo a favor (manual)',
-      creditId,
-      organizationId: tenantId,
-      createdById,
-    });
-    await this.paymentRepository.save(balancePayment);
+      // 3. Calcular nuevo estado con el saldo REAL (leído con bloqueo)
+      const newPaidAmount = this.roundMoney(Number(credit.paidAmount) + balanceToUse);
+      const newBalanceDue = this.roundMoney(Math.max(0, remainingAmount - balanceToUse));
+      const newStatus = newBalanceDue <= 0 ? CreditStatus.PAID : CreditStatus.PARTIALLY_PAID;
 
-    // 3. Registrar transacción
-    const transaction = this.transactionRepository.create({
-      creditId,
-      type: CreditTransactionType.BALANCE_USED,
-      amount: balanceToUse,
-      description: 'Abono de saldo a favor (aplicado manualmente)',
-      balanceAfter: remainingAmount - balanceToUse,
-      organizationId: tenantId,
-      createdById,
-    });
-    await this.transactionRepository.save(transaction);
+      // 4. Registrar transacción
+      const transaction = manager.create(CreditTransaction, {
+        creditId,
+        type: CreditTransactionType.BALANCE_USED,
+        amount: balanceToUse,
+        description: 'Abono de saldo a favor (aplicado manualmente)',
+        balanceAfter: newBalanceDue,
+        organizationId: tenantId,
+        createdById,
+      });
+      await manager.save(CreditTransaction, transaction);
 
-    // 4. Actualizar el crédito
-    const newPaidAmount = credit.paidAmount + balanceToUse;
-    const newBalanceDue = Math.max(0, remainingAmount - balanceToUse);
-    const newStatus = newBalanceDue <= 0 ? CreditStatus.PAID : CreditStatus.PARTIALLY_PAID;
+      // 5. Actualizar el crédito
+      await manager.update(
+        CustomerCredit,
+        { id: creditId },
+        {
+          paidAmount: newPaidAmount,
+          balanceDue: newBalanceDue,
+          status: newStatus,
+        },
+      );
 
-    await this.creditRepository.update(
-      { id: creditId },
-      {
-        paidAmount: newPaidAmount,
-        balanceDue: newBalanceDue,
-        status: newStatus,
-      },
-    );
-
-    // 5. Actualizar balance del cliente
-    await this.customersService.updateBalance(
-      credit.customerId,
-      balanceToUse,
-      'subtract',
-    );
-
-    // 6. SINCRONIZACIÓN: Actualizar factura asociada si existe
-    if (credit.invoiceId) {
-      try {
-        const invoice = await this.invoiceRepository.findOne({
+      // 6. SINCRONIZACIÓN: Actualizar factura asociada si existe
+      if (credit.invoiceId) {
+        const invoice = await manager.findOne(Invoice, {
           where: { id: credit.invoiceId },
         });
 
         if (invoice) {
           // El saldo de la factura debe ser igual al saldo del crédito
           const invoiceNewBalanceDue = newBalanceDue;
-          const invoiceNewPaidAmount = Math.max(0, Number(invoice.total) - invoiceNewBalanceDue);
+          const invoiceNewPaidAmount = this.roundMoney(
+            Math.max(0, Number(invoice.total) - invoiceNewBalanceDue),
+          );
 
           let invoiceNewStatus: InvoiceStatus;
           if (invoiceNewBalanceDue <= 0) {
@@ -836,7 +1153,8 @@ export class CustomerCreditsService {
             invoiceNewStatus = invoice.status;
           }
 
-          await this.invoiceRepository.update(
+          await manager.update(
+            Invoice,
             { id: credit.invoiceId },
             {
               paidAmount: invoiceNewPaidAmount,
@@ -847,13 +1165,19 @@ export class CustomerCreditsService {
 
           console.log(`🔄 [Credits→Invoice] Factura ${invoice.number} sincronizada. Pagado: $${invoiceNewPaidAmount}, Saldo: $${invoiceNewBalanceDue}`);
         }
-      } catch (error) {
-        console.error(`❌ [Credits] Error al sincronizar factura:`, error.message);
       }
-    }
 
-    console.log(`✅ [Credits] Saldo a favor aplicado. Nueva deuda: $${newBalanceDue}`);
+      // 7. Acumulados del cliente recalculados desde los créditos reales
+      await this.customersService.recalculateCreditBalances(
+        credit.customerId,
+        tenantId,
+        manager,
+      );
 
+      console.log(`✅ [Credits] Saldo a favor aplicado. Nueva deuda: $${newBalanceDue}`);
+    });
+
+    // Leer después de confirmar la transacción
     return this.findOne(creditId);
   }
 
@@ -887,29 +1211,34 @@ export class CustomerCreditsService {
    * Cancelar un crédito
    */
   async cancel(id: string): Promise<CustomerCredit> {
-    const credit = await this.findOne(id);
-
-    if (credit.status === CreditStatus.PAID) {
-      throw new BadRequestException('No se puede cancelar un crédito ya pagado');
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    if (credit.status === CreditStatus.CANCELLED) {
-      throw new BadRequestException('El crédito ya está cancelado');
-    }
+    await this.runLockedCreditOperation(id, tenantId, async (manager, credit) => {
+      if (credit.status === CreditStatus.PAID) {
+        throw new BadRequestException('No se puede cancelar un crédito ya pagado');
+      }
 
-    if (credit.balanceDue > 0) {
-      await this.customersService.updateBalance(
+      // Cancelar un crédito ya cancelado no es un error: es el reenvío de
+      // una cancelación que ya llegó. Se responde OK sin cambiar nada.
+      if (credit.status === CreditStatus.CANCELLED) {
+        return;
+      }
+
+      await manager.update(CustomerCredit, { id }, {
+        status: CreditStatus.CANCELLED,
+      });
+
+      await this.customersService.recalculateCreditBalances(
         credit.customerId,
-        credit.balanceDue,
-        'subtract',
+        tenantId,
+        manager,
       );
-    }
 
-    await this.creditRepository.update({ id }, {
-      status: CreditStatus.CANCELLED,
+      console.log(`🚫 [Credits] Crédito cancelado: $${credit.originalAmount}`);
     });
-
-    console.log(`🚫 [Credits] Crédito cancelado: $${credit.originalAmount}`);
 
     return this.findOne(id);
   }
@@ -927,7 +1256,8 @@ export class CustomerCreditsService {
       {
         organizationId: tenantId,
         status: Not(CreditStatus.PAID),
-        dueDate: LessThan(new Date()),
+        // Vencido = su fecha es ANTERIOR al día de hoy en el negocio
+        dueDate: LessThan(tenantCalendarDateOf(new Date())),
         deletedAt: IsNull(),
       },
       {
@@ -1014,18 +1344,21 @@ export class CustomerCreditsService {
    * Soft delete de crédito
    */
   async softDelete(id: string): Promise<void> {
-    const credit = await this.findOne(id);
-
-    if (credit.balanceDue > 0 && credit.status !== CreditStatus.CANCELLED) {
-      await this.customersService.updateBalance(
-        credit.customerId,
-        credit.balanceDue,
-        'subtract',
-      );
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    await this.creditRepository.update({ id }, {
-      deletedAt: new Date(),
+    await this.runLockedCreditOperation(id, tenantId, async (manager, credit) => {
+      await manager.update(CustomerCredit, { id }, {
+        deletedAt: new Date(),
+      });
+
+      await this.customersService.recalculateCreditBalances(
+        credit.customerId,
+        tenantId,
+        manager,
+      );
     });
   }
 

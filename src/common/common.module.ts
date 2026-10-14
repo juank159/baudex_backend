@@ -6,6 +6,7 @@ import { FileUploadService } from './services/file-upload.service';
 import { PaginationService } from './services/pagination.service';
 import { AuditService } from './services/audit.service';
 import { TenantAwareService } from './services/tenant-aware.service';
+import { TenantTimezoneService } from './services/tenant-timezone.service';
 import { SeedService } from './services/seed.service';
 import { SubscriptionCheckService } from './services/subscription-check.service';
 import { IsUniqueConstraint } from './validators/is-unique.validator';
@@ -47,6 +48,7 @@ import { Warehouse } from '../warehouses/entities/warehouse.entity';
     PaginationService,
     AuditService,
     TenantAwareService,
+    TenantTimezoneService,
     SeedService,
     SubscriptionCheckService,
     SubscriptionGuard,
@@ -61,6 +63,7 @@ import { Warehouse } from '../warehouses/entities/warehouse.entity';
     PaginationService,
     AuditService,
     TenantAwareService,
+    TenantTimezoneService,
     SeedService,
     SubscriptionCheckService,
     SubscriptionGuard,

@@ -1,3 +1,4 @@
+import { tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Entity,
   Column,
@@ -63,7 +64,7 @@ export class ExpenseCategory extends BaseEntity {
 
   // Método para calcular gastos del mes actual
   async getCurrentMonthSpent(): Promise<number> {
-    const currentDate = new Date();
+    const currentDate = tenantWallClockNow();
     const startOfMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),

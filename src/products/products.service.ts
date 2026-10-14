@@ -1,3 +1,4 @@
+import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -857,8 +858,8 @@ export class ProductService {
     organizationId: string,
     queryRunner: any,
   ): Promise<string> {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
     const prefix = `BATCH-${year}${month}-`;
 
     const existingBatches = await queryRunner.manager
@@ -890,8 +891,8 @@ export class ProductService {
     organizationId: string,
     queryRunner: any,
   ): Promise<string> {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
     const prefix = `MOV-${year}${month}-`;
 
     const existingMovements = await queryRunner.manager

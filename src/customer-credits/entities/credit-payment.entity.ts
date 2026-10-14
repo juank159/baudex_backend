@@ -22,6 +22,16 @@ import { BankAccount } from '../../bank-accounts/entities/bank-account.entity';
 @Index('IDX_credit_payments_payment_date', ['paymentDate'])
 export class CreditPayment extends BaseEntity {
   /**
+   * Clave de idempotencia enviada por el cliente (una por abono, generada en
+   * el dispositivo al confirmar el pago). Unique(organizationId, idempotencyKey)
+   * vía índice parcial creado en la migración AddIdempotencyKeyToCreditPayments:
+   * si la app reenvía el mismo abono (reintento, cola offline, doble toque),
+   * el servidor devuelve el abono ya registrado en vez de duplicarlo.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'idempotency_key' })
+  idempotencyKey?: string;
+
+  /**
    * Monto del abono
    */
   @Column({

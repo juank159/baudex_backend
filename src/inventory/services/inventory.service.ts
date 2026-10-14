@@ -1,3 +1,4 @@
+import { tenantRangeEndOf, tenantRangeStartOf, tenantTodaySql, tenantWallClockNow } from '../../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -1067,8 +1068,8 @@ export class InventoryService {
       [`movement_number_${organizationId}`],
     );
 
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
     const prefix = `MOV-${year}${month}-`;
 
     // Use a robust approach with proper LIKE pattern matching
@@ -1169,8 +1170,8 @@ export class InventoryService {
       [`batch_number_${organizationId}`],
     );
 
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
     const prefix = `BATCH-${year}${month}-`;
 
     // Use a robust approach with proper LIKE pattern matching
@@ -1274,12 +1275,14 @@ export class InventoryService {
 
     if (startDate) {
       queryBuilder.andWhere('movement.movementDate >= :startDate', {
-        startDate,
+        startDate: tenantRangeStartOf(startDate),
       });
     }
 
     if (endDate) {
-      queryBuilder.andWhere('movement.movementDate <= :endDate', { endDate });
+      queryBuilder.andWhere('movement.movementDate <= :endDate', {
+        endDate: tenantRangeEndOf(endDate),
+      });
     }
 
     return queryBuilder.getMany();
@@ -1341,13 +1344,13 @@ export class InventoryService {
 
       if (filters?.startDate) {
         queryBuilder.andWhere('movement.movementDate >= :startDate', {
-          startDate: filters.startDate,
+          startDate: tenantRangeStartOf(filters.startDate),
         });
       }
 
       if (filters?.endDate) {
         queryBuilder.andWhere('movement.movementDate <= :endDate', {
-          endDate: filters.endDate,
+          endDate: tenantRangeEndOf(filters.endDate),
         });
       }
 
@@ -1855,13 +1858,13 @@ export class InventoryService {
 
       if (filters?.startDate) {
         movementQueryBuilder.andWhere('movement.movementDate >= :startDate', {
-          startDate: filters.startDate,
+          startDate: tenantRangeStartOf(filters.startDate),
         });
       }
 
       if (filters?.endDate) {
         movementQueryBuilder.andWhere('movement.movementDate <= :endDate', {
-          endDate: filters.endDate,
+          endDate: tenantRangeEndOf(filters.endDate),
         });
       }
 
@@ -1991,7 +1994,7 @@ export class InventoryService {
       }
 
       if (filters?.nearExpiry) {
-        const nearExpiryDate = new Date();
+        const nearExpiryDate = tenantWallClockNow();
         nearExpiryDate.setDate(nearExpiryDate.getDate() + 30);
 
         queryBuilder.andWhere(
@@ -2002,7 +2005,7 @@ export class InventoryService {
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
               AND b2."expirationDate" <= :nearExpiryDate 
-              AND b2."expirationDate" > CURRENT_DATE
+              AND b2."expirationDate" > ${tenantTodaySql()}
               AND b2.deleted_at IS NULL
           )`,
           { nearExpiryDate },
@@ -2017,7 +2020,7 @@ export class InventoryService {
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
-              AND b2."expirationDate" < CURRENT_DATE
+              AND b2."expirationDate" < ${tenantTodaySql()}
               AND b2.deleted_at IS NULL
           )`,
         );
@@ -2083,7 +2086,7 @@ export class InventoryService {
       }
 
       if (filters?.nearExpiry) {
-        const nearExpiryDate = new Date();
+        const nearExpiryDate = tenantWallClockNow();
         nearExpiryDate.setDate(nearExpiryDate.getDate() + 30);
 
         countQueryBuilder.andWhere(
@@ -2094,7 +2097,7 @@ export class InventoryService {
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
               AND b2."expirationDate" <= :nearExpiryDate 
-              AND b2."expirationDate" > CURRENT_DATE
+              AND b2."expirationDate" > ${tenantTodaySql()}
               AND b2.deleted_at IS NULL
           )`,
           { nearExpiryDate },
@@ -2109,7 +2112,7 @@ export class InventoryService {
               AND b2.organization_id = :organizationId 
               AND b2.status = :batchStatus
               AND b2."expirationDate" IS NOT NULL
-              AND b2."expirationDate" < CURRENT_DATE
+              AND b2."expirationDate" < ${tenantTodaySql()}
               AND b2.deleted_at IS NULL
           )`,
         );
@@ -2525,14 +2528,14 @@ export class InventoryService {
       }
 
       if (filters?.nearExpiry) {
-        const nearExpiryDate = new Date();
+        const nearExpiryDate = tenantWallClockNow();
         nearExpiryDate.setDate(nearExpiryDate.getDate() + 30); // 30 días desde hoy
 
         // Solo productos que tienen al menos un lote que NO sea NULL y esté por vencer
         queryBuilder
           .andWhere('batch."expirationDate" IS NOT NULL')
           .having(
-            'MIN(batch."expirationDate") <= :nearExpiryDate AND MIN(batch."expirationDate") > CURRENT_DATE',
+            `MIN(batch."expirationDate") <= :nearExpiryDate AND MIN(batch."expirationDate") > ${tenantTodaySql()}`,
             {
               nearExpiryDate: nearExpiryDate,
             },
@@ -2543,7 +2546,7 @@ export class InventoryService {
         // Solo productos que tienen al menos un lote que NO sea NULL y esté vencido
         queryBuilder
           .andWhere('batch."expirationDate" IS NOT NULL')
-          .having('MIN(batch."expirationDate") < CURRENT_DATE');
+          .having(`MIN(batch."expirationDate") < ${tenantTodaySql()}`);
       }
 
       const orderDirection =
@@ -2647,7 +2650,7 @@ export class InventoryService {
           subQuery
             .andWhere('batch."expirationDate" IS NOT NULL')
             .having(
-              'MIN(batch."expirationDate") <= :nearExpiryDate AND MIN(batch."expirationDate") > CURRENT_DATE',
+              `MIN(batch."expirationDate") <= :nearExpiryDate AND MIN(batch."expirationDate") > ${tenantTodaySql()}`,
               {
                 nearExpiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días
               },
@@ -2657,7 +2660,7 @@ export class InventoryService {
         if (filters.expired) {
           subQuery
             .andWhere('batch."expirationDate" IS NOT NULL')
-            .having('MIN(batch."expirationDate") < CURRENT_DATE');
+            .having(`MIN(batch."expirationDate") < ${tenantTodaySql()}`);
         }
 
         const subResults = await subQuery.getRawMany();

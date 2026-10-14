@@ -1,4 +1,5 @@
 // src/bank-accounts/bank-accounts.controller.ts
+import { tenantInstantOf, tenantRangeEndOf, tenantRangeStartOf } from '../common/utils/tenant-clock';
 import {
   Controller,
   Get,
@@ -220,8 +221,8 @@ export class BankAccountsController {
     return this.bankAccountsService.listMovements({
       bankAccountId: id,
       organizationId,
-      startDate: startDate ? new Date(startDate) : undefined,
-      endDate: endDate ? new Date(endDate) : undefined,
+      startDate: tenantRangeStartOf(startDate),
+      endDate: tenantRangeEndOf(endDate),
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
@@ -263,7 +264,7 @@ export class BankAccountsController {
       type: dto.type,
       amount: dto.amount,
       description: dto.description,
-      movementDate: dto.movementDate ? new Date(dto.movementDate) : undefined,
+      movementDate: tenantInstantOf(dto.movementDate) ?? undefined,
       organizationId,
       createdById: userId,
     });
@@ -288,7 +289,7 @@ export class BankAccountsController {
       toAccountId: dto.toAccountId,
       amount: dto.amount,
       description: dto.description,
-      movementDate: dto.movementDate ? new Date(dto.movementDate) : undefined,
+      movementDate: tenantInstantOf(dto.movementDate) ?? undefined,
       organizationId,
       createdById: userId,
     });

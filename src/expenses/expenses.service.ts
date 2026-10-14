@@ -1,3 +1,4 @@
+import { tenantCalendarDateOf, tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -131,9 +132,8 @@ export class ExpensesService {
     const expenseData = {
       ...createExpenseDto,
       name: createExpenseDto.description,
-      date: createExpenseDto.date
-        ? new Date(createExpenseDto.date)
-        : new Date(),
+      // Día del gasto según el negocio (columna tipo `date`).
+      date: tenantCalendarDateOf(createExpenseDto.date) ?? tenantCalendarDateOf(new Date()),
       createdById,
       status: resolvedStatus,
     };
@@ -316,7 +316,7 @@ export class ExpensesService {
     }
 
     if (updateExpenseDto.date) {
-      expense.date = new Date(updateExpenseDto.date);
+      expense.date = tenantCalendarDateOf(updateExpenseDto.date) ?? expense.date;
     }
 
     return this.expenseRepository.save(expense);
@@ -472,7 +472,7 @@ export class ExpensesService {
       .getRawOne();
 
     // Gastos del mes actual
-    const currentDate = new Date();
+    const currentDate = tenantWallClockNow();
     const startOfMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),
@@ -522,8 +522,8 @@ export class ExpensesService {
   }
 
   async getExpensesByCategory(year?: number, month?: number): Promise<any[]> {
-    const currentYear = year || new Date().getFullYear();
-    const currentMonth = month || new Date().getMonth() + 1;
+    const currentYear = year || tenantWallClockNow().getFullYear();
+    const currentMonth = month || tenantWallClockNow().getMonth() + 1;
 
     const startDate = new Date(currentYear, currentMonth - 1, 1);
     const endDate = new Date(currentYear, currentMonth, 0);
@@ -550,8 +550,8 @@ export class ExpensesService {
   }
 
   async getMonthlyTrend(months: number = 12): Promise<any[]> {
-    const endDate = new Date();
-    const startDate = new Date();
+    const endDate = tenantWallClockNow();
+    const startDate = tenantWallClockNow();
     startDate.setMonth(startDate.getMonth() - months + 1);
     startDate.setDate(1);
 

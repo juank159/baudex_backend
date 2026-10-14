@@ -1,3 +1,4 @@
+import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -75,7 +76,7 @@ export class ExpenseCategoriesService {
 
     // Calcular estadísticas para cada categoría
     for (const category of categories) {
-      const currentDate = new Date();
+      const currentDate = tenantWallClockNow();
       const startOfMonth = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
@@ -199,7 +200,7 @@ export class ExpenseCategoriesService {
       .getRawOne();
 
     // Calcular gasto total del mes actual
-    const currentDate = new Date();
+    const currentDate = tenantWallClockNow();
     const startOfMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),

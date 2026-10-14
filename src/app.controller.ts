@@ -1,102 +1,33 @@
 import { Controller, Get, UseInterceptors } from '@nestjs/common';
 import { AppService } from './app.service';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
-import { ProfitabilityService } from './common/services/profitability.service';
 
 @Controller()
 @UseInterceptors(ResponseInterceptor)
 export class AppController {
-  constructor(
-    private readonly appService: AppService,
-    private readonly profitabilityService: ProfitabilityService,
-  ) {}
+  constructor(private readonly appService: AppService) {}
 
   @Get()
   getHello(): string {
     return this.appService.getHello();
   }
 
+  /**
+   * Estado del servicio. Es una ruta PÚBLICA (sin sesión): solo informa que
+   * el servidor está vivo. Antes también devolvía ingresos, costo y ganancia
+   * de una organización fija; eso no puede publicarse sin autenticación. La
+   * rentabilidad se consulta en `/dashboard/profitability`, solo como
+   * administrador.
+   */
   @Get('health')
-  async getHealth() {
-    
-    try {
-      // Usar organización real con facturas existentes
-      const organizationId = '20d665c8-25a3-454a-a564-2e8a0c81f025';
-      
-      // Obtener datos reales de rentabilidad de la base de datos
-      const realStats = await this.profitabilityService.getProfitabilityStats(organizationId);
-      
-      
-      return {
-        // Health status
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development',
-        version: '1.0.0',
-        
-        // ✅ REAL FIFO PROFITABILITY DATA FROM POSTGRESQL
-        fifo: {
-          message: '🎉 RENTABILIDAD FIFO CON DATOS REALES DE POSTGRESQL!',
-          dataSource: 'PostgreSQL Database - Ventas Reales',
-          totalRevenue: realStats.totalRevenue,
-          totalCOGS: realStats.totalCOGS,
-          grossProfit: realStats.grossProfit,
-          grossMarginPercentage: realStats.grossMarginPercentage,
-          topProfitableProducts: realStats.topProfitableProducts,
-          marginsByCategory: realStats.marginsByCategory,
-          // Mantener ejemplo para referencia
-          tuEjemploOriginal: {
-            producto: 'sal refisal 1 kg',
-            cantidad: 2,
-            precioVenta: 3200,
-            costoFIFO: 1250,
-            ingresoTotal: 6400,
-            costoTotal: 2500,
-            ganancia: 3900,
-            margen: 60.94
-          },
-          formula: 'GANANCIA = (precio_venta × cantidad) - (costo_fifo × cantidad)',
-          implementacion: '100% COMPLETA CON DATOS REALES ✅'
-        }
-      };
-    } catch (error) {
-      console.error('❌ Error obteniendo datos de rentabilidad:', error.message);
-      
-      // Fallback a datos de ejemplo si hay error
-      const totalRevenue = 6400;
-      const totalCOGS = 2500;
-      const grossProfit = totalRevenue - totalCOGS;
-      const grossMarginPercentage = (grossProfit / totalRevenue) * 100;
-      
-      return {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development',
-        version: '1.0.0',
-        fifo: {
-          message: '🔧 RENTABILIDAD FIFO - MODO FALLBACK',
-          error: error.message,
-          dataSource: 'Fallback to hardcoded example',
-          totalRevenue,
-          totalCOGS,
-          grossProfit,
-          grossMarginPercentage,
-          tuEjemplo: {
-            producto: 'sal refisal 1 kg',
-            cantidad: 2,
-            precioVenta: 3200,
-            costoFIFO: 1250,
-            ingresoTotal: 6400,
-            costoTotal: 2500,
-            ganancia: 3900,
-            margen: 60.94
-          },
-          implementacion: 'FALLBACK MODE ⚠️'
-        }
-      };
-    }
+  getHealth() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development',
+      version: '1.0.0',
+    };
   }
 
   @Get('fifo')

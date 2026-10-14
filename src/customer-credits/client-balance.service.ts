@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, MoreThan } from 'typeorm';
+import { Repository, DataSource, MoreThan, EntityManager } from 'typeorm';
 import { ClientBalance } from './entities/client-balance.entity';
 import {
   ClientBalanceTransaction,
@@ -181,6 +181,9 @@ export class ClientBalanceService {
 
   /**
    * Depositar dinero al saldo del cliente (sobrepago)
+   * @param externalManager EntityManager opcional: si el llamador ya está en
+   * una transacción, el depósito viaja en esa misma transacción (o se guarda
+   * todo, o no se guarda nada).
    */
   async depositBalance(
     customerId: string,
@@ -188,6 +191,7 @@ export class ClientBalanceService {
     description: string,
     createdById: string,
     relatedCreditId?: string,
+    externalManager?: EntityManager,
   ): Promise<ClientBalance> {
     const tenantId = this.tenantAwareService.getTenantId();
     if (!tenantId) {
@@ -200,7 +204,7 @@ export class ClientBalanceService {
 
     console.log(`📥 [ClientBalance] Depositando $${amount} para cliente ${customerId}`);
 
-    return this.dataSource.transaction(async (manager) => {
+    const executeDeposit = async (manager: EntityManager) => {
       // Obtener o crear saldo del cliente
       let clientBalance = await manager.findOne(ClientBalance, {
         where: { customerId, organizationId: tenantId },
@@ -213,20 +217,22 @@ export class ClientBalanceService {
           organizationId: tenantId,
           createdById,
         });
-        await manager.save(ClientBalance, clientBalance);
+        clientBalance = await manager.save(ClientBalance, clientBalance);
         console.log(`✅ [ClientBalance] Saldo creado para cliente ${customerId}`);
       }
 
-      // Calcular nuevo saldo
-      const currentBalance = Number(clientBalance.balance);
-      const newBalance = currentBalance + amount;
-
-      // Actualizar saldo
-      await manager.update(
-        ClientBalance,
-        { id: clientBalance.id },
-        { balance: newBalance },
+      // Sumar de forma atómica en SQL: dos depósitos simultáneos no se pisan.
+      const updateResult = await manager.query(
+        `UPDATE client_balances
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE id = $2
+      RETURNING balance`,
+        [amount, clientBalance.id],
       );
+      const updatedRows: any = Array.isArray(updateResult?.[0])
+        ? updateResult[0]
+        : updateResult;
+      const newBalance = parseFloat(updatedRows?.[0]?.balance ?? '0') || 0;
 
       // Crear transacción
       const transaction = manager.create(ClientBalanceTransaction, {
@@ -243,9 +249,19 @@ export class ClientBalanceService {
 
       console.log(`✅ [ClientBalance] Depositado $${amount}. Nuevo saldo: $${newBalance}`);
 
-      // Recargar y retornar
-      return this.getClientBalance(customerId);
-    });
+      clientBalance.balance = newBalance;
+      return clientBalance;
+    };
+
+    // Dentro de la transacción del llamador: sin abrir otra conexión.
+    if (externalManager) {
+      return executeDeposit(externalManager);
+    }
+
+    await this.dataSource.transaction(executeDeposit);
+
+    // Recargar y retornar (ya confirmado)
+    return this.getClientBalance(customerId);
   }
 
   /**
@@ -323,22 +339,28 @@ export class ClientBalanceService {
       throw new NotFoundException(`Cliente ${clientId} no tiene saldo a favor`);
     }
 
-    const currentBalance = Number(clientBalance.balance);
+    // Descontar de forma atómica y condicional en SQL: si dos operaciones
+    // intentan usar el mismo saldo a la vez, solo pasa la que alcanza; el
+    // saldo nunca queda negativo ni se gasta dos veces.
+    const updateResult = await manager.query(
+      `UPDATE client_balances
+          SET balance = balance - $1
+        WHERE id = $2 AND balance >= $1
+    RETURNING balance`,
+      [amount, clientBalance.id],
+    );
+    const updatedRows: any = Array.isArray(updateResult?.[0])
+      ? updateResult[0]
+      : updateResult;
 
-    if (amount > currentBalance) {
+    if (!updatedRows || updatedRows.length === 0) {
+      const currentBalance = Number(clientBalance.balance);
       throw new BadRequestException(
         `Saldo insuficiente. Disponible: $${currentBalance.toLocaleString()}, Solicitado: $${amount.toLocaleString()}`,
       );
     }
 
-    const newBalance = currentBalance - amount;
-
-    // Actualizar saldo
-    await manager.update(
-      ClientBalance,
-      { id: clientBalance.id },
-      { balance: newBalance },
-    );
+    const newBalance = parseFloat(updatedRows[0].balance) || 0;
 
     // Crear transacción
     const transaction = manager.create(ClientBalanceTransaction, {

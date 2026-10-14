@@ -128,6 +128,26 @@ export class CashRegister extends BaseEntity {
     invoicesCount: number;
     creditNotesCount: number;
     creditNotesTotal: number;
+
+    // ── Desglose del turno (cierres anteriores a esta versión no lo traen) ──
+    /** Efectivo recibido por ventas (facturas cobradas en efectivo). */
+    cashFromSales?: number;
+    cashFromSalesCount?: number;
+    /** Efectivo recibido por abonos a créditos (fiados que se pagaron). */
+    cashFromCreditPayments?: number;
+    cashFromCreditPaymentsCount?: number;
+    /**
+     * Cobros por otros medios (Nequi, transferencia, tarjeta...). NO entran
+     * a la caja: ese dinero está en las cuentas, no en el cajón.
+     */
+    otherMethods?: { method: string; label: string; total: number; count: number }[];
+    otherMethodsTotal?: number;
+    otherMethodsCount?: number;
+    /** Todo lo cobrado en el turno, por cualquier medio. */
+    totalCollected?: number;
+    /** Ventas fiadas en el turno (aún no es dinero recibido). */
+    creditSalesTotal?: number;
+    creditSalesCount?: number;
   };
 
   @Column({ type: 'timestamptz', name: 'opened_at' })

@@ -1,3 +1,4 @@
+import { tenantRangeEndOf, tenantRangeStartOf } from '../../common/utils/tenant-clock';
 import {
   Controller,
   Get,
@@ -240,8 +241,8 @@ export class InventoryController {
     if (productId) filters.productId = productId;
     if (type) filters.type = type;
     if (status) filters.status = status;
-    if (startDate) filters.startDate = new Date(startDate);
-    if (endDate) filters.endDate = new Date(endDate);
+    if (startDate) filters.startDate = tenantRangeStartOf(startDate);
+    if (endDate) filters.endDate = tenantRangeEndOf(endDate);
     if (search) filters.searchTerm = search;
     if (warehouseId) filters.warehouseId = warehouseId;
 
@@ -513,8 +514,8 @@ export class InventoryController {
       const kardexReport = await this.kardexReportService.getProductKardex(
         productId,
         organizationId,
-        startDate ? new Date(startDate) : undefined,
-        endDate ? new Date(endDate) : undefined,
+        tenantRangeStartOf(startDate),
+        tenantRangeEndOf(endDate),
         includeBatchDetails === 'true',
       );
 
@@ -549,8 +550,8 @@ export class InventoryController {
   ) {
     const filters: any = {};
 
-    if (startDate) filters.startDate = new Date(startDate);
-    if (endDate) filters.endDate = new Date(endDate);
+    if (startDate) filters.startDate = tenantRangeStartOf(startDate);
+    if (endDate) filters.endDate = tenantRangeEndOf(endDate);
     if (warehouseId) filters.warehouseId = warehouseId;
     if (categoryId) filters.categoryId = categoryId;
 

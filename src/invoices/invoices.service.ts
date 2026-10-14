@@ -1,3 +1,4 @@
+import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -38,6 +39,7 @@ import {
   NotificationSeverity,
 } from '../notifications/entities/notification.entity';
 import { CustomerCreditsService } from '../customer-credits/customer-credits.service';
+import { parseClientDateTime } from '../common/utils/timezone-range.util';
 import { CustomerCredit, CreditStatus } from '../customer-credits/entities/customer-credit.entity';
 import { CreditPayment } from '../customer-credits/entities/credit-payment.entity';
 import { CreditTransaction, CreditTransactionType } from '../customer-credits/entities/credit-transaction.entity';
@@ -101,9 +103,19 @@ export class InvoicesService {
       createInvoiceDto.customerId,
     );
 
-    // 🔴 NUEVA VALIDACIÓN PROFESIONAL: Límite de crédito
+    // 🔴 VALIDACIÓN DE LÍMITE DE CRÉDITO (antes de guardar cualquier cosa)
+    // Aplica a la venta 100% a crédito y también a la venta con pago parcial
+    // cuyo saldo restante queda fiado: en ambos casos nace deuda nueva.
+    const invoiceMetadata = (createInvoiceDto.metadata || {}) as Record<string, any>;
+    const remainingToCredit = Number(invoiceMetadata.remainingBalance) || 0;
     if (createInvoiceDto.paymentMethod === PaymentMethod.CREDIT) {
       await this.validateCreditAvailability(customer, createInvoiceDto);
+    } else if (invoiceMetadata.createCreditForRemaining && remainingToCredit > 0) {
+      await this.validateCreditAvailability(
+        customer,
+        createInvoiceDto,
+        remainingToCredit,
+      );
     }
 
     // 🔒 PHASE 2: Validar caja abierta para ventas en efectivo.
@@ -451,6 +463,74 @@ export class InvoicesService {
 
       await manager.save(Invoice, completeInvoice);
 
+      // CRÉDITO ATÓMICO PARA VENTA 100% A CRÉDITO.
+      // Antes el crédito lo creaba la app en una SEGUNDA petición después de
+      // crear la factura; si esa petición fallaba (se caía la red, se cerraba
+      // la app), quedaba una venta fiada sin crédito: plata que se debe y no
+      // aparece en cartera. Ahora nace aquí, en la misma transacción que la
+      // factura: o se guardan las dos cosas, o ninguna.
+      if (
+        createInvoiceDto.paymentMethod === PaymentMethod.CREDIT &&
+        Number(completeInvoice.balanceDue) > 0
+      ) {
+        const existingCredit = await manager.findOne(CustomerCredit, {
+          where: { invoiceId: completeInvoice.id, organizationId: tenantId },
+        });
+
+        if (!existingCredit) {
+          const creditAmount =
+            Math.round(Number(completeInvoice.balanceDue) * 100) / 100;
+          const creditDueDate = completeInvoice.dueDate
+            ? new Date(completeInvoice.dueDate)
+            : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          const creditDescription = `Crédito por venta a crédito - Factura ${completeInvoice.number}`;
+
+          const savedCredit = await manager.save(
+            CustomerCredit,
+            manager.create(CustomerCredit, {
+              originalAmount: creditAmount,
+              paidAmount: 0,
+              balanceDue: creditAmount,
+              status: CreditStatus.PENDING,
+              dueDate: creditDueDate,
+              description: creditDescription,
+              customerId: completeInvoice.customerId,
+              invoiceId: completeInvoice.id,
+              organizationId: tenantId,
+              createdById,
+            }),
+          );
+
+          await manager.save(
+            CreditTransaction,
+            manager.create(CreditTransaction, {
+              creditId: savedCredit.id,
+              type: CreditTransactionType.CHARGE,
+              amount: creditAmount,
+              description: creditDescription,
+              balanceAfter: creditAmount,
+              organizationId: tenantId,
+              createdById,
+            }),
+          );
+
+          await manager.increment(
+            'Customer',
+            { id: completeInvoice.customerId },
+            'creditBalance',
+            creditAmount,
+          );
+
+          completeInvoice.metadata = {
+            ...(completeInvoice.metadata || {}),
+            creditCreated: true,
+            creditId: savedCredit.id,
+            creditAmount,
+          };
+          await manager.save(Invoice, completeInvoice);
+        }
+      }
+
       // Incrementar currentBalance del cliente cuando queda deuda pendiente.
       // Este campo nunca se incrementaba en creación, solo se decrementaba al
       // pagar — por eso la validación de cupo siempre veía balance = 0.
@@ -598,7 +678,7 @@ export class InvoicesService {
 
       try {
         // Calcular fecha de vencimiento (30 días por defecto)
-        const dueDate = new Date();
+        const dueDate = tenantWallClockNow();
         dueDate.setDate(dueDate.getDate() + 30);
 
         // Generar descripción y notas detalladas para el crédito
@@ -644,7 +724,9 @@ export class InvoicesService {
         };
       } catch (error) {
         console.error(`   ❌ Error creando crédito: ${error.message}`);
-        // No bloquear la creación de la factura
+        // Una venta con saldo fiado NO puede quedar guardada sin su crédito:
+        // se cancela toda la transacción y la app recibe el error.
+        throw error;
       }
     }
 
@@ -748,7 +830,8 @@ export class InvoicesService {
    * para evitar que aparezcan como "vencidas" inmediatamente.
    */
   private calculateDueDate(paymentMethod: PaymentMethod, customer: any): Date {
-    const now = new Date();
+    // Día del negocio (zona horaria del tenant), no el del servidor.
+    const now = tenantWallClockNow();
 
     switch (paymentMethod) {
       case PaymentMethod.CASH:
@@ -785,7 +868,8 @@ export class InvoicesService {
    * Siempre da un plazo de 30 días o los términos del cliente
    */
   private calculateDueDateForPartialPayment(customer: any): Date {
-    const now = new Date();
+    // Día del negocio (zona horaria del tenant), no el del servidor.
+    const now = tenantWallClockNow();
     const days = customer?.paymentTerms || 30;
     const dueDate = new Date(now);
     dueDate.setDate(dueDate.getDate() + days);
@@ -867,7 +951,7 @@ export class InvoicesService {
 
   // ✅ NUEVO MÉTODO - Generar número de pago único
   private async generatePaymentNumber(organizationId: string): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = tenantWallClockNow().getFullYear();
     const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     // Contar pagos existentes para esta organización en el año actual
@@ -1493,7 +1577,7 @@ export class InvoicesService {
         idempotencyKey: paymentDto.idempotencyKey || null,
         amount: paymentDto.amount,
         paymentMethod: paymentDto.paymentMethod,
-        paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
+        paymentDate: (await this.parseTenantDateTime(paymentDto.paymentDate, tenantId)) ?? new Date(),
         reference: paymentDto.reference,
         notes: paymentDto.notes,
         invoiceId: id,
@@ -1600,7 +1684,7 @@ export class InvoicesService {
             const creditPayment = manager.create(CreditPayment, {
               amount: paymentDto.amount,
               paymentMethod: creditPaymentMethod,
-              paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
+              paymentDate: (await this.parseTenantDateTime(paymentDto.paymentDate, tenantId)) ?? new Date(),
               reference: `${SYNC_FROM_INVOICE_PREFIX}${payment.id}`,
               notes: paymentDto.notes ? `[Desde Facturas] ${paymentDto.notes}` : '[Pago sincronizado desde módulo de Facturas]',
               creditId: associatedCredit.id,
@@ -1874,9 +1958,9 @@ export class InvoicesService {
       const createdPayments: Payment[] = [];
       // Solo sumamos a los totales los pagos realmente nuevos. Los idempotentes ya estaban aplicados.
       let newlyAppliedAmount = 0;
-      const paymentDate = multiPaymentDto.paymentDate
-        ? new Date(multiPaymentDto.paymentDate)
-        : new Date();
+      const paymentDate =
+        (await this.parseTenantDateTime(multiPaymentDto.paymentDate, tenantId)) ??
+        new Date();
 
       // 1. Crear cada registro de pago y actualizar saldo de cuentas bancarias
       for (const paymentItem of multiPaymentDto.payments) {
@@ -2064,7 +2148,7 @@ export class InvoicesService {
 
         try {
           // Calcular fecha de vencimiento (30 días por defecto)
-          const dueDate = new Date();
+          const dueDate = tenantWallClockNow();
           dueDate.setDate(dueDate.getDate() + 30);
 
           // Generar descripción y notas detalladas para el crédito
@@ -2654,12 +2738,29 @@ export class InvoicesService {
   // ========== MÉTODOS DE VALIDACIÓN DE CRÉDITO PROFESIONALES ==========
 
   /**
+   * Fecha/hora enviada por la app, interpretada en la zona horaria del tenant
+   * cuando no trae zona explícita (ver `parseClientDateTime`).
+   */
+  private async parseTenantDateTime(
+    value: string | Date | null | undefined,
+    tenantId: string,
+  ): Promise<Date | null> {
+    if (!value) return null;
+    const organization = await this.organizationRepository.findOne({
+      where: { id: tenantId },
+      select: ['id', 'timezone'],
+    });
+    return parseClientDateTime(value, organization?.timezone || 'America/Bogota');
+  }
+
+  /**
    * 🔴 NUEVO: Validación profesional de límite de crédito
    * Basado en estándares de la industria 2024-2025
    */
   private async validateCreditAvailability(
     customer: any,
     invoiceDto: CreateInvoiceDto,
+    creditAmount?: number,
   ): Promise<void> {
     // 1. Validar que el cliente esté activo
     if (customer.status === 'suspended') {
@@ -2677,30 +2778,19 @@ export class InvoicesService {
       );
     }
 
-    // 2. Calcular total estimado de la factura
-    const estimatedTotal = this.calculateEstimatedTotal(invoiceDto);
+    // 2. Monto que quedará FIADO: el total de la factura si es 100% a
+    //    crédito, o solo el saldo restante si hubo pago parcial.
+    const estimatedTotal =
+      creditAmount !== undefined && creditAmount > 0
+        ? Math.round(creditAmount * 100) / 100
+        : this.calculateEstimatedTotal(invoiceDto);
 
-
-    // 3. Validar límite de crédito
-    const creditLimit = Number(customer.creditLimit) || 0;
-    const currentBalance = Number(customer.currentBalance) || 0;
-    const availableCredit = Math.max(0, creditLimit - currentBalance);
-
-    if (estimatedTotal > availableCredit) {
-      const deficit = estimatedTotal - availableCredit;
-
-      throw new BadRequestException(
-        `❌ LÍMITE DE CRÉDITO EXCEDIDO\n\n` +
-        `Cliente: ${customer.displayName}\n` +
-        `Límite de crédito: $${creditLimit.toLocaleString()}\n` +
-        `Saldo actual: $${currentBalance.toLocaleString()}\n` +
-        `Crédito disponible: $${availableCredit.toLocaleString()}\n` +
-        `Monto solicitado: $${estimatedTotal.toLocaleString()}\n` +
-        `Déficit: $${deficit.toLocaleString()}\n\n` +
-        `📞 Solicite aumento de cupo en el departamento de cartera o ` +
-        `cambie el método de pago a efectivo/tarjeta.`,
-      );
-    }
+    // 3. Validar límite de crédito contra la deuda PENDIENTE real del
+    //    cliente (suma de sus créditos activos), no contra el historial de
+    //    lo que ha comprado. Si se supera, lanza un error claro y no se
+    //    guarda nada.
+    const { creditLimit, pendingDebt: currentBalance } =
+      await this.customersService.assertWithinCreditLimit(customer, estimatedTotal);
 
     // 4. Validar facturas vencidas (política de riesgo)
     const overdueInvoices = await this.invoiceRepository.count({

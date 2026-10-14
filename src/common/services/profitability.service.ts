@@ -1,3 +1,4 @@
+import { tenantToday } from '../../common/utils/tenant-clock';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -255,7 +256,7 @@ export class ProfitabilityService {
         isImproving: grossMarginPercentage > 0,
         dailyMargins: [
           {
-            date: endDate || new Date().toISOString().split('T')[0],
+            date: endDate || tenantToday(),
             grossMarginPercentage,
             dailyRevenue: totalRevenue,
             dailyCOGS: totalCOGS,

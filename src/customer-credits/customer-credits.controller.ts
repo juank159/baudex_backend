@@ -11,6 +11,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Headers,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CustomerCreditsService } from './customer-credits.service';
@@ -175,8 +176,14 @@ export class CustomerCreditsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() paymentDto: AddCreditPaymentDto,
     @GetUser() user: User,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.creditsService.addPayment(id, paymentDto, user.id);
+    return this.creditsService.addPayment(
+      id,
+      paymentDto,
+      user.id,
+      idempotencyKey,
+    );
   }
 
   /**
@@ -244,12 +251,14 @@ export class CustomerCreditsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: { amount: number; description: string },
     @GetUser() user: User,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.creditsService.addAmountToCredit(
       id,
       dto.amount,
       dto.description,
       user.id,
+      idempotencyKey,
     );
   }
 
@@ -280,8 +289,14 @@ export class CustomerCreditsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: { amount?: number },
     @GetUser() user: User,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.creditsService.applyClientBalanceManually(id, user.id, dto.amount);
+    return this.creditsService.applyClientBalanceManually(
+      id,
+      user.id,
+      dto.amount,
+      idempotencyKey,
+    );
   }
 
   /**

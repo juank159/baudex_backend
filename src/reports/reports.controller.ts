@@ -1,3 +1,4 @@
+import { tenantEndOfDayOf, tenantRangeEndOf, tenantRangeStartOf } from '../common/utils/tenant-clock';
 import {
   Controller,
   Get,
@@ -208,13 +209,10 @@ export class ReportsController {
       throw new BadRequestException('El productId debe ser un UUID válido');
     }
 
-    const startDate = query.startDate ? new Date(query.startDate) : undefined;
+    // Rango según el día del negocio (zona horaria del tenant)
+    const startDate = tenantRangeStartOf(query.startDate);
     const endDate = query.endDate
-      ? (() => {
-          const date = new Date(query.endDate);
-          date.setHours(23, 59, 59, 999); // Establecer al final del día
-          return date;
-        })()
+      ? tenantEndOfDayOf(tenantRangeEndOf(query.endDate) ?? new Date())
       : undefined;
 
     return this.kardexService.getProductKardex(
@@ -236,8 +234,8 @@ export class ReportsController {
   ) {
     return this.kardexService.getMovementSummary(
       organizationId,
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
+      tenantRangeStartOf(startDate),
+      tenantRangeEndOf(endDate),
     );
   }
 
@@ -255,8 +253,8 @@ export class ReportsController {
     return this.kardexService.getMultiProductKardex(
       productIdArray,
       organizationId,
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
+      tenantRangeStartOf(startDate),
+      tenantRangeEndOf(endDate),
     );
   }
 
@@ -314,8 +312,8 @@ export class ReportsController {
       }
     } else {
       // Usar fechas personalizadas
-      if (startDate) result.startDate = new Date(startDate);
-      if (endDate) result.endDate = new Date(endDate);
+      if (startDate) result.startDate = tenantRangeStartOf(startDate);
+      if (endDate) result.endDate = tenantRangeEndOf(endDate);
     }
 
     return result;

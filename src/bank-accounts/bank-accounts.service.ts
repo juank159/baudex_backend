@@ -1,4 +1,5 @@
 // src/bank-accounts/bank-accounts.service.ts
+import { tenantRangeEndOf, tenantRangeStartOf } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -595,8 +596,8 @@ export class BankAccountsService {
     const skip = (page - 1) * limit;
 
     // Filtros de fecha
-    const startDate = query.startDate ? new Date(query.startDate) : null;
-    const endDate = query.endDate ? new Date(query.endDate) : null;
+    const startDate = tenantRangeStartOf(query.startDate) ?? null;
+    const endDate = tenantRangeEndOf(query.endDate) ?? null;
 
     // Query para obtener pagos de facturas
     const paymentsQuery = this.paymentRepository

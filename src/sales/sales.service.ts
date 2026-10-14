@@ -1,3 +1,4 @@
+import { tenantRangeEndOf, tenantRangeStartOf, tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
   NotFoundException,
@@ -193,11 +194,15 @@ export class SalesService {
     }
 
     if (startDate) {
-      queryBuilder.andWhere('sale.saleDate >= :startDate', { startDate });
+      queryBuilder.andWhere('sale.saleDate >= :startDate', {
+        startDate: tenantRangeStartOf(startDate),
+      });
     }
 
     if (endDate) {
-      queryBuilder.andWhere('sale.saleDate <= :endDate', { endDate });
+      queryBuilder.andWhere('sale.saleDate <= :endDate', {
+        endDate: tenantRangeEndOf(endDate),
+      });
     }
 
     if (search) {
@@ -429,8 +434,8 @@ export class SalesService {
     organizationId: string,
     queryRunner: QueryRunner,
   ): Promise<string> {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const year = tenantWallClockNow().getFullYear();
+    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
 
     const count = await queryRunner.manager.count(Sale, {
       where: { organizationId },

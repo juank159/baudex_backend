@@ -1,11 +1,15 @@
 // src/app.module.ts
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
+import { TenantDateTimeInterceptor } from './common/interceptors/tenant-datetime.interceptor';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { CommonModule } from './common/common.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
+import { TenantClockMiddleware } from './common/middlewares/tenant-clock.middleware';
 
 import { OrganizationsModule } from './organizations/organizations.module';
 import { CategoryModule } from './categories/categories.module';
@@ -92,12 +96,22 @@ import { AppMailerModule } from './mailer/mailer.module';
     AppMailerModule,
   ],
   controllers: [AppController, HealthController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Idempotencia global: una escritura reenviada por la app (cola offline,
+    // reintento, doble toque) no se ejecuta dos veces. Ver el interceptor.
+    // Zona horaria del negocio: toda hora que llega sin zona se interpreta
+    // con la zona configurada del tenant, antes de llegar a cualquier módulo.
+    { provide: APP_INTERCEPTOR, useClass: TenantDateTimeInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
-      .apply(TenantMiddleware)
+      // TenantClockMiddleware va DESPUÉS de TenantMiddleware: usa el negocio
+      // ya resuelto para fijar la zona horaria de toda la petición.
+      .apply(TenantMiddleware, TenantClockMiddleware)
       .exclude(
         // Rutas que no requieren tenant
         'health',

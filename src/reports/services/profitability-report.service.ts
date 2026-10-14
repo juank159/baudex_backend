@@ -1,3 +1,4 @@
+import { tenantNowParts } from '../../common/utils/tenant-clock';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
@@ -214,7 +215,9 @@ export class ProfitabilityReportService {
 
     saleItems.forEach((item) => {
       const saleDate = new Date(item.sale.saleDate);
-      const monthKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}`;
+      // Mes del negocio al que pertenece la venta
+      const saleParts = tenantNowParts(saleDate);
+      const monthKey = `${saleParts.year}-${String(saleParts.month).padStart(2, '0')}`;
 
       if (!monthlyData.has(monthKey)) {
         monthlyData.set(monthKey, []);
