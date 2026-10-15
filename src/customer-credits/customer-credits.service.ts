@@ -203,13 +203,6 @@ export class CustomerCreditsService {
       });
       await manager.save(CreditTransaction, initialTransaction);
 
-      // 3. Actualizar balance del cliente (deuda)
-      await this.customersService.updateBalance(
-        dto.customerId,
-        dto.originalAmount,
-        'add',
-      );
-
       return savedCredit;
     }).then(async (savedCredit) => {
       // 4. AUTOMÁTICO: Verificar y aplicar saldo a favor si el cliente tiene disponible
@@ -275,13 +268,6 @@ export class CustomerCreditsService {
                   balanceDue: Math.max(0, newBalanceDue),
                   status: newStatus,
                 },
-              );
-
-              // Actualizar balance del cliente
-              await this.customersService.updateBalance(
-                dto.customerId,
-                balanceToUse,
-                'subtract',
               );
 
               // SINCRONIZACIÓN: Actualizar factura asociada si existe

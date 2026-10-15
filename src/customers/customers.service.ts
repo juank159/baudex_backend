@@ -422,50 +422,6 @@ export class CustomersService {
   }
 
   /**
-   * Sumar o restar al acumulado de deuda por créditos del cliente.
-   *
-   * El ajuste se hace con un UPDATE atómico en SQL (no leer → calcular →
-   * guardar): dos abonos simultáneos del mismo cliente ya no pueden pisarse
-   * entre sí. Si el llamador está dentro de una transacción debe pasar su
-   * `manager` para que el ajuste viaje en esa misma transacción.
-   */
-  async updateBalance(
-    id: string,
-    amount: number,
-    operation: 'add' | 'subtract',
-    manager?: EntityManager,
-  ): Promise<Customer> {
-    const customer = await this.findOne(id);
-
-    const delta = Math.round(Math.abs(Number(amount) || 0) * 100) / 100;
-    const repository = manager
-      ? manager.getRepository(Customer)
-      : this.customerRepository;
-
-    const result: { credit_balance: string }[] = await repository.query(
-      operation === 'add'
-        ? `UPDATE customers
-              SET credit_balance = COALESCE(credit_balance, 0) + $1
-            WHERE id = $2 AND organization_id = $3
-        RETURNING credit_balance`
-        : `UPDATE customers
-              SET credit_balance = GREATEST(0, COALESCE(credit_balance, 0) - $1)
-            WHERE id = $2 AND organization_id = $3
-        RETURNING credit_balance`,
-      [delta, id, customer.organizationId],
-    );
-
-    // TypeORM devuelve [filas, cantidad] para UPDATE ... RETURNING en postgres
-    const rows: any = Array.isArray(result?.[0]) ? result[0] : result;
-    const updated = rows?.[0]?.credit_balance;
-    if (updated !== undefined && updated !== null) {
-      customer.creditBalance = parseFloat(updated) || 0;
-    }
-
-    return customer;
-  }
-
-  /**
    * Recalcular los acumulados de deuda del cliente desde la fuente de verdad
    * (`customer_credits`), en vez de confiar en sumas y restas incrementales.
    *

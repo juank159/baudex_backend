@@ -173,13 +173,6 @@ export class CreditNotesService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      // 1. Aplicar crédito al balance del cliente (reducir deuda)
-      await this.customersService.updateBalance(
-        creditNote.customerId,
-        creditNote.total,
-        'subtract', // Restar del balance (reducir lo que debe)
-      );
-
       // 2. Restaurar inventario si está configurado Y no se ha restaurado previamente
       if (creditNote.restoreInventory && !creditNote.inventoryRestored) {
         await this.restoreInventory(creditNote, userId, manager);

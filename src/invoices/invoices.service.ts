@@ -514,13 +514,6 @@ export class InvoicesService {
             }),
           );
 
-          await manager.increment(
-            'Customer',
-            { id: completeInvoice.customerId },
-            'creditBalance',
-            creditAmount,
-          );
-
           completeInvoice.metadata = {
             ...(completeInvoice.metadata || {}),
             creditCreated: true,
@@ -531,19 +524,8 @@ export class InvoicesService {
         }
       }
 
-      // Incrementar currentBalance del cliente cuando queda deuda pendiente.
-      // Este campo nunca se incrementaba en creación, solo se decrementaba al
-      // pagar — por eso la validación de cupo siempre veía balance = 0.
-      if (completeInvoice.balanceDue > 0) {
-        await manager
-          .createQueryBuilder()
-          .update('Customer')
-          .set({
-            currentBalance: () => `"currentBalance" + ${completeInvoice.balanceDue}`,
-          })
-          .where('id = :id', { id: completeInvoice.customerId })
-          .execute();
-      }
+      // La deuda del cliente la recalcula la base de datos desde sus créditos
+      // (trigger de customer_credits); aquí no se suma ni se resta.
 
       // Recargar con todas las relaciones (incluyendo payments) para la respuesta
       const fullInvoice = await manager.findOne(Invoice, {
@@ -706,15 +688,6 @@ export class InvoicesService {
 
         const savedCredit = await manager.save(CustomerCredit, credit);
 
-
-        // Actualizar el creditBalance del cliente
-        await manager.increment(
-          'Customer',
-          { id: invoice.customerId },
-          'creditBalance',
-          remainingBalance,
-        );
-
         // Actualizar metadata con información del crédito
         invoice.metadata = {
           ...invoice.metadata,
@@ -760,22 +733,7 @@ export class InvoicesService {
       }
     }
 
-    // 6. Actualizar balance del cliente por los pagos realizados
-    // IMPORTANTE: Usar manager directamente para evitar deadlock con la transacción
-    if (totalPaid > 0) {
-      const paymentAmount = Math.min(totalPaid, invoice.total);
-      // Decrementar el currentBalance del cliente (lo que debe)
-      await manager
-        .createQueryBuilder()
-        .update('Customer')
-        .set({
-          currentBalance: () => `GREATEST(0, "currentBalance" - ${paymentAmount})`,
-        })
-        .where('id = :id', { id: invoice.customerId })
-        .execute();
-
-    }
-
+    // La deuda del cliente la recalcula la base de datos desde sus créditos.
   }
 
   /**
@@ -1156,12 +1114,6 @@ export class InvoicesService {
           }
         }
 
-        // Actualizar balance del cliente
-        await this.customersService.updateBalance(
-          invoice.customerId,
-          invoice.total,
-          'subtract',
-        );
         break;
 
       case InvoiceStatus.PENDING:
@@ -1653,13 +1605,6 @@ export class InvoicesService {
         status: newStatus,
       });
 
-      // 4. Actualizar balance del cliente
-      await this.customersService.updateBalance(
-        invoice.customerId,
-        paymentDto.amount,
-        'subtract',
-      );
-
       // 5. SINCRONIZACIÓN BIDIRECCIONAL: Actualizar crédito asociado si existe
       // Esto es CRÍTICO para mantener consistencia cuando se paga desde facturas
       try {
@@ -1846,13 +1791,6 @@ export class InvoicesService {
         balanceDue: newBalanceDue,
         status: newStatus,
       });
-
-      // 5. Actualizar balance del cliente (deuda)
-      await this.customersService.updateBalance(
-        invoice.customerId,
-        balanceToUse,
-        'subtract',
-      );
 
       // 6. SINCRONIZACIÓN: Actualizar crédito asociado si existe
       try {
@@ -2075,17 +2013,8 @@ export class InvoicesService {
         status: newStatus,
       });
 
-      // 5. Actualizar balance del cliente
-      // IMPORTANTE: Usar manager directamente para evitar deadlock con la transacción
-      await manager
-        .createQueryBuilder()
-        .update('Customer')
-        .set({
-          currentBalance: () => `GREATEST(0, "currentBalance" - ${effectivePayment})`,
-        })
-        .where('id = :id', { id: invoice.customerId })
-        .execute();
-
+      // 5. La deuda del cliente la recalcula la base de datos desde sus
+      //    créditos al actualizar el crédito asociado (paso 6).
 
       // 6. SINCRONIZACIÓN BIDIRECCIONAL: Actualizar crédito existente si lo hay
       // Esto es CRÍTICO para mantener consistencia cuando se paga desde facturas
@@ -2200,14 +2129,6 @@ export class InvoicesService {
 
           const savedCredit = await manager.save(CustomerCredit, credit);
 
-          // Actualizar el creditBalance del cliente
-          await manager.increment(
-            'Customer',
-            { id: invoice.customerId },
-            'creditBalance',
-            newBalanceDue,
-          );
-
           creditCreated = true;
           creditId = savedCredit.id;
         } catch (error) {
@@ -2300,13 +2221,6 @@ export class InvoicesService {
         balanceDue: newBalanceDue,
         status: newStatus,
       });
-
-      // 5. Restaurar balance del cliente
-      await this.customersService.updateBalance(
-        invoice.customerId,
-        payment.amount,
-        'add',
-      );
 
       // 6. SINCRONIZACIÓN BIDIRECCIONAL: Actualizar crédito asociado si existe
       try {
@@ -2429,19 +2343,6 @@ export class InvoicesService {
             }
           }
         }
-
-        // Restaurar balance del cliente si había pagos aplicados
-        if (invoice.paidAmount > 0) {
-          try {
-            await this.customersService.updateBalance(
-              invoice.customerId,
-              invoice.paidAmount,
-              'add', // Devolver el crédito al cliente
-            );
-          } catch (error) {
-            console.error(`❌ Error restaurando balance del cliente:`, error);
-          }
-        }
       }
 
       // SINCRONIZACIÓN BIDIRECCIONAL: Cancelar crédito asociado si existe
@@ -2451,15 +2352,6 @@ export class InvoicesService {
         });
 
         if (associatedCredit && associatedCredit.status !== CreditStatus.CANCELLED) {
-          // Restaurar el balance del cliente por el saldo pendiente del crédito
-          if (associatedCredit.balanceDue > 0) {
-            await this.customersService.updateBalance(
-              invoice.customerId,
-              associatedCredit.balanceDue,
-              'subtract', // Reducir la deuda pendiente
-            );
-          }
-
           // Cancelar el crédito
           await manager.update(CustomerCredit, { id: associatedCredit.id }, {
             status: CreditStatus.CANCELLED,
@@ -2470,18 +2362,8 @@ export class InvoicesService {
         console.error(`❌ [Invoice] Error al cancelar crédito asociado:`, syncError.message);
       }
 
-      // Decrementar currentBalance por el saldo pendiente que se cancela.
-      // Simétrico al incremento que se hace al crear una factura con balanceDue > 0.
-      if (invoice.balanceDue > 0) {
-        await manager
-          .createQueryBuilder()
-          .update('Customer')
-          .set({
-            currentBalance: () => `GREATEST(0, "currentBalance" - ${invoice.balanceDue})`,
-          })
-          .where('id = :id', { id: invoice.customerId })
-          .execute();
-      }
+      // La deuda del cliente la recalcula la base de datos al cancelar el
+      // crédito asociado.
 
       // Cancelar factura
       invoice.status = InvoiceStatus.CANCELLED;
