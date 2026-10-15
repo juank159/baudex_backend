@@ -134,7 +134,7 @@ export class CreditNote extends BaseEntity {
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   subtotal: number; // Subtotal sin impuestos
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, default: 19, name: 'tax_percentage', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, name: 'tax_percentage', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })
   taxPercentage: number; // Porcentaje de impuesto (IVA)
 
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'tax_amount', transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 } })

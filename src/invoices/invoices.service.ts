@@ -244,7 +244,7 @@ export class InvoicesService {
         date: new Date(invoiceDateStr + 'T12:00:00'), // Mediodía para evitar edge cases de timezone
         dueDate: calculatedDueDate, // 📅 SIEMPRE usar la fecha calculada por el backend
         paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,
-        taxPercentage: createInvoiceDto.taxPercentage || 19,
+        taxPercentage: createInvoiceDto.taxPercentage || 0,
         discountPercentage: createInvoiceDto.discountPercentage || 0,
         discountAmount: createInvoiceDto.discountAmount || 0,
         notes: createInvoiceDto.notes,
@@ -2863,7 +2863,7 @@ export class InvoicesService {
     let subtotal = 0;
 
     // ✅ USAR EL IVA DE LA FACTURA (no hardcodeado)
-    const taxPercent = Number(invoiceDto.taxPercentage) || 19;
+    const taxPercent = Number(invoiceDto.taxPercentage) || 0;
     const taxDivisor = 1 + (taxPercent / 100); // Ej: 5% = 1.05, 19% = 1.19
 
     // Sumar subtotales de items

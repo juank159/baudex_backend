@@ -309,12 +309,13 @@ export class Product extends BaseEntity {
 
   /**
    * Categoría de impuesto según la DIAN
-   * Por defecto IVA para productos físicos
+   * Por defecto sin IVA: el POS no maneja impuestos salvo que el producto
+   * se configure explícitamente como gravado
    */
   @Column({
     type: 'enum',
     enum: TaxCategory,
-    default: TaxCategory.IVA,
+    default: TaxCategory.NO_GRAVADO,
     name: 'tax_category',
     comment: 'Categoría de impuesto para facturación electrónica',
   })
@@ -328,7 +329,7 @@ export class Product extends BaseEntity {
     type: 'decimal',
     precision: 5,
     scale: 2,
-    default: 19,
+    default: 0,
     name: 'tax_rate',
     comment: 'Tasa de impuesto en porcentaje',
     transformer: { to: (v: number) => v, from: (v: string | number) => typeof v === 'string' ? parseFloat(v) || 0 : v ?? 0 },
@@ -341,7 +342,7 @@ export class Product extends BaseEntity {
    */
   @Column({
     type: 'boolean',
-    default: true,
+    default: false,
     name: 'is_taxable',
     comment: 'Indica si el producto está gravado con impuestos',
   })

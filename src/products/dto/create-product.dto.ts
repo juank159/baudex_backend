@@ -262,7 +262,7 @@ export class CreateProductDto {
   @IsEnum(TaxCategory, {
     message: 'La categoría de impuesto debe ser IVA, INC, INC_BOLSA, EXENTO o NO_GRAVADO',
   })
-  taxCategory?: TaxCategory = TaxCategory.IVA;
+  taxCategory?: TaxCategory = TaxCategory.NO_GRAVADO;
 
   @IsOptional()
   @IsNumber(
@@ -271,11 +271,11 @@ export class CreateProductDto {
   )
   @Min(0, { message: 'La tasa de impuesto debe ser mayor o igual a 0' })
   @Max(100, { message: 'La tasa de impuesto no puede ser mayor a 100%' })
-  taxRate?: number = 19;
+  taxRate?: number = 0;
 
   @IsOptional()
   @IsBoolean({ message: 'isTaxable debe ser un valor booleano' })
-  isTaxable?: boolean = true;
+  isTaxable?: boolean = false;
 
   @IsOptional()
   @IsString({ message: 'La descripción del impuesto debe ser una cadena de texto' })
