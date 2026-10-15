@@ -100,13 +100,18 @@ else:
     check('presentación: mismas claves que el listado', set(lpres.keys())==set(full['items'][0].keys()), set(lpres.keys())^set(full['items'][0].keys()))
 
 # ---- más entidades: forma idéntica al listado
+# Campos que la descarga incremental agrega a propósito (el listado no los
+# trae): los abonos del crédito, para ver su historial sin conexión.
+EXTRA_SYNC_KEYS={'customer_credits': {'payments'}}
+
 def same_shape(name, list_items, entity):
     sync_items=changes(entity)['items']
     common=[i for i in sync_items if any(l.get('id')==i.get('id') for l in list_items)]
     if not common:
         print(f'SIN DATOS {name}: no se pudo comparar (lista={len(list_items)}, sync={len(sync_items)})'); return
     si=common[0]; li=[l for l in list_items if l['id']==si['id']][0]
-    check(f'{name}: mismas claves que el listado', set(li.keys())==set(si.keys()), set(li.keys())^set(si.keys()))
+    extra=EXTRA_SYNC_KEYS.get(entity,set())
+    check(f'{name}: mismas claves que el listado', set(li.keys())==set(si.keys())-extra, set(li.keys())^(set(si.keys())-extra))
 sup=req('POST','/suppliers',{'name':'Proveedor Sync','documentType':'nit','documentNumber':'900123','email':'prov@prueba.com'},tok)
 if '_error' in sup: print('proveedor:',sup)
 cr=req('POST','/cash-register/open',{'openingAmount':50000},tok)

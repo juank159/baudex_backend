@@ -132,6 +132,8 @@ export const SYNC_ENTITIES: Record<string, SyncEntityDefinition> = {
       ['e.customer', 'customer'],
       ['e.invoice', 'invoice'],
       ['e.createdBy', 'createdBy'],
+      // Abonos: la app muestra el historial del crédito sin conexión.
+      ['e.payments', 'payments'],
     ],
   },
   inventory_batches: {

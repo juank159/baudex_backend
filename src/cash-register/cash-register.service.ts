@@ -1,6 +1,7 @@
 // src/cash-register/cash-register.service.ts
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -70,23 +71,66 @@ export class CashRegisterService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
+    // Reenvío de una apertura que ya llegó (reintento de la cola o de una
+    // apertura hecha sin conexión): devolver la misma caja, no duplicarla.
+    if (dto.id) {
+      const same = await this.cashRegisterRepository.findOne({
+        where: { id: dto.id, organizationId: orgId },
+        relations: ['openedBy', 'closedBy'],
+      });
+      if (same) return same;
+    }
+
     const existing = await this.getOpenCashRegister(orgId);
     if (existing) {
-      throw new BadRequestException(
+      throw new ConflictException(
         `Ya hay una caja abierta desde ${existing.openedAt.toISOString()}. Ciérrala primero.`,
       );
     }
 
     const cashRegister = this.cashRegisterRepository.create({
+      ...(dto.id ? { id: dto.id } : {}),
       status: CashRegisterStatus.OPEN,
       openingAmount: dto.openingAmount,
       openingNotes: dto.openingNotes,
-      openedAt: new Date(),
+      openedAt: this.deviceTime(dto.openedAt) ?? new Date(),
       openedById: userId,
       organizationId: orgId,
     });
 
     return this.cashRegisterRepository.save(cashRegister);
+  }
+
+  /**
+   * ¿El movimiento en efectivo ocurrió hace rato y llega ahora desde la cola
+   * de sincronización (venta, abono o gasto hecho sin conexión)?
+   *
+   * La regla "debe haber caja abierta" es para los movimientos EN VIVO. Uno
+   * que llega desde la cola ya ocurrió: la app exigió la caja abierta en ese
+   * momento, y la caja pudo cerrarse antes de que volviera la conexión.
+   * Rechazarlo dejaría una venta real sin registrar, así que se acepta; el
+   * cuadre de caja lo ubica en su turno por la fecha del pago.
+   */
+  static isQueuedEvent(occurredAt?: Date | string | null): boolean {
+    if (!occurredAt) return false;
+    const date = occurredAt instanceof Date ? occurredAt : new Date(occurredAt);
+    if (isNaN(date.getTime())) return false;
+    return Date.now() - date.getTime() > 5 * 60 * 1000;
+  }
+
+  /**
+   * Hora informada por el equipo (operación hecha sin conexión). Se acepta
+   * si es válida y no está en el futuro; si el reloj del equipo va
+   * adelantado se usa la hora del servidor.
+   */
+  private deviceTime(value?: string, notBefore?: Date): Date | null {
+    if (!value) return null;
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return null;
+    const now = new Date();
+    if (date > now) return now;
+    if (notBefore && date < notBefore) return notBefore;
+    return date;
   }
 
   /**
@@ -102,8 +146,19 @@ export class CashRegisterService {
     const cashRegister = await this.findOne(id);
 
     if (cashRegister.status === CashRegisterStatus.CLOSED) {
+      // Reenvío del mismo cierre (reintento de la cola): ya quedó hecho.
+      if (
+        Number(cashRegister.closingActualAmount) === Number(dto.closingActualAmount)
+      ) {
+        return cashRegister;
+      }
       throw new BadRequestException('Esta caja ya está cerrada');
     }
+
+    // El turno termina a la hora real del cierre (puede venir de un cierre
+    // hecho sin conexión); el resumen se calcula hasta esa hora.
+    cashRegister.closedAt =
+      this.deviceTime(dto.closedAt, cashRegister.openedAt) ?? new Date();
 
     const summary = await this.computeSummary(cashRegister);
     const expected =
@@ -120,7 +175,6 @@ export class CashRegisterService {
     cashRegister.closingDifference = Math.round(difference * 100) / 100;
     cashRegister.closingSummary = summary;
     cashRegister.closingNotes = dto.closingNotes;
-    cashRegister.closedAt = new Date();
     cashRegister.closedById = userId;
 
     return this.cashRegisterRepository.save(cashRegister);

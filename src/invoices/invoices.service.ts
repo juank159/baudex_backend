@@ -407,7 +407,7 @@ export class InvoicesService {
             paymentNumber: balancePaymentNumber,
             amount: clientBalanceToApply,
             paymentMethod: PaymentMethod.CLIENT_BALANCE,
-            paymentDate: new Date(),
+            paymentDate: this.saleDate(createInvoiceDto.metadata),
             reference: `Saldo a favor aplicado - Factura ${completeInvoice.number}`,
             notes: `Pago realizado con saldo a favor del cliente. Saldo utilizado: $${clientBalanceToApply.toLocaleString()}`,
             invoiceId: completeInvoice.id,
@@ -591,7 +591,7 @@ export class InvoicesService {
         paymentNumber,
         amount,
         paymentMethod,
-        paymentDate: new Date(),
+        paymentDate: this.saleDate(metadata),
         reference: `Pago inicial - Factura ${invoice.number}`,
         notes: paymentData.bankAccountName
           ? `Pago vía ${paymentData.bankAccountName}`
@@ -950,6 +950,22 @@ export class InvoicesService {
   }
 
   // ✅ NUEVO MÉTODO - Generar número de pago único
+  /**
+   * Fecha de los pagos que nacen con la factura. Para una venta hecha sin
+   * conexión, la app envía en `metadata.soldAt` la hora real de la venta; sin
+   * esto el pago quedaba con la hora en que subió (p. ej. ventas del sábado
+   * en la noche registradas el domingo) y caía en el turno de caja y el día
+   * equivocados. Se ignora si no es válida o está en el futuro.
+   */
+  private saleDate(metadata?: any): Date {
+    const now = new Date();
+    const raw = metadata?.soldAt;
+    if (!raw) return now;
+    const date = new Date(raw);
+    if (isNaN(date.getTime()) || date > now) return now;
+    return date;
+  }
+
   private async generatePaymentNumber(organizationId: string): Promise<string> {
     const year = tenantWallClockNow().getFullYear();
     const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -1046,7 +1062,7 @@ export class InvoicesService {
             paymentNumber,
             amount: remainingToPay, // ✅ CORREGIDO: Solo el monto restante después del saldo a favor
             paymentMethod: invoice.paymentMethod,
-            paymentDate: new Date(),
+            paymentDate: this.saleDate(metadata),
             reference: `Pago completo - Factura ${invoice.number}`,
             notes: 'Pago registrado automáticamente al crear factura',
             invoiceId: invoice.id,
@@ -2669,6 +2685,9 @@ export class InvoicesService {
 
     if (!isPaidStatus) return;
     if (!principalIsCash) return;
+
+    // Venta hecha sin conexión que sube ahora: ya ocurrió, no se rechaza.
+    if (CashRegisterService.isQueuedEvent(dto.metadata?.soldAt)) return;
 
     // Si el tenant tiene desactivado el módulo de caja (toggle en
     // Settings → `organization.settings.cashRegisterEnabled = false`),

@@ -79,8 +79,11 @@ export class CustomerCreditsService {
   private async validateCashRegisterIfNeeded(
     paymentMethod: PaymentMethod,
     organizationId: string,
+    occurredAt?: Date | null,
   ): Promise<void> {
     if (paymentMethod !== PaymentMethod.CASH) return;
+    // Abono hecho sin conexión que sube ahora: ya ocurrió, no se rechaza.
+    if (CashRegisterService.isQueuedEvent(occurredAt)) return;
 
     const organization = await this.organizationRepository.findOne({
       where: { id: organizationId },
@@ -661,7 +664,11 @@ export class CustomerCreditsService {
     // 🔒 PHASE 2: caja abierta requerida si el pago es en efectivo y el
     // tenant tiene el módulo activo. Bloqueo temprano para no encolar la
     // transacción y revertir después.
-    await this.validateCashRegisterIfNeeded(dto.paymentMethod, tenantId);
+    await this.validateCashRegisterIfNeeded(
+      dto.paymentMethod,
+      tenantId,
+      paymentDate,
+    );
 
     let outcome: { payment: CreditPayment; duplicate: boolean };
     try {

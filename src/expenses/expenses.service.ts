@@ -59,7 +59,10 @@ export class ExpensesService {
    * así que si por error se llama 2 veces podemos detectar duplicados con
    * un SELECT antes de insertar (TODO si surge en producción).
    */
-  private async processExpensePayment(expense: Expense): Promise<void> {
+  private async processExpensePayment(
+    expense: Expense,
+    occurredAt?: string | Date | null,
+  ): Promise<void> {
     if (!expense.paidFrom) return;
 
     // Phase 2: si el gasto se paga con caja del día, validar que haya
@@ -67,6 +70,10 @@ export class ExpensesService {
     // El cierre de caja capturará automáticamente este gasto vía la
     // query SQL del rango open→close.
     if (expense.paidFrom === ExpensePaidFrom.CASH_REGISTER) {
+      // Gasto hecho sin conexión que sube ahora: ya ocurrió, no se rechaza.
+      if (CashRegisterService.isQueuedEvent(occurredAt)) {
+        return;
+      }
       const open = await this.cashRegisterService.getOpenCashRegister(
         expense.organizationId,
       );
@@ -147,7 +154,11 @@ export class ExpensesService {
     // Si el gasto se crea ya como `paid` y tiene paidFrom=bank_account,
     // procesamos el pago: descontar saldo + generar movement.
     if (saved.status === ExpenseStatus.PAID) {
-      await this.processExpensePayment(saved);
+      // `recordedAt`: hora en que se registró en el equipo (gasto sin conexión).
+      await this.processExpensePayment(
+        saved,
+        createExpenseDto.metadata?.recordedAt,
+      );
     }
     return saved;
   }

@@ -1,10 +1,15 @@
-import { IsNumber, IsOptional, IsString, Min, MaxLength } from 'class-validator';
+import {
+  IsDateString,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  MaxLength,
+} from 'class-validator';
 
 export class CloseCashRegisterDto {
   /**
-   * Efectivo físico contado al cierre. Si difiere de lo esperado por
-   * sistema, queda registrado como sobrante (positivo) o faltante
-   * (negativo) en `closingDifference`.
+   * Efectivo contado físicamente al cerrar.
    */
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto debe ser numérico' })
   @Min(0, { message: 'El monto contado no puede ser negativo' })
@@ -14,4 +19,12 @@ export class CloseCashRegisterDto {
   @IsString({ message: 'Las notas deben ser texto' })
   @MaxLength(500, { message: 'Las notas no pueden exceder 500 caracteres' })
   closingNotes?: string;
+
+  /**
+   * Hora real del cierre en el equipo (cierre sin conexión). El resumen del
+   * turno se calcula hasta esta hora, no hasta que llegó la petición.
+   */
+  @IsOptional()
+  @IsDateString({}, { message: 'La fecha de cierre no es válida' })
+  closedAt?: string;
 }
