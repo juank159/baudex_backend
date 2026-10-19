@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { CreateInvoiceDto } from './dto/create-invoice.dto';
+import { CreateInvoiceDto, isTemporaryProductId } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { InvoiceQueryDto } from './dto/invoice-query.dto';
 import { AddPaymentDto, AddMultiplePaymentsDto } from './dto/payment.dto';
@@ -129,6 +129,13 @@ export class InvoicesService {
     const processedItems = [];
 
     for (const itemDto of createInvoiceDto.items) {
+      // Producto no registrado mandado con su id temporal de la app
+      // (`temp_…`): es un producto temporal, no un id de producto.
+      if (isTemporaryProductId(itemDto.productId)) {
+        itemDto.isTemporary = true;
+        itemDto.productId = undefined;
+        itemDto.presentationId = undefined;
+      }
       if (itemDto.isTemporary) {
         // ✅ CREAR PRODUCTO TEMPORAL
 

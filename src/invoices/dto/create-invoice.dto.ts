@@ -327,6 +327,15 @@ import {
 import { Type } from 'class-transformer';
 import { InvoiceStatus, PaymentMethod } from '../entities/invoice.entity';
 
+/**
+ * Identificador que la app le pone a un producto NO registrado ("papas
+ * 5.000" escrito a mano en caja): `temp_…` / `unregistered_…`. Versiones de
+ * la app que suben ventas hechas sin conexión lo mandaban como productId; se
+ * trata como producto temporal en vez de rechazar la venta.
+ */
+export const isTemporaryProductId = (value: unknown): boolean =>
+  typeof value === 'string' && /^(temp_|unregistered_)/.test(value);
+
 export class CreateInvoiceItemDto {
   @IsString({ message: 'La descripción es requerida' })
   @MaxLength(200, { message: 'La descripción no puede exceder 200 caracteres' })
@@ -372,7 +381,7 @@ export class CreateInvoiceItemDto {
   notes?: string;
 
   // ✅ VALIDACIÓN CONDICIONAL: Solo validar UUID si no es temporal
-  @ValidateIf((obj) => !obj.isTemporary)
+  @ValidateIf((obj) => !obj.isTemporary && !isTemporaryProductId(obj.productId))
   @IsNotEmpty({ message: 'El ID del producto es requerido si no es temporal' })
   @IsUUID('4', { message: 'El ID del producto debe ser un UUID válido' })
   productId?: string;
@@ -380,6 +389,7 @@ export class CreateInvoiceItemDto {
   // Presentación de venta (Fase 3, opcional)
   // Si viene, `quantity` representa cuántas presentaciones (ej: 2 cartones)
   // y el descuento de stock se calcula como quantity × factor de la presentación.
+  @ValidateIf((obj) => !isTemporaryProductId(obj.productId))
   @IsOptional()
   @IsUUID('4', { message: 'El ID de la presentación debe ser un UUID válido' })
   presentationId?: string;
