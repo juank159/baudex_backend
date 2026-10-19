@@ -471,12 +471,39 @@ export class PurchaseOrdersService {
     }
   }
 
+  /** Orden del ciclo de vida (cancelada queda fuera: es un conflicto real). */
+  private static readonly lifecycle: PurchaseOrderStatus[] = [
+    PurchaseOrderStatus.DRAFT,
+    PurchaseOrderStatus.PENDING,
+    PurchaseOrderStatus.APPROVED,
+    PurchaseOrderStatus.SENT,
+    PurchaseOrderStatus.PARTIALLY_RECEIVED,
+    PurchaseOrderStatus.RECEIVED,
+    PurchaseOrderStatus.CLOSED,
+  ];
+
+  /** ¿La orden ya llegó a [target] o pasó de ahí? */
+  static isAtOrBeyond(
+    status: PurchaseOrderStatus,
+    target: PurchaseOrderStatus,
+  ): boolean {
+    const at = PurchaseOrdersService.lifecycle.indexOf(status);
+    return at >= 0 && at >= PurchaseOrdersService.lifecycle.indexOf(target);
+  }
+
   async approve(
     id: string,
     organizationId: string,
     userId: string,
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOne(id, organizationId);
+
+    // Reintento de una aprobación que ya se aplicó (p. ej. la respuesta no
+    // llegó al equipo y lo volvió a mandar desde la cola, o la orden ya
+    // siguió su curso): no es un error, se devuelve la orden como está.
+    if (PurchaseOrdersService.isAtOrBeyond(purchaseOrder.status, PurchaseOrderStatus.APPROVED)) {
+      return purchaseOrder;
+    }
 
     if (
       purchaseOrder.status !== PurchaseOrderStatus.PENDING &&
@@ -505,6 +532,11 @@ export class PurchaseOrdersService {
     notes?: string,
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOne(id, organizationId);
+
+    // Reintento de un envío ya aplicado: se devuelve la orden como está.
+    if (PurchaseOrdersService.isAtOrBeyond(purchaseOrder.status, PurchaseOrderStatus.SENT)) {
+      return purchaseOrder;
+    }
 
     if (purchaseOrder.status !== PurchaseOrderStatus.APPROVED) {
       throw new BadRequestException('Only approved orders can be sent');
@@ -554,6 +586,16 @@ export class PurchaseOrdersService {
 
       if (!purchaseOrder) {
         throw new NotFoundException('Purchase order not found');
+      }
+
+      // Reintento de una recepción que ya se completó: no se vuelve a sumar
+      // stock; se devuelve la orden como está.
+      if (
+        purchaseOrder.status === PurchaseOrderStatus.RECEIVED ||
+        purchaseOrder.status === PurchaseOrderStatus.CLOSED
+      ) {
+        await queryRunner.rollbackTransaction();
+        return this.findOne(id, organizationId);
       }
 
       if (!purchaseOrder.canBeReceived) {
@@ -833,6 +875,11 @@ export class PurchaseOrdersService {
     reason?: string,
   ): Promise<PurchaseOrder> {
     const purchaseOrder = await this.findOne(id, organizationId);
+
+    // Reintento de una cancelación ya aplicada.
+    if (purchaseOrder.status === PurchaseOrderStatus.CANCELLED) {
+      return purchaseOrder;
+    }
 
     if (purchaseOrder.status === PurchaseOrderStatus.RECEIVED) {
       throw new BadRequestException('Cannot cancel a received purchase order');
