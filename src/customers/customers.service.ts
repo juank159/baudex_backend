@@ -15,6 +15,10 @@ import {
   PaginationMetaDto,
 } from '../common/dto/pagination-response.dto';
 import { TenantAwareService } from '../common/services/tenant-aware.service';
+import {
+  SeedService,
+  isFinalConsumer,
+} from '../common/services/seed.service';
 
 @Injectable()
 export class CustomersService {
@@ -22,7 +26,20 @@ export class CustomersService {
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
     private readonly tenantAwareService: TenantAwareService,
+    private readonly seedService: SeedService,
   ) {}
+
+  /**
+   * Consumidor Final del tenant actual. Si no existe lo crea (uno solo por
+   * tenant); la app lo pide aquí en vez de crearlo ella misma.
+   */
+  async getFinalConsumer(): Promise<Customer> {
+    const tenantId = this.tenantAwareService.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException('No se pudo determinar la organización');
+    }
+    return this.seedService.ensureFinalConsumer(tenantId);
+  }
 
   async create(createCustomerDto: CreateCustomerDto): Promise<Customer> {
     // Obtener tenant ID
@@ -411,7 +428,12 @@ export class CustomersService {
       }
     }
 
+    const wasFinalConsumer = isFinalConsumer(customer);
     Object.assign(customer, updateCustomerDto);
+    // El Consumidor Final nunca tiene cupo de crédito.
+    if (wasFinalConsumer) {
+      customer.creditLimit = 0;
+    }
     return this.customerRepository.save(customer);
   }
 
@@ -474,6 +496,11 @@ export class CustomersService {
 
   async softDelete(id: string): Promise<{ message: string }> {
     const customer = await this.findOne(id);
+    if (isFinalConsumer(customer)) {
+      throw new BadRequestException(
+        'El Consumidor Final no se puede eliminar: se usa para las ventas de mostrador.',
+      );
+    }
     await this.customerRepository.softRemove(customer);
     return { message: 'Cliente eliminado exitosamente' };
   }
@@ -773,10 +800,24 @@ export class CustomersService {
       displayName?: string;
       firstName?: string;
       lastName?: string;
+      documentNumber?: string;
     },
     amountToAdd: number,
     manager?: EntityManager,
   ): Promise<{ creditLimit: number; pendingDebt: number; availableCredit: number }> {
+    // El Consumidor Final nunca puede quedar debiendo (venta de mostrador).
+    if (
+      isFinalConsumer({
+        documentNumber: customer.documentNumber,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+      })
+    ) {
+      throw new BadRequestException(
+        'El Consumidor Final no puede comprar a crédito ni tener deudas. ' +
+          'Cobre de contado o seleccione un cliente registrado.',
+      );
+    }
     const round = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
     const creditLimit = round(customer.creditLimit);
     const amount = round(amountToAdd);

@@ -470,6 +470,14 @@ export class CustomersController {
     return this.customersService.getStatsWithInvoices();
   }
 
+  // Consumidor Final del tenant (lo crea si no existe). Va antes de ':id'.
+  @Get('final-consumer')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.USER)
+  getFinalConsumer() {
+    return this.customersService.getFinalConsumer();
+  }
+
   // ✅ RUTAS CON PARÁMETROS DINÁMICOS AL FINAL
   @Get('document/:documentType/:documentNumber')
   @UseGuards(RolesGuard)

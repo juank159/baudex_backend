@@ -128,7 +128,8 @@ async function main() {
   // Servicios reales, con el tenant fijo y la caja siempre abierta.
   const tenantAware: any = { getTenantId: () => orgId };
   const cashRegister: any = { getOpenCashRegister: async () => ({ id: 'open' }) };
-  const customersService = new CustomersService(dataSource.getRepository(Customer), tenantAware);
+  const seedService: any = {};
+  const customersService = new CustomersService(dataSource.getRepository(Customer), tenantAware, seedService);
   const clientBalanceService = new ClientBalanceService(
     dataSource.getRepository(ClientBalance),
     dataSource.getRepository(ClientBalanceTransaction),

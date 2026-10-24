@@ -3,7 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Category } from '../../categories/entities/category.entity';
-import { Customer } from '../../customers/entities/customer.entity';
+import {
+  Customer,
+  CustomerStatus,
+  DocumentType,
+} from '../../customers/entities/customer.entity';
 import {
   Product,
   ProductStatus,
@@ -24,6 +28,26 @@ import { InvoiceItem } from '../../invoices/entities/invoice-item.entity';
 import { User } from '../../users/entities/user.entity';
 import { Warehouse } from '../../warehouses/entities/warehouse.entity';
 import { Organization } from '../../organizations/entities/organization.entity';
+
+/**
+ * CONSUMIDOR FINAL: cliente genérico para ventas de mostrador (alguien
+ * compra un huevo y no se le piden datos). Cada tenant tiene EXACTAMENTE
+ * uno, nace con el tenant, y nunca puede comprar a crédito.
+ */
+export const FINAL_CONSUMER_DOCUMENT_NUMBER = '222222222222';
+export const FINAL_CONSUMER_FIRST_NAME = 'Consumidor';
+export const FINAL_CONSUMER_LAST_NAME = 'Final';
+
+export function isFinalConsumer(
+  customer: Pick<Customer, 'documentNumber' | 'firstName' | 'lastName'> | null | undefined,
+): boolean {
+  if (!customer) return false;
+  if (customer.documentNumber === FINAL_CONSUMER_DOCUMENT_NUMBER) return true;
+  const fullName = `${customer.firstName ?? ''} ${customer.lastName ?? ''}`
+    .trim()
+    .toLowerCase();
+  return fullName === 'consumidor final';
+}
 
 @Injectable()
 export class SeedService {
@@ -150,6 +174,69 @@ export class SeedService {
     });
 
     return savedWarehouse;
+  }
+
+  /**
+   * Obtener (o crear) el Consumidor Final de la organización (idempotente).
+   *
+   * - Si ya existe (por documento 222222222222 o por nombre "Consumidor
+   *   Final"), lo devuelve; si estaba borrado lo restaura. Nunca duplica.
+   * - Lo deja sin cupo de crédito: el consumidor final no puede deber.
+   */
+  async ensureFinalConsumer(organizationId: string): Promise<Customer> {
+    let customer = await this.customerRepository.findOne({
+      where: {
+        organizationId,
+        documentType: DocumentType.CC,
+        documentNumber: FINAL_CONSUMER_DOCUMENT_NUMBER,
+      },
+      withDeleted: true,
+    });
+
+    if (!customer) {
+      customer = await this.customerRepository
+        .createQueryBuilder('customer')
+        .where('customer.organizationId = :organizationId', { organizationId })
+        .andWhere('customer.deletedAt IS NULL')
+        .andWhere(
+          "LOWER(TRIM(customer.firstName || ' ' || customer.lastName)) = 'consumidor final'",
+        )
+        .orderBy('customer.createdAt', 'ASC')
+        .getOne();
+    }
+
+    if (!customer) {
+      const created = this.customerRepository.create({
+        firstName: FINAL_CONSUMER_FIRST_NAME,
+        lastName: FINAL_CONSUMER_LAST_NAME,
+        email: 'consumidor.final@empresa.com',
+        documentType: DocumentType.CC,
+        documentNumber: FINAL_CONSUMER_DOCUMENT_NUMBER,
+        address: 'Venta de mostrador',
+        country: 'Colombia',
+        status: CustomerStatus.ACTIVE,
+        creditLimit: 0,
+        paymentTerms: 0,
+        notes: 'Cliente para ventas de mostrador (creado automáticamente)',
+        metadata: { isDefaultCustomer: true, autoCreated: true },
+        organizationId,
+      });
+      return this.customerRepository.save(created);
+    }
+
+    // Normalizar: activo, no borrado y sin cupo de crédito.
+    const needsFix =
+      !!customer.deletedAt ||
+      customer.status !== CustomerStatus.ACTIVE ||
+      Number(customer.creditLimit) !== 0;
+    if (needsFix) {
+      customer.deletedAt = null;
+      customer.status = CustomerStatus.ACTIVE;
+      customer.creditLimit = 0;
+      customer = await this.customerRepository.save(customer);
+    }
+
+    return customer;
   }
 
   /**

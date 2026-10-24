@@ -232,6 +232,20 @@ export class AuthService {
       // No fallar el registro si hay error en el almacén, solo loguearlo
     }
 
+    // GARANTIZADO: Consumidor Final del tenant (ventas de mostrador)
+    try {
+      await this.seedService.ensureFinalConsumer(targetOrganizationId);
+      console.log(
+        `🧾 Consumidor Final garantizado para: ${organization.name}`,
+      );
+    } catch (finalConsumerError) {
+      console.error(
+        `❌ Error creando Consumidor Final para ${organization.name}:`,
+        finalConsumerError,
+      );
+      // No fallar el registro: GET /customers/final-consumer lo crea luego
+    }
+
     // SEED: Crear datos de muestra para la nueva organización
     try {
       await this.seedService.createSampleDataForOrganization(
