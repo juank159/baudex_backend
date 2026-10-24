@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { CreateInvoiceDto, isTemporaryProductId } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { InvoiceQueryDto } from './dto/invoice-query.dto';
@@ -1883,6 +1883,30 @@ export class InvoicesService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
+    // Idempotencia (reintento de la app sin conexión): si TODOS los pagos ya
+    // se registraron antes, devolver el estado actual sin validar de nuevo.
+    // Si no, un reintento tras un pago exitoso fallaría con "ya está pagada".
+    const paymentKeys = multiPaymentDto.payments.map((p) => p.idempotencyKey);
+    if (paymentKeys.length > 0 && paymentKeys.every((k) => !!k)) {
+      const alreadyApplied = await this.dataSource.getRepository(Payment).find({
+        where: { organizationId: tenantId, idempotencyKey: In(paymentKeys) },
+      });
+      if (alreadyApplied.length === paymentKeys.length) {
+        const currentInvoice = await this.findOne(id);
+        const invoiceCredit = await this.dataSource.manager.findOne(
+          CustomerCredit,
+          { where: { invoiceId: id, organizationId: tenantId } },
+        );
+        return {
+          invoice: currentInvoice,
+          payments: alreadyApplied,
+          remainingBalance: Number(currentInvoice.balanceDue) || 0,
+          creditCreated: false,
+          creditId: invoiceCredit?.id ?? null,
+        };
+      }
+    }
+
     const invoice = await this.findOne(id);
 
     // Validaciones
@@ -1910,6 +1934,28 @@ export class InvoicesService {
       );
     }
 
+
+    // Crédito por el saldo restante: es deuda nueva, así que se valida igual
+    // que una venta a crédito (cupo del cliente; el Consumidor Final no puede
+    // deber) ANTES de guardar nada. Si la factura ya tiene su crédito, no
+    // nace deuda nueva: ese crédito solo se actualiza.
+    const remainingAfterPayments = Math.max(
+      0,
+      Math.round((remainingBalance - totalPaymentAmount) * 100) / 100,
+    );
+    if (multiPaymentDto.createCreditForRemaining && remainingAfterPayments > 0) {
+      const existingInvoiceCredit = await this.dataSource.manager.findOne(
+        CustomerCredit,
+        { where: { invoiceId: id, organizationId: tenantId } },
+      );
+      if (!existingInvoiceCredit) {
+        const customer = await this.customersService.findOne(invoice.customerId);
+        await this.customersService.assertWithinCreditLimit(
+          customer,
+          remainingAfterPayments,
+        );
+      }
+    }
 
     if (!multiPaymentDto.paymentDate) {
       console.warn(`addMultiplePayments invoked without paymentDate (invoice=${id}, createdBy=${createdById}). Falling back to NOW().`);
@@ -2096,7 +2142,15 @@ export class InvoicesService {
       let creditId: string | null = null;
 
       // Caso 1: Pago parcial - crear crédito por el saldo restante
-      if (newBalanceDue > 0 && multiPaymentDto.createCreditForRemaining) {
+      // (solo si la factura no tiene ya su crédito: no duplicar la deuda).
+      const invoiceAlreadyHasCredit = !!(await manager.findOne(CustomerCredit, {
+        where: { invoiceId: id, organizationId: tenantId },
+      }));
+      if (
+        newBalanceDue > 0 &&
+        multiPaymentDto.createCreditForRemaining &&
+        !invoiceAlreadyHasCredit
+      ) {
 
         try {
           // Calcular fecha de vencimiento (30 días por defecto)
