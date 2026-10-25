@@ -48,7 +48,7 @@ export class CustomersService {
       throw new BadRequestException('No se pudo determinar la organización');
     }
 
-    // Verificar si el email ya existe en la organización actual (excluyendo soft-deleted)
+    // Duplicados ACTIVOS: el mensaje dice quién es, para buscarlo.
     const existingEmail = await this.customerRepository
       .createQueryBuilder('customer')
       .where('customer.organizationId = :organizationId', {
@@ -62,11 +62,10 @@ export class CustomersService {
 
     if (existingEmail) {
       throw new ConflictException(
-        'El email ya está registrado en esta organización',
+        `El email ya está registrado en esta organización (cliente: ${existingEmail.displayName}). Búsquelo en clientes.`,
       );
     }
 
-    // Verificar si el documento ya existe en la organización actual (excluyendo soft-deleted)
     const existingDocument = await this.customerRepository
       .createQueryBuilder('customer')
       .where('customer.organizationId = :organizationId', {
@@ -83,8 +82,53 @@ export class CustomersService {
 
     if (existingDocument) {
       throw new ConflictException(
-        'El número de documento ya está registrado en esta organización',
+        `El número de documento ya está registrado en esta organización (cliente: ${existingDocument.displayName}). Búsquelo en clientes.`,
       );
+    }
+
+    // Clientes ELIMINADOS: la base no deja repetir su documento ni su email
+    // (la restricción única los incluye), pero no aparecen en la búsqueda.
+    // Antes eso daba "ya está registrado" sin forma de encontrarlo.
+    // - Mismo documento → es la misma persona: se reactiva con los datos
+    //   nuevos (conserva su historial).
+    // - Solo el email coincide (otro documento) → se libera ese email.
+    const deletedSameDocument = await this.customerRepository.findOne({
+      where: {
+        organizationId: tenantId,
+        documentType: createCustomerDto.documentType,
+        documentNumber: createCustomerDto.documentNumber,
+      },
+      withDeleted: true,
+    });
+
+    const deletedSameEmail = await this.customerRepository
+      .createQueryBuilder('customer')
+      .withDeleted()
+      .where('customer.organizationId = :organizationId', {
+        organizationId: tenantId,
+      })
+      .andWhere('LOWER(customer.email) = LOWER(:email)', {
+        email: createCustomerDto.email,
+      })
+      .andWhere('customer.deletedAt IS NOT NULL')
+      .getOne();
+    if (
+      deletedSameEmail &&
+      (!deletedSameDocument || deletedSameEmail.id !== deletedSameDocument.id)
+    ) {
+      const freedEmail = `eliminado-${deletedSameEmail.id.slice(0, 8)}-${deletedSameEmail.email}`;
+      await this.customerRepository.update(deletedSameEmail.id, {
+        email: freedEmail.slice(0, 255),
+      });
+    }
+
+    if (deletedSameDocument?.deletedAt) {
+      Object.assign(deletedSameDocument, createCustomerDto, {
+        organizationId: tenantId,
+        deletedAt: null,
+        status: CustomerStatus.ACTIVE,
+      });
+      return this.customerRepository.save(deletedSameDocument);
     }
 
     const customer = this.customerRepository.create({
