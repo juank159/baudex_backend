@@ -144,6 +144,27 @@ export class WarehousesService {
   async remove(organizationId: string, id: string): Promise<void> {
     const warehouse = await this.findOne(organizationId, id);
 
+    // El principal recibe las ventas y compras; uno con unidades dejaría ese
+    // inventario huérfano. Antes se eliminaba cualquiera.
+    const [{ main_id: mainId }] = await this.dataSource.query(
+      `SELECT "mainWarehouseId" AS main_id FROM organizations WHERE id = $1`,
+      [organizationId],
+    );
+    if (warehouse.isMainWarehouse || mainId === id) {
+      throw new BadRequestException('No se puede eliminar el almacén principal');
+    }
+    const [{ units }] = await this.dataSource.query(
+      `SELECT COALESCE(SUM("currentQuantity"), 0)::float AS units
+         FROM inventory_batches
+        WHERE "warehouseId" = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+      [id, organizationId],
+    );
+    if (units > 0) {
+      throw new BadRequestException(
+        `El almacén todavía tiene ${units} unidades. Trasládelas a otro almacén antes de eliminarlo.`,
+      );
+    }
+
     // Soft delete
     warehouse.deletedAt = new Date();
     await this.warehouseRepository.save(warehouse);

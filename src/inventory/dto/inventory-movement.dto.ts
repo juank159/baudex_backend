@@ -137,4 +137,12 @@ export class RelativeInventoryAdjustmentDto {
   @IsNumber()
   @Min(0)
   unitCost?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Clave única del ajuste (la app la envía al sincronizar): si ya se aplicó, se devuelve el existente en vez de repetirlo',
+  })
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

@@ -308,7 +308,17 @@ export class InventoryController {
       notes,
       movementDate,
       unitCost,
+      idempotencyKey,
     } = adjustmentDto;
+
+    // Reintento de la app (sin internet): si ya se aplicó, no se repite.
+    if (idempotencyKey) {
+      const [existing] = await this.inventoryService.findMovementsByIdempotencyKey(
+        organizationId,
+        idempotencyKey,
+      );
+      if (existing) return existing;
+    }
 
     // Validar ajuste cantidad
     if (adjustmentQuantity === 0) {
@@ -324,6 +334,7 @@ export class InventoryController {
 
     // Preparar metadatos
     const metadata: any = {};
+    if (idempotencyKey) metadata.idempotencyKey = idempotencyKey;
     if (notes) metadata.notes = notes;
     if (warehouseId) metadata.warehouseId = warehouseId;
     if (movementDate) metadata.movementDate = movementDate;
@@ -370,6 +381,7 @@ export class InventoryController {
       toWarehouseId: string;
       notes?: string;
       unitCost?: number;
+      idempotencyKey?: string;
     },
     @TenantId() organizationId: string,
     @CurrentUser() user: any,
@@ -381,7 +393,24 @@ export class InventoryController {
       toWarehouseId,
       notes,
       unitCost,
+      idempotencyKey,
     } = transferDto;
+
+    // Reintento de la app (sin internet): si ya se aplicó, no se repite.
+    if (idempotencyKey) {
+      const existing = await this.inventoryService.findMovementsByIdempotencyKey(
+        organizationId,
+        idempotencyKey,
+      );
+      const out = existing.find((m) => m.type === MovementType.TRANSFER_OUT);
+      const inn = existing.find((m) => m.type === MovementType.TRANSFER_IN);
+      if (out && inn) {
+        return {
+          transferOut: this.transformMovementForResponse(out),
+          transferIn: this.transformMovementForResponse(inn),
+        } as TransferResponseDto;
+      }
+    }
 
     // Validar cantidad
     if (quantity <= 0) {
@@ -406,6 +435,13 @@ export class InventoryController {
         notes,
         unitCost,
       );
+
+      if (idempotencyKey) {
+        await this.inventoryService.tagMovementsIdempotency(
+          [result.transferOut, result.transferIn],
+          idempotencyKey,
+        );
+      }
 
       // Transformar y retornar el resultado garantizando tipos seguros
       const transformedResult: TransferResponseDto = {

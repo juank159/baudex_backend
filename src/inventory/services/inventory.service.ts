@@ -3181,6 +3181,38 @@ export class InventoryService {
    * Registrar transferencia entre almacenes
    * Crea dos movimientos: TRANSFER_OUT en origen y TRANSFER_IN en destino
    */
+  /**
+   * Movimientos ya registrados con esta clave de idempotencia (ajustes y
+   * traslados que la app reintenta al sincronizar). Evita aplicarlos dos veces
+   * cuando la respuesta anterior se perdió.
+   */
+  async findMovementsByIdempotencyKey(
+    organizationId: string,
+    idempotencyKey: string,
+  ): Promise<InventoryMovement[]> {
+    return this.movementRepository
+      .createQueryBuilder('movement')
+      .where('movement.organizationId = :organizationId', { organizationId })
+      .andWhere("movement.metadata ->> 'idempotencyKey' = :key", {
+        key: idempotencyKey,
+      })
+      .andWhere('movement.deletedAt IS NULL')
+      .getMany();
+  }
+
+  /** Guarda la clave de idempotencia en el metadata de estos movimientos. */
+  async tagMovementsIdempotency(
+    movements: InventoryMovement[],
+    idempotencyKey: string,
+  ): Promise<void> {
+    for (const movement of movements) {
+      movement.metadata = { ...(movement.metadata || {}), idempotencyKey };
+      await this.movementRepository.update(movement.id, {
+        metadata: movement.metadata,
+      });
+    }
+  }
+
   async registerTransfer(
     productId: string,
     quantity: number,
