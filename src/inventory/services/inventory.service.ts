@@ -10,6 +10,7 @@ import {
   Repository,
   DataSource,
   QueryRunner,
+  EntityManager,
   MoreThanOrEqual,
   LessThanOrEqual,
   MoreThan,
@@ -1059,8 +1060,13 @@ export class InventoryService {
    */
   private async generateMovementNumber(
     organizationId: string,
-    queryRunner: QueryRunner,
+    queryRunner: QueryRunner | EntityManager,
   ): Promise<string> {
+    // Algunos llamadores (devolución por nota crédito) pasan el EntityManager
+    // de su transacción en vez del QueryRunner: antes eso fallaba siempre y
+    // el movimiento quedaba con un número aleatorio de respaldo.
+    const manager: EntityManager =
+      (queryRunner as QueryRunner).manager ?? (queryRunner as EntityManager);
     // Serializar generación de números de movimiento por organización
     // para evitar race conditions con requests concurrentes
     await queryRunner.query(
@@ -1079,7 +1085,7 @@ export class InventoryService {
     while (attempts < maxAttempts) {
       try {
         // Find all existing movement numbers for this month/year pattern
-        const existingMovements = await queryRunner.manager
+        const existingMovements = await manager
           .createQueryBuilder(InventoryMovement, 'movement')
           .select('movement.movementNumber')
           .where('movement.organizationId = :organizationId', {
@@ -1106,7 +1112,7 @@ export class InventoryService {
         const newMovementNumber = `${prefix}${sequence}`;
 
         // Double-check that this movement number doesn't exist (handles race conditions)
-        const existingCheck = await queryRunner.manager.findOne(
+        const existingCheck = await manager.findOne(
           InventoryMovement,
           {
             where: {
@@ -3826,6 +3832,15 @@ export class InventoryService {
         );
       }
 
+      // Unidades BASE a devolver: si se vendió por presentación (caja x12),
+      // la venta descontó cantidad × factor; devolver solo la cantidad dejaba
+      // el inventario corto (1 caja devuelta sumaba 1 unidad, no 12). El costo
+      // de la línea es por presentación, así que el costo unitario base es
+      // costo ÷ factor (el costo total no cambia).
+      const presentationFactor = Number(invoiceItem.presentationFactor) || 1;
+      const baseQuantity = Number(creditNoteItem.quantity) * presentationFactor;
+      const baseUnitCost = (Number(creditNoteItem.unitCost) || 0) / presentationFactor;
+
       // PASO 2: Buscar los InventoryBatchMovement originales
       // Estos registros contienen qué lotes fueron consumidos
       const originalBatchMovements = await manager
@@ -3846,8 +3861,8 @@ export class InventoryService {
         // Fallback al método legacy si no hay movimientos rastreables
         await this.registerSaleReturn(
           creditNoteItem.productId,
-          creditNoteItem.quantity,
-          creditNoteItem.unitCost || 0,
+          baseQuantity,
+          baseUnitCost,
           organizationId,
           userId,
           referenceType,
@@ -3869,9 +3884,9 @@ export class InventoryService {
         0,
       );
 
-      if (totalConsumed < creditNoteItem.quantity) {
+      if (totalConsumed < baseQuantity) {
         throw new BadRequestException(
-          `Cantidad a devolver (${creditNoteItem.quantity}) excede lo consumido originalmente (${totalConsumed})`,
+          `Cantidad a devolver (${baseQuantity}) excede lo consumido originalmente (${totalConsumed})`,
         );
       }
 
@@ -3887,10 +3902,9 @@ export class InventoryService {
         organizationId,
         performedById: userId,
         warehouseId: warehouseId, // REQUERIDO - campo NOT NULL
-        quantity: creditNoteItem.quantity,
-        unitCost: creditNoteItem.unitCost || 0,
-        totalCost:
-          creditNoteItem.quantity * (creditNoteItem.unitCost || 0),
+        quantity: baseQuantity,
+        unitCost: baseUnitCost,
+        totalCost: baseQuantity * baseUnitCost,
         stockAfter: 0, // Se actualizará después de restaurar lotes
         stockValueAfter: 0, // Se actualizará después de restaurar lotes
         referenceType,
@@ -3917,7 +3931,7 @@ export class InventoryService {
       );
 
       // PASO 5: Restaurar en orden LIFO (inverso a como se consumió)
-      let remainingToRestore = creditNoteItem.quantity;
+      let remainingToRestore = baseQuantity;
       const batchesRestored: Array<{
         batchId: string;
         quantityRestored: number;

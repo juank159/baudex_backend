@@ -1435,6 +1435,24 @@ export class InvoicesService {
       invoice.status = InvoiceStatus.PENDING;
       await manager.save(Invoice, invoice);
 
+      // El borrador no descontó inventario: al confirmarlo se descuenta igual
+      // que una venta que nace pendiente. Antes no se descontaba nunca (ni al
+      // crear el borrador, ni al confirmarlo, ni al pagarlo).
+      const shouldAutoDeduct =
+        await this.userPreferencesService.shouldAutoDeductInventory(
+          invoice.createdById,
+          invoice.organizationId,
+        );
+      await this.applyBusinessLogicByStatus(
+        invoice,
+        manager,
+        shouldAutoDeduct,
+        undefined,
+        invoice.createdById,
+        invoice.organizationId,
+        invoice.metadata,
+      );
+
       return this.findOne(id);
     });
   }
@@ -2361,9 +2379,19 @@ export class InvoicesService {
     return this.dataSource.transaction(async (manager) => {
       // ✅ CRITICAL FIX: Restaurar inventario al cancelar factura
       // Solo restaurar si la factura estaba confirmada (PENDING o PARTIALLY_PAID)
+      // y la venta SÍ descontó inventario: los borradores confirmados antes
+      // del arreglo nunca descontaron, y devolver sería inflar el stock.
+      const [{ count: saleMovements }] = await manager.query(
+        `SELECT COUNT(*)::int AS count FROM inventory_movements
+          WHERE "referenceId" = $1 AND organization_id = $2
+            AND "referenceType" IN ('invoice', 'invoice_paid')
+            AND deleted_at IS NULL`,
+        [invoice.id, invoice.organizationId],
+      );
       if (
-        invoice.status === InvoiceStatus.PENDING ||
-        invoice.status === InvoiceStatus.PARTIALLY_PAID
+        saleMovements > 0 &&
+        (invoice.status === InvoiceStatus.PENDING ||
+          invoice.status === InvoiceStatus.PARTIALLY_PAID)
       ) {
 
         // Obtener almacén principal
@@ -2379,7 +2407,9 @@ export class InvoicesService {
               await this.inventoryService.registerSaleReturn(
                 item.productId,
                 item.baseQuantity,
-                item.unitCost || 0, // Usar el costo original de la venta
+                // Costo original por UNIDAD BASE: el de la línea es por
+                // presentación (quantity × unitCost = totalCost).
+                (Number(item.unitCost) || 0) / (Number(item.presentationFactor) || 1),
                 invoice.organizationId,
                 invoice.createdById,
                 'invoice_cancelled',
@@ -2538,8 +2568,16 @@ export class InvoicesService {
   async softDelete(id: string): Promise<{ message: string }> {
     const invoice = await this.findOne(id);
 
-    if (invoice.status === InvoiceStatus.PAID) {
-      throw new BadRequestException('No se puede eliminar una factura pagada');
+    // Igual que la app: solo borradores o anuladas. Una venta pendiente o con
+    // abono ya descontó inventario y tiene pagos/crédito: eliminarla los
+    // dejaba huérfanos (para eso está anular).
+    if (
+      invoice.status !== InvoiceStatus.DRAFT &&
+      invoice.status !== InvoiceStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        'Solo se pueden eliminar facturas en borrador o anuladas. Para una venta, anúlela o haga una nota crédito.',
+      );
     }
 
     await this.invoiceRepository.softRemove(invoice);

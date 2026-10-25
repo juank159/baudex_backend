@@ -76,3 +76,27 @@ WHERE ii.deleted_at IS NULL
   AND ii.presentation_id IS NULL
 GROUP BY o.name, ii."productId"
 ORDER BY o.name, unidades_de_mas_en_sistema DESC;
+
+-- 3) Caso CONTRARIO (corregido en backend el 2026-10-25): devoluciones con
+--    nota crédito de productos vendidos por presentación que devolvieron solo
+--    la cantidad (1 caja devuelta sumó 1 unidad, no 12). Aquí el sistema
+--    muestra MENOS inventario del real. En la copia del 19-oct: 0 casos.
+SELECT
+  o.name                                        AS negocio,
+  MIN(ii.description)                           AS producto,
+  COUNT(*)                                      AS devoluciones,
+  SUM(cni.quantity * (ii.presentation_factor - 1)) AS unidades_que_faltan_en_sistema
+FROM credit_note_items cni
+JOIN credit_notes cn  ON cn.id = cni.credit_note_id
+JOIN invoice_items ii ON ii.id = cni.invoice_item_id
+JOIN invoices i       ON i.id = ii."invoiceId"
+JOIN organizations o  ON o.id = i.organization_id
+WHERE cn.status = 'confirmed'
+  AND cn.inventory_restored = true
+  AND cn.deleted_at IS NULL
+  AND cni.deleted_at IS NULL
+  AND cni.product_id IS NOT NULL
+  AND ii.presentation_id IS NOT NULL
+  AND ii.presentation_factor > 1
+GROUP BY o.name, ii."productId"
+ORDER BY unidades_que_faltan_en_sistema DESC;
