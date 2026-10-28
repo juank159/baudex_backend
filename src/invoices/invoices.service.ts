@@ -103,6 +103,14 @@ export class InvoicesService {
       createInvoiceDto.customerId,
     );
 
+    // Venta que YA se hizo en el equipo (sube de la cola con `soldAt`) o el
+    // negocio vende sin validar stock: el servidor NO la rechaza por stock
+    // (antes quedaba trabada para siempre en "sin sincronizar"). Se descuenta
+    // lo que haya y el faltante queda anotado en el movimiento de inventario.
+    const allowStockShortfall =
+      !!createInvoiceDto.skipStockValidation ||
+      !!(createInvoiceDto.metadata as any)?.soldAt;
+
     // 🔴 VALIDACIÓN DE LÍMITE DE CRÉDITO (antes de guardar cualquier cosa)
     // Aplica a la venta 100% a crédito y también a la venta con pago parcial
     // cuyo saldo restante queda fiado: en ambos casos nace deuda nueva.
@@ -161,8 +169,9 @@ export class InvoicesService {
         // ✅ VALIDAR PRODUCTO REGISTRADO
         const product = await this.productsService.findOne(itemDto.productId);
 
-        // 📦 Solo validar stock si skipStockValidation no está activo
-        if (!createInvoiceDto.skipStockValidation) {
+        // 📦 Solo validar stock si skipStockValidation no está activo y la
+        // venta no viene ya hecha desde el equipo (ver saleAlreadyMade).
+        if (!allowStockShortfall) {
           // Usamos el stock real de batches (getAvailableStock) en lugar de la
           // columna `product.stock` (que es denormalizada y puede estar desactualizada).
           // Esto evita el bug donde un producto con stock en batches fallaba
@@ -454,6 +463,7 @@ export class InvoicesService {
           createdById,
           tenantId,
           shouldAutoDeduct,
+          allowStockShortfall,
         );
       } else {
         // Lógica original para pagos simples
@@ -465,6 +475,7 @@ export class InvoicesService {
           createdById,
           tenantId,
           metadata,
+          allowStockShortfall,
         );
       }
 
@@ -555,6 +566,7 @@ export class InvoicesService {
     createdById: string,
     organizationId: string,
     shouldAutoDeductInventory: boolean,
+    allowStockShortfall = false,
   ): Promise<void> {
     const multiplePayments = metadata.multiplePayments || [];
     const totalPaid = Number(metadata.totalPaid) || 0;
@@ -732,6 +744,7 @@ export class InvoicesService {
               mainWarehouseId,
               item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
               manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
+              allowStockShortfall,
             );
           } catch (error) {
             console.error(`   ❌ Error descontando stock: ${error.message}`);
@@ -1004,6 +1017,7 @@ export class InvoicesService {
     createdById?: string,
     organizationId?: string,
     metadata?: any,
+    allowStockShortfall = false,
   ): Promise<void> {
     switch (invoice.status) {
       case InvoiceStatus.PAID:
@@ -1107,6 +1121,7 @@ export class InvoicesService {
                   mainWarehouseId, // 🏪 Usar almacén principal
                   item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
                   manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
+                  allowStockShortfall,
                 );
               } catch (error) {
                 console.error(
@@ -1149,6 +1164,7 @@ export class InvoicesService {
                   mainWarehouseId, // 🏪 Usar almacén principal
                   item.id, // NUEVO: Pasar invoice_item_id para trazabilidad FIFO
                   manager.queryRunner, // ✅ CRÍTICO: Pasar queryRunner de la transacción
+                  allowStockShortfall,
                 );
               } catch (error) {
                 console.error(

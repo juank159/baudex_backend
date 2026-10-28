@@ -224,6 +224,10 @@ export class InventoryService {
     warehouseId?: string,
     invoiceItemId?: string, // NUEVO: ID del item de factura para trazabilidad FIFO
     externalQueryRunner?: QueryRunner,
+    // Venta que YA se hizo (subida desde el equipo, o el negocio permite
+    // vender sin stock): no se rechaza por falta de stock. Se descuenta lo
+    // que haya y el faltante queda anotado en el movimiento (stockShortfall).
+    allowShortfall = false,
   ): Promise<{
     movement: InventoryMovement;
     fifoResult: FifoConsumptionResult;
@@ -245,19 +249,32 @@ export class InventoryService {
         queryRunner,
       );
 
-      if (availableStock < quantity) {
+      if (availableStock < quantity && !allowShortfall) {
         throw new BadRequestException(
           `Insufficient stock. Available: ${availableStock}, Requested: ${quantity}`,
         );
       }
 
+      const toConsume = Math.min(quantity, Math.max(0, availableStock));
+      const shortfall = quantity - toConsume;
+      if (shortfall > 0) {
+        this.logger.warn(
+          `Venta ya hecha sin stock suficiente: producto ${productId}, ` +
+            `vendido ${quantity}, había ${availableStock}, faltante ${shortfall}`,
+        );
+        metadata = { ...(metadata || {}), stockShortfall: shortfall };
+      }
+
       // 🔴 MEJORADO: Consumir stock usando método dinámico (FIFO/FEFO según producto)
-      const fifoResult = await this.consumeStockDynamic(
-        productId,
-        quantity,
-        organizationId,
-        queryRunner,
-      );
+      const fifoResult: FifoConsumptionResult =
+        toConsume > 0
+          ? await this.consumeStockDynamic(
+              productId,
+              toConsume,
+              organizationId,
+              queryRunner,
+            )
+          : { batches: [], totalQuantityConsumed: 0, totalCost: 0, averageCost: 0 };
 
       // Obtener stock actual después del consumo
       const currentStock = await this.getCurrentStock(
@@ -279,7 +296,7 @@ export class InventoryService {
         performedById: userId,
         quantity: -quantity, // Negativo para salidas
         unitCost: fifoResult.averageCost,
-        totalCost: fifoResult.totalCost,
+        totalCost: fifoResult.totalCost + shortfall * fifoResult.averageCost,
         unitPrice,
         totalPrice: quantity * unitPrice,
         stockAfter: currentStock,
