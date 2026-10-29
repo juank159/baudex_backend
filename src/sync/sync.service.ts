@@ -198,6 +198,38 @@ export class SyncService {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * Cuántos registros vivos tiene la entidad (lo mismo que bajaría una
+   * descarga completa). La app lo compara con lo que tiene guardado: si le
+   * faltan, vuelve a descargar todo.
+   */
+  async countRows(
+    entityKey: string,
+    organizationId: string,
+    userId: string | undefined,
+  ): Promise<{ entity: string; count: number }> {
+    const def = SYNC_ENTITIES[entityKey];
+    if (!def) {
+      throw new BadRequestException(`Entidad no sincronizable: ${entityKey}`);
+    }
+    if (def.perUser && !userId) {
+      throw new BadRequestException('Usuario requerido');
+    }
+    const params: any[] = [organizationId];
+    const userFilter = def.perUser ? `AND e.user_id = $2` : '';
+    if (def.perUser) params.push(userId);
+    const [row] = await this.dataSource.query(
+      `SELECT count(*)::int AS count
+       FROM "${def.table}" e
+       ${this.tenantJoin(def)}
+       WHERE ${this.tenantWhere(def)}
+         AND e.deleted_at IS NULL
+         ${userFilter}`,
+      params,
+    );
+    return { entity: entityKey, count: Number(row?.count ?? 0) };
+  }
+
   private tenantJoin(def: SyncEntityDefinition): string {
     return def.tenantSql === 'via-product'
       ? 'JOIN products tp ON tp.id = e.product_id'

@@ -34,4 +34,14 @@ export class SyncController {
       limit: limit ? Number(limit) : undefined,
     });
   }
+
+  /** GET /sync/count/:entity → { entity, count } (registros vivos). */
+  @Get('count/:entity')
+  countRows(
+    @Param('entity') entity: string,
+    @TenantId() organizationId: string,
+    @Req() req: any,
+  ) {
+    return this.syncService.countRows(entity, organizationId, req.user?.id);
+  }
 }
