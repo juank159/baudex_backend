@@ -8,6 +8,7 @@ describe('InventoryService.registerSale con faltante de stock', () => {
     const saved: any[] = [];
     const queryRunner: any = {
       manager: {
+        query: jest.fn().mockResolvedValue([]),
         create: (_: any, data: any) => ({ ...data }),
         save: async (e: any) => {
           saved.push(e);

@@ -1,3 +1,4 @@
+import { nextInvoiceNumber } from './utils/invoice-number';
 import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
@@ -256,7 +257,8 @@ export class InvoicesService {
 
       // Crear factura
       const invoice = manager.create(Invoice, {
-        number: createInvoiceDto.number,
+        number:
+          createInvoiceDto.number || (await nextInvoiceNumber(manager, tenantId)),
         date: new Date(invoiceDateStr + 'T12:00:00'), // Mediodía para evitar edge cases de timezone
         dueDate: calculatedDueDate, // 📅 SIEMPRE usar la fecha calculada por el backend
         paymentMethod: createInvoiceDto.paymentMethod || PaymentMethod.CASH,

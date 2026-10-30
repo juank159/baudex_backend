@@ -1,3 +1,4 @@
+import { nextBatchNumber, nextMovementNumber } from '../inventory/utils/movement-number';
 import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
   Injectable,
@@ -852,70 +853,22 @@ export class ProductService {
   }
 
   /**
-   * Generar número de lote único
+   * Generar número de lote único (mismo candado que compras y ventas).
    */
-  private async generateBatchNumber(
+  private generateBatchNumber(
     organizationId: string,
     queryRunner: any,
   ): Promise<string> {
-    const year = tenantWallClockNow().getFullYear();
-    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
-    const prefix = `BATCH-${year}${month}-`;
-
-    const existingBatches = await queryRunner.manager
-      .createQueryBuilder('InventoryBatch', 'batch')
-      .select('batch.batchNumber')
-      .where('batch.organizationId = :organizationId', { organizationId })
-      .andWhere('batch.batchNumber LIKE :pattern', { pattern: `${prefix}%` })
-      .orderBy('batch.batchNumber', 'DESC')
-      .getMany();
-
-    let maxSequence = 0;
-    for (const batch of existingBatches) {
-      const sequencePart = batch.batchNumber.substring(prefix.length);
-      const sequenceNumber = parseInt(sequencePart);
-      if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
-        maxSequence = sequenceNumber;
-      }
-    }
-
-    const nextSequence = maxSequence + 1;
-    const sequence = String(nextSequence).padStart(6, '0');
-    return `${prefix}${sequence}`;
+    return nextBatchNumber(organizationId, queryRunner.manager ?? queryRunner);
   }
 
   /**
-   * Generar número de movimiento único
+   * Generar número de movimiento único (mismo candado que las ventas).
    */
-  private async generateMovementNumber(
+  private generateMovementNumber(
     organizationId: string,
     queryRunner: any,
   ): Promise<string> {
-    const year = tenantWallClockNow().getFullYear();
-    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
-    const prefix = `MOV-${year}${month}-`;
-
-    const existingMovements = await queryRunner.manager
-      .createQueryBuilder('InventoryMovement', 'movement')
-      .select('movement.movementNumber')
-      .where('movement.organizationId = :organizationId', { organizationId })
-      .andWhere('movement.movementNumber LIKE :pattern', {
-        pattern: `${prefix}%`,
-      })
-      .orderBy('movement.movementNumber', 'DESC')
-      .getMany();
-
-    let maxSequence = 0;
-    for (const movement of existingMovements) {
-      const sequencePart = movement.movementNumber.substring(prefix.length);
-      const sequenceNumber = parseInt(sequencePart);
-      if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
-        maxSequence = sequenceNumber;
-      }
-    }
-
-    const nextSequence = maxSequence + 1;
-    const sequence = String(nextSequence).padStart(6, '0');
-    return `${prefix}${sequence}`;
+    return nextMovementNumber(organizationId, queryRunner.manager ?? queryRunner);
   }
 }

@@ -11,6 +11,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Type } from 'class-transformer';
+import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import {
   ClientBalanceService,
   UseBalanceDto,
@@ -30,12 +32,24 @@ import {
 } from '@nestjs/swagger';
 
 /**
- * DTO para depositar saldo
+ * DTO para depositar saldo. Sin estos decoradores la validación global
+ * (whitelist + forbidNonWhitelisted) rechazaba TODOS los campos y ningún
+ * depósito de saldo a favor llegaba al servidor.
  */
 class DepositBalanceDto {
+  @IsUUID()
   customerId: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
   amount: number;
+
+  @IsString()
   description: string;
+
+  @IsOptional()
+  @IsUUID()
   relatedCreditId?: string;
 }
 

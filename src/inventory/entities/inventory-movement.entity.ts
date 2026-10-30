@@ -132,8 +132,10 @@ export class InventoryMovement extends BaseEntity {
     if (!this.movementNumber) {
       const year = tenantWallClockNow().getFullYear();
       const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
-      const timestamp = Date.now().toString().slice(-6);
-      this.movementNumber = `MOV-${year}${month}-${timestamp}`;
+      // Respaldo (casi nunca se usa): forma distinta a la secuencia
+      // MOV-AAAAMM-000123 para no chocar con ella.
+      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      this.movementNumber = `MOV-${year}${month}-T${Date.now()}${random}`;
     }
   }
 

@@ -1,4 +1,5 @@
 import { tenantRangeEndOf, tenantRangeStartOf, tenantTodaySql, tenantWallClockNow } from '../../common/utils/tenant-clock';
+import { lockInventory, nextBatchNumber, nextMovementNumber } from '../utils/movement-number';
 import {
   Injectable,
   NotFoundException,
@@ -242,6 +243,9 @@ export class InventoryService {
     }
 
     try {
+      // Antes de leer o tocar lotes (ver lockInventory).
+      await lockInventory(organizationId, queryRunner.manager);
+
       // Verificar stock disponible
       const availableStock = await this.getAvailableStock(
         productId,
@@ -1075,209 +1079,27 @@ export class InventoryService {
   /**
    * Generar número de movimiento único
    */
-  private async generateMovementNumber(
+  private generateMovementNumber(
     organizationId: string,
     queryRunner: QueryRunner | EntityManager,
   ): Promise<string> {
     // Algunos llamadores (devolución por nota crédito) pasan el EntityManager
-    // de su transacción en vez del QueryRunner: antes eso fallaba siempre y
-    // el movimiento quedaba con un número aleatorio de respaldo.
-    const manager: EntityManager =
+    // de su transacción en vez del QueryRunner.
+    const runner: QueryRunner | EntityManager =
       (queryRunner as QueryRunner).manager ?? (queryRunner as EntityManager);
-    // Serializar generación de números de movimiento por organización
-    // para evitar race conditions con requests concurrentes
-    await queryRunner.query(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      [`movement_number_${organizationId}`],
-    );
-
-    const year = tenantWallClockNow().getFullYear();
-    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
-    const prefix = `MOV-${year}${month}-`;
-
-    // Use a robust approach with proper LIKE pattern matching
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    while (attempts < maxAttempts) {
-      try {
-        // Find all existing movement numbers for this month/year pattern
-        const existingMovements = await manager
-          .createQueryBuilder(InventoryMovement, 'movement')
-          .select('movement.movementNumber')
-          .where('movement.organizationId = :organizationId', {
-            organizationId,
-          })
-          .andWhere('movement.movementNumber LIKE :pattern', {
-            pattern: `${prefix}%`,
-          })
-          .orderBy('movement.movementNumber', 'DESC')
-          .getMany();
-
-        // Extract sequence numbers and find the highest one
-        let maxSequence = 0;
-        for (const movement of existingMovements) {
-          const sequencePart = movement.movementNumber.substring(prefix.length);
-          const sequenceNumber = parseInt(sequencePart);
-          if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
-            maxSequence = sequenceNumber;
-          }
-        }
-
-        const nextSequence = maxSequence + 1;
-        const sequence = String(nextSequence).padStart(6, '0');
-        const newMovementNumber = `${prefix}${sequence}`;
-
-        // Double-check that this movement number doesn't exist (handles race conditions)
-        const existingCheck = await manager.findOne(
-          InventoryMovement,
-          {
-            where: {
-              organizationId,
-              movementNumber: newMovementNumber,
-            },
-          },
-        );
-
-        if (!existingCheck) {
-          return newMovementNumber;
-        }
-
-        // If it exists, increment attempts and try again
-        attempts++;
-
-        // Add a small random delay to reduce collision probability
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * 10 + 5),
-        );
-      } catch (error) {
-        this.logger.error(
-          `Error generating movement number (attempt ${attempts + 1}):`,
-          error,
-        );
-        attempts++;
-        if (attempts >= maxAttempts) {
-          // Fallback: use timestamp-based unique number
-          const timestamp = Date.now().toString().slice(-6);
-          const randomSuffix = Math.floor(Math.random() * 1000)
-            .toString()
-            .padStart(3, '0');
-          const fallbackNumber = `${prefix}${timestamp}${randomSuffix}`;
-          this.logger.warn(`Using fallback movement number: ${fallbackNumber}`);
-          return fallbackNumber;
-        }
-      }
-    }
-
-    // Final fallback with timestamp and random component
-    const timestamp = Date.now().toString().slice(-6);
-    const randomSuffix = Math.floor(Math.random() * 1000)
-      .toString()
-      .padStart(3, '0');
-    const finalFallback = `${prefix}${timestamp}${randomSuffix}`;
-    this.logger.warn(`Using final fallback movement number: ${finalFallback}`);
-    return finalFallback;
+    return nextMovementNumber(organizationId, runner);
   }
 
   /**
    * Generar número de lote único
    */
-  private async generateBatchNumber(
+  private generateBatchNumber(
     organizationId: string,
     queryRunner: QueryRunner,
   ): Promise<string> {
-    // Serializar generación de números de lote por organización
-    // para evitar race conditions con requests concurrentes
-    await queryRunner.query(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      [`batch_number_${organizationId}`],
-    );
-
-    const year = tenantWallClockNow().getFullYear();
-    const month = String(tenantWallClockNow().getMonth() + 1).padStart(2, '0');
-    const prefix = `BATCH-${year}${month}-`;
-
-    // Use a robust approach with proper LIKE pattern matching
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    while (attempts < maxAttempts) {
-      try {
-        // Find all existing batch numbers for this month/year pattern
-        const existingBatches = await queryRunner.manager
-          .createQueryBuilder(InventoryBatch, 'batch')
-          .select('batch.batchNumber')
-          .where('batch.organizationId = :organizationId', { organizationId })
-          .andWhere('batch.batchNumber LIKE :pattern', {
-            pattern: `${prefix}%`,
-          })
-          .orderBy('batch.batchNumber', 'DESC')
-          .getMany();
-
-        // Extract sequence numbers and find the highest one
-        let maxSequence = 0;
-        for (const batch of existingBatches) {
-          const sequencePart = batch.batchNumber.substring(prefix.length);
-          const sequenceNumber = parseInt(sequencePart);
-          if (!isNaN(sequenceNumber) && sequenceNumber > maxSequence) {
-            maxSequence = sequenceNumber;
-          }
-        }
-
-        const nextSequence = maxSequence + 1;
-        const sequence = String(nextSequence).padStart(6, '0');
-        const newBatchNumber = `${prefix}${sequence}`;
-
-        // Double-check that this batch number doesn't exist (handles race conditions)
-        const existingCheck = await queryRunner.manager.findOne(
-          InventoryBatch,
-          {
-            where: {
-              organizationId,
-              batchNumber: newBatchNumber,
-            },
-          },
-        );
-
-        if (!existingCheck) {
-          return newBatchNumber;
-        }
-
-        // If it exists, increment attempts and try again
-        attempts++;
-
-        // Add a small random delay to reduce collision probability
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * 10 + 5),
-        );
-      } catch (error) {
-        this.logger.error(
-          `Error generating batch number (attempt ${attempts + 1}):`,
-          error,
-        );
-        attempts++;
-        if (attempts >= maxAttempts) {
-          // Fallback: use timestamp-based unique number
-          const timestamp = Date.now().toString().slice(-6);
-          const randomSuffix = Math.floor(Math.random() * 1000)
-            .toString()
-            .padStart(3, '0');
-          const fallbackNumber = `${prefix}${timestamp}${randomSuffix}`;
-          this.logger.warn(`Using fallback batch number: ${fallbackNumber}`);
-          return fallbackNumber;
-        }
-      }
-    }
-
-    // Final fallback with timestamp and random component
-    const timestamp = Date.now().toString().slice(-6);
-    const randomSuffix = Math.floor(Math.random() * 1000)
-      .toString()
-      .padStart(3, '0');
-    const finalFallback = `${prefix}${timestamp}${randomSuffix}`;
-    this.logger.warn(`Using final fallback batch number: ${finalFallback}`);
-    return finalFallback;
+    return nextBatchNumber(organizationId, queryRunner.manager ?? queryRunner);
   }
+
 
   /**
    * Obtener Kardex de un producto
