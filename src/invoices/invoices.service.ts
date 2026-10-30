@@ -1,3 +1,4 @@
+import { isFinalConsumer } from '../common/services/seed.service';
 import { nextInvoiceNumber } from './utils/invoice-number';
 import { tenantWallClockNow } from '../common/utils/tenant-clock';
 import {
@@ -111,6 +112,28 @@ export class InvoicesService {
     const allowStockShortfall =
       !!createInvoiceDto.skipStockValidation ||
       !!(createInvoiceDto.metadata as any)?.soldAt;
+
+    // CONSUMIDOR FINAL: venta rápida de mostrador, nunca queda debiendo.
+    // Ni a crédito, ni pago parcial con el resto fiado, ni factura que quede
+    // pendiente/parcial. (Lo pide el negocio: es un cliente no registrado.)
+    if (isFinalConsumer(customer)) {
+      const meta = (createInvoiceDto.metadata || {}) as Record<string, any>;
+      const debtStatuses: string[] = [
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARTIALLY_PAID,
+        InvoiceStatus.OVERDUE,
+      ];
+      if (
+        createInvoiceDto.paymentMethod === PaymentMethod.CREDIT ||
+        meta.createCreditForRemaining === true ||
+        (createInvoiceDto.status && debtStatuses.includes(createInvoiceDto.status))
+      ) {
+        throw new BadRequestException(
+          'El Consumidor Final no puede comprar a crédito ni quedar debiendo. ' +
+            'Cobre el total o seleccione un cliente registrado.',
+        );
+      }
+    }
 
     // 🔴 VALIDACIÓN DE LÍMITE DE CRÉDITO (antes de guardar cualquier cosa)
     // Aplica a la venta 100% a crédito y también a la venta con pago parcial
